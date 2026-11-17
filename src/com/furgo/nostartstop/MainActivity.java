@@ -170,7 +170,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
             setState(serviceCard, "UNKNOWN", MUTED, unknownDetail);
             setButton(serviceCard.button, "Close permanently", true);
         } else if (closed) {
-            setState(serviceCard, "● PERMANENTLY CLOSED", ACCENT, "Car cannot re-enable stop-start");
+            setState(serviceCard, "● CLOSED", ACCENT, "Permanently closed. Car cannot re-enable stop-start");
             setButton(serviceCard.button, "Make controllable", false);
         } else {
             setState(serviceCard, "● CONTROLLABLE", WARN, "Car may re-enable stop-start");
