@@ -20,7 +20,7 @@ final class Prefs {
     }
 
     static boolean telemetry(Context c) {
-        return c.getSharedPreferences(FILE, Context.MODE_PRIVATE).getBoolean(TELEMETRY, false);
+        return c.getSharedPreferences(FILE, Context.MODE_PRIVATE).getBoolean(TELEMETRY, true);
     }
 
     static void setTelemetry(Context c, boolean on) {
