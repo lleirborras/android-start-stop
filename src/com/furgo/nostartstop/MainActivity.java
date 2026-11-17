@@ -87,7 +87,8 @@ public class MainActivity extends Activity implements CanBox.Listener {
 
     private String versionName() {
         try {
-            return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+            String name = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+            return name == null || name.isEmpty() ? "unknown" : name;
         } catch (Exception e) {
             return "unknown";
         }
@@ -229,7 +230,13 @@ public class MainActivity extends Activity implements CanBox.Listener {
         header.setGravity(Gravity.CENTER_VERTICAL);
         TextView title = text("NO START-STOP", 22, TEXT, true);
         title.setLetterSpacing(0.12f);
-        header.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
+        header.addView(title);
+        String v = versionName();
+        // Release builds are named like "0.3.0"; local builds are "dev".
+        TextView version = text(Character.isDigit(v.charAt(0)) ? "v" + v : v, 14, MUTED, false);
+        LinearLayout.LayoutParams versionLp = new LinearLayout.LayoutParams(0, -2, 1f);
+        versionLp.leftMargin = dp(12);
+        header.addView(version, versionLp);
         linkView = text("", 14, MUTED, true);
         header.addView(linkView);
         left.addView(header, new LinearLayout.LayoutParams(-1, -2));
