@@ -4,19 +4,23 @@ Android app for Topway head units (TS18 and similar) that turns the PSA engine s
 
 Built for a Peugeot/Citroën Jumpy (2015–23) with CAN box setting `02: Raise` / `96: PSA Peugeot Citroen`. It has not been confirmed on a real head unit yet: see [Status](#status).
 
-![Stop-start on, service controllable](docs/state-on.png)
+![Stop-start on, not locked](docs/state-on.png)
 
-![Stop-start off, service permanently closed, apply at boot on](docs/state-off.png)
+![Stop-start off and locked off, apply at boot on](docs/state-off.png)
 
-The screenshots are from an emulator at 1920x720 with a simulated CAN box. On a device without the Topway framework the app shows the state as unknown instead of guessing:
+The screenshots are from an emulator at 1920x720 with a simulated CAN box. On a device without the Topway framework the app shows the state as unknown instead of guessing, and its buttons send nothing:
 
-![CAN box unreachable](docs/unreachable.png)
+![No link to the car](docs/unreachable.png)
 
 ## What it does
 
-- **Engine stop-start**: shows whether stop-start is on or off and toggles it. The car resets this at every ignition cycle.
-- **Stop-start service**: shows whether the service is controllable or permanently closed and toggles it.
-- **Apply at boot**: off by default. When on, the app turns stop-start off and closes the service once after the head unit boots, then stops.
+- **Stop-start**: shows whether stop-start is on or off, with a button to turn it off or back on. The car turns it back on at every start.
+- **Keep it off**: shows whether stop-start is locked off, with a button to lock or unlock it. Locking tells the car to keep stop-start off after a restart (the vendor app calls this "permanently closed"). **Lock off** asks for a second tap to confirm:
+
+  ![Tap again to confirm](docs/confirm-lock.png)
+
+- **Feedback**: a tapped button shows "Sending…" until the car answers, and says so if it does not. A line above the cards shows the last change, for example "Locked off at 23:48".
+- **Apply at boot**: off by default. When on, the app turns stop-start off and locks it off once after the head unit boots, then stops.
 - **Log**: the commands sent and any errors.
 - **Check for updates**: downloads and installs the latest release when you ask for it.
 - **Share diagnostics**: asked on first launch, with a switch to change it later. Sends the app's log lines to the developer.
@@ -66,7 +70,7 @@ The app writes everything shown in its LOG panel, plus what the boot service did
 Android/data/com.furgo.nostartstop/files/nostartstop.log
 ```
 
-on the head unit's internal storage (full path `/storage/emulated/0/Android/data/com.furgo.nostartstop/files/nostartstop.log`; the app shows the exact path under the LOG title). When it passes 512 KB it is renamed to `nostartstop.log.1` and a new file is started.
+on the head unit's internal storage (full path `/storage/emulated/0/Android/data/com.furgo.nostartstop/files/nostartstop.log`). When it passes 512 KB it is renamed to `nostartstop.log.1` and a new file is started.
 
 To copy it without adb:
 
@@ -184,5 +188,6 @@ These were read from the decompiled vendor app `com.tw.car` (`PsaRaiseSettingsAc
 ## Troubleshooting
 
 - **Log shows `TWUtil unavailable`**: Android is blocking the vendor class for a non-system app. With adb: `adb shell settings put global hidden_api_policy 1`.
-- **State stays UNKNOWN but the CAN box is live**: the status frame layout differs on your car. The buttons still send; the log shows what was sent.
+- **"NO LINK TO CAR" and grey buttons**: the app could not open the head unit's link to the car, usually the `TWUtil unavailable` case above. Nothing is sent in this state.
+- **State stays UNKNOWN while it says "CONNECTED TO CAR" or "CONNECTING…"**: the status frame layout differs on your car. The buttons still send; the log shows what was sent.
 - **Apply at boot does nothing**: open the app once after installing. Many head units also sleep on ignition-off instead of rebooting, and the app only acts on a real boot.
