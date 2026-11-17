@@ -1,6 +1,8 @@
 package com.furgo.nostartstop;
 
 import android.app.Activity;
+import android.content.Intent;
+import android.content.pm.PackageInstaller;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -47,6 +49,9 @@ public class MainActivity extends Activity implements CanBox.Listener {
 
     private float density;
     private TextView linkView;
+    private TextView updateView;
+    private boolean updateBusy;
+    private Updater.Release available;   // non-null once a newer release was found
     private TextView bootPill;
     private TextView logView;
     private ScrollView logScroll;
@@ -160,6 +165,75 @@ public class MainActivity extends Activity implements CanBox.Listener {
         box.set(enabled == null ? false : enabled, target);
     }
 
+    private void onUpdateClick() {
+        if (updateBusy) return;
+        updateBusy = true;
+        final Updater.Release found = available;
+        renderUpdate(found == null ? "Checking…" : "Downloading " + found.tag + "…");
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    if (found == null) {
+                        final Updater.Release latest = Updater.latest();
+                        handler.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                onLatest(latest);
+                            }
+                        });
+                    } else {
+                        Updater.install(getApplicationContext(), found);
+                        finishUpdate("download done, waiting for Android's install prompt", "Check for updates");
+                    }
+                } catch (final Exception e) {
+                    finishUpdate("update failed: " + e, "Check for updates");
+                }
+            }
+        }).start();
+    }
+
+    private void onLatest(Updater.Release latest) {
+        updateBusy = false;
+        if (Version.isNewer(latest.tag, versionName())) {
+            available = latest;
+            onLog("update available: " + latest.tag);
+            renderUpdate("Install " + latest.tag);
+        } else {
+            onLog("no update: latest release is " + latest.tag + ", installed is " + versionName());
+            renderUpdate("Up to date");
+        }
+    }
+
+    private void finishUpdate(final String logLine, final String label) {
+        handler.post(new Runnable() {
+            @Override
+            public void run() {
+                updateBusy = false;
+                available = null;
+                onLog(logLine);
+                renderUpdate(label);
+            }
+        });
+    }
+
+    private void renderUpdate(String label) {
+        updateView.setText(label);
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        if (!Updater.ACTION_INSTALL_STATUS.equals(intent.getAction())) return;
+        int status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE);
+        if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+            Intent confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT);
+            if (confirm != null) startActivity(confirm);
+        } else if (status != PackageInstaller.STATUS_SUCCESS) {
+            onLog("install failed (" + status + "): " + intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE));
+        }
+    }
+
     private void toggleBoot() {
         Prefs.setApplyAtBoot(this, !Prefs.applyAtBoot(this));
         renderBoot();
@@ -237,6 +311,20 @@ public class MainActivity extends Activity implements CanBox.Listener {
         LinearLayout.LayoutParams versionLp = new LinearLayout.LayoutParams(0, -2, 1f);
         versionLp.leftMargin = dp(12);
         header.addView(version, versionLp);
+        updateView = text("", 14, TEXT, true);
+        updateView.setGravity(Gravity.CENTER);
+        updateView.setPadding(dp(20), 0, dp(20), 0);
+        updateView.setBackgroundDrawable(pressable(0xFF1D2430, 0xFF2B3544, 2));
+        updateView.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                onUpdateClick();
+            }
+        });
+        LinearLayout.LayoutParams updateLp = new LinearLayout.LayoutParams(-2, dp(48));
+        updateLp.rightMargin = dp(24);
+        header.addView(updateView, updateLp);
+        renderUpdate("Check for updates");
         linkView = text("", 14, MUTED, true);
         header.addView(linkView);
         left.addView(header, new LinearLayout.LayoutParams(-1, -2));
