@@ -41,7 +41,34 @@ adb logcat -s NoStartStop
 
 ## Build
 
-Needs a JDK (17 works) and the Android SDK with `build-tools/34.0.0` and `platforms/android-34`. No gradle.
+Needs JDK 17 and the Android SDK with `build-tools/34.0.0` and `platforms/android-34`. No gradle.
+
+### Set up the tools (macOS)
+
+1. Install JDK 17, with either:
+
+   ```sh
+   asdf plugin add java && asdf install    # reads .tool-versions
+   ```
+
+   ```sh
+   brew install --cask temurin@17
+   ```
+
+2. Install the Android SDK packages. If you have Android Studio, use its SDK Manager. Otherwise:
+
+   ```sh
+   brew install --cask android-commandlinetools
+   sdkmanager "build-tools;34.0.0" "platforms;android-34" "platform-tools"
+   ```
+
+3. Point `ANDROID_HOME` at the SDK if it is not in `~/Library/Android/sdk` (Android Studio's default). For the Homebrew command line tools:
+
+   ```sh
+   export ANDROID_HOME="$(brew --prefix)/share/android-commandlinetools"
+   ```
+
+### Build the APK
 
 ```sh
 sh build.sh
