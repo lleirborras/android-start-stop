@@ -27,6 +27,10 @@ final class Prefs {
         c.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean(TELEMETRY, on).apply();
     }
 
+    static synchronized void clearInstallId(Context c) {
+        c.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().remove(INSTALL_ID).apply();
+    }
+
     /** Random id for this install, created the first time it is needed. It identifies nothing else. */
     static synchronized String installId(Context c) {
         SharedPreferences prefs = c.getSharedPreferences(FILE, Context.MODE_PRIVATE);
