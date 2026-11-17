@@ -25,7 +25,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * Diagnostics, on unless the user switches them off: sends the app's log lines to PostHog. Lines are queued in a file so they
+ * Diagnostics the user agreed to on first launch: sends the app's log lines to PostHog. Lines are queued in a file so they
  * survive the head unit being offline, and go out the next time a line is logged with a connection.
  */
 final class Telemetry {

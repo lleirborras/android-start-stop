@@ -19,8 +19,14 @@ final class Prefs {
         c.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean(APPLY_AT_BOOT, on).apply();
     }
 
+    /** False until the user has answered the first-launch question with yes. */
     static boolean telemetry(Context c) {
-        return c.getSharedPreferences(FILE, Context.MODE_PRIVATE).getBoolean(TELEMETRY, true);
+        return c.getSharedPreferences(FILE, Context.MODE_PRIVATE).getBoolean(TELEMETRY, false);
+    }
+
+    /** True once the user has chosen, by the first-launch question or the switch. */
+    static boolean telemetryAnswered(Context c) {
+        return c.getSharedPreferences(FILE, Context.MODE_PRIVATE).contains(TELEMETRY);
     }
 
     static void setTelemetry(Context c, boolean on) {

@@ -19,7 +19,7 @@ The screenshots are from an emulator at 1920x720 with a simulated CAN box. On a 
 - **Apply at boot**: off by default. When on, the app turns stop-start off and closes the service once after the head unit boots, then stops.
 - **Log**: the commands sent and any errors.
 - **Check for updates**: downloads and installs the latest release when you ask for it.
-- **Share diagnostics**: on by default, with a switch to turn it off. Sends the app's log lines to the developer.
+- **Share diagnostics**: asked on first launch, with a switch to change it later. Sends the app's log lines to the developer.
 
 ## Install from a USB pendrive
 
@@ -46,7 +46,7 @@ The app only uses the network when you tap that button. It asks `api.github.com`
 
 ## Diagnostics
 
-**Share diagnostics** is on by default in release builds. Each line the app writes to its log is also sent to the developer's [PostHog](https://posthog.com) project, so problems can be diagnosed without copying the log file by hand. Switch it off on the main screen at any time; the first line is sent when the app is first opened, so switch it off before going online if you do not want to share anything.
+The first time a release build is opened it asks **Share diagnostics?**. Nothing is sent before you answer. If you choose **Share**, each line the app writes to its log is also sent to the developer's [PostHog](https://posthog.com) project, so problems can be diagnosed without copying the log file by hand. The **Share diagnostics** switch on the main screen changes your answer at any time.
 
 What is sent with each line:
 
