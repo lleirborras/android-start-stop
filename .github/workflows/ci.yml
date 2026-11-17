@@ -6,35 +6,66 @@ on:
     tags: ['v*']
   pull_request:
 
-permissions:
-  contents: read
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Lint shell scripts
-        run: shellcheck build.sh test.sh
+        run: shellcheck build.sh test.sh scripts/next-version.sh
 
       - name: Unit tests
         run: sh test.sh
 
-  build:
-    needs: test
+  security:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
-      - uses: actions/setup-java@v6
+      - name: Scan for leaked secrets
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Audit workflows
+        uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
+        with:
+          # Code scanning upload needs GitHub Advanced Security on a private repo; fail the job instead.
+          advanced-security: false
+
+  build:
+    needs: [test, security]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # create the release and its tag
+      pull-requests: read    # find the merged pull request's branch name
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: temurin
           java-version: '17'
@@ -42,8 +73,35 @@ jobs:
       - name: Install Android SDK packages
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;34.0.0" "platforms;android-34" > /dev/null
 
+      # A pushed vX.Y.Z tag releases as is. A pull request merged to master releases
+      # the next version according to its branch prefix (see scripts/next-version.sh).
+      - name: Decide release tag
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=""
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            tag="$GITHUB_REF_NAME"
+          elif [ "$GITHUB_EVENT_NAME" = push ]; then
+            branch=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
+              --jq '[.[] | select(.merged_at != null)][0].head.ref // empty')
+            if [ -n "$branch" ]; then
+              latest=$(gh api "repos/$GITHUB_REPOSITORY/tags" --paginate --jq '.[].name' \
+                | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)
+              tag=$(sh scripts/next-version.sh "$branch" "$latest")
+              echo "merged branch '$branch', latest tag '$latest', next tag '$tag'"
+            fi
+          fi
+          if [ -n "$tag" ] && ! echo "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::release tag must look like vX.Y.Z"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
       - name: Build APK
         env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
           RELEASE_KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_B64 }}
           KS_PASS: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
           VERSION_CODE: ${{ github.run_number }}
@@ -51,12 +109,12 @@ jobs:
           if [ -n "$RELEASE_KEYSTORE_B64" ]; then
             echo "$RELEASE_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.p12"
             export KEYSTORE="$RUNNER_TEMP/release.p12" KEY_ALIAS=release
-          elif [ "$GITHUB_REF_TYPE" = tag ]; then
+          elif [ -n "$RELEASE_TAG" ]; then
             echo "::error::RELEASE_KEYSTORE_B64 secret is missing; refusing to release a debug-signed APK"
             exit 1
           fi
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
-            export VERSION_NAME="${GITHUB_REF_NAME#v}"
+          if [ -n "$RELEASE_TAG" ]; then
+            export VERSION_NAME="${RELEASE_TAG#v}"
           else
             export VERSION_NAME="dev-${GITHUB_SHA::7}"
           fi
@@ -75,17 +133,18 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nostartstop-apk
           path: build/nostartstop.apk
 
       - name: Publish release
-        if: github.ref_type == 'tag'
+        if: steps.version.outputs.tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
-          apk="nostartstop-$GITHUB_REF_NAME.apk"
+          apk="nostartstop-$RELEASE_TAG.apk"
           cp build/nostartstop.apk "$apk"
-          case "$GITHUB_REF_NAME" in v0.*) pre=--prerelease ;; *) pre= ;; esac
-          gh release create "$GITHUB_REF_NAME" "$apk" --verify-tag --generate-notes --title "$GITHUB_REF_NAME" $pre
+          case "$RELEASE_TAG" in v0.*) pre=--prerelease ;; *) pre= ;; esac
+          gh release create "$RELEASE_TAG" "$apk" --target "$GITHUB_SHA" --generate-notes --title "$RELEASE_TAG" $pre
