@@ -1,7 +1,9 @@
 package com.furgo.nostartstop;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -52,6 +54,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private boolean updateBusy;
     private Updater.Release available;   // non-null once a newer release was found
     private TextView bootPill;
+    private boolean askingAboutDiagnostics;
     private TextView telemetryPill;   // null when the build has no PostHog key
     private TextView logView;
     private ScrollView logScroll;
@@ -118,6 +121,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         render();
         if (opened) box.query();
         handler.postDelayed(requery, REQUERY_MS);
+        askAboutDiagnostics();
     }
 
     @Override
@@ -231,7 +235,38 @@ public class MainActivity extends Activity implements CanBox.Listener {
     }
 
     private void toggleTelemetry() {
-        boolean on = !Prefs.telemetry(this);
+        setTelemetry(!Prefs.telemetry(this));
+    }
+
+    /** Asked once, on the first launch of a build that can share diagnostics. Nothing is sent before an answer. */
+    private void askAboutDiagnostics() {
+        if (!Telemetry.configured() || Prefs.telemetryAnswered(this) || askingAboutDiagnostics) return;
+        askingAboutDiagnostics = true;
+        new AlertDialog.Builder(this)
+                .setTitle("Share diagnostics?")
+                .setMessage("No Start-Stop can send its log lines to the developer to help find problems. "
+                        + "Each line goes with the app version, the Android SDK level, this head unit's model "
+                        + "name and a random id. Nothing else is sent.\n\n"
+                        + "You can change this at any time with the Share diagnostics switch.")
+                .setCancelable(false)
+                .setPositiveButton("Share", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        askingAboutDiagnostics = false;
+                        setTelemetry(true);
+                    }
+                })
+                .setNegativeButton("Don't share", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        askingAboutDiagnostics = false;
+                        setTelemetry(false);
+                    }
+                })
+                .show();
+    }
+
+    private void setTelemetry(boolean on) {
         Prefs.setTelemetry(this, on);
         if (on) {
             onLog("diagnostics sharing on");
@@ -399,7 +434,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
                 });
         if (Telemetry.configured()) {
             telemetryPill = addSetting(settings, "Share diagnostics",
-                    "Sends this log to the developer. On unless you switch it off.",
+                    "Sends this log to the developer. Nothing else is sent.",
                     new View.OnClickListener() {
                         @Override
                         public void onClick(View v) {
