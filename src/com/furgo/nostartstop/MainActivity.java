@@ -399,7 +399,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
                 });
         if (Telemetry.configured()) {
             telemetryPill = addSetting(settings, "Share diagnostics",
-                    "Sends this log to the developer. Nothing else is sent.",
+                    "Sends this log to the developer. On unless you switch it off.",
                     new View.OnClickListener() {
                         @Override
                         public void onClick(View v) {
