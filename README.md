@@ -108,20 +108,34 @@ To sign with a stable key instead, set `KEYSTORE` (a PKCS12 file), `KS_PASS` and
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on every push to `master` and on pull requests:
 
-- **test**: `shellcheck` on the scripts and the unit tests (`sh test.sh`). The tests cover the CAN box frame encoding and status decoding in `Protocol.java`; they need only a JDK.
+- **test**: `shellcheck` on the scripts and the unit tests (`sh test.sh`). The tests cover the CAN box frame encoding and status decoding in `Protocol.java`, and the version bump rules; they need only a JDK.
+- **security**: `gitleaks` scans the commits for leaked secrets and `zizmor` audits the workflow file. Actions are pinned to commit SHAs.
 - **build**: compiles with javac warnings as errors, builds the APK, checks its contents (launcher activity, boot components, and that the `TWUtil` stub is not packaged) and keeps it as a workflow artifact.
 
 Nothing in CI talks to a head unit or a CAN box.
 
-Pushing a tag `vX.Y.Z` also publishes a GitHub release with `nostartstop-vX.Y.Z.apk` attached. `v0.*` tags are marked as pre-releases.
+### Releases
+
+Merging a pull request into `master` publishes a release automatically, depending on the prefix of the merged branch (`scripts/next-version.sh`):
+
+| Branch prefix | Version bump | Example |
+|---|---|---|
+| `breaking/`, `major/` | major | `v0.3.1` → `v1.0.0` |
+| `feat/`, `feature/` | minor | `v0.3.1` → `v0.4.0` |
+| `fix/`, `perf/` | patch | `v0.3.1` → `v0.3.2` |
+| anything else (`ci/`, `docs/`, `chore/`, `refactor/`, `test/`, `renovate/`, …) | no release | |
+
+The release is tagged `vX.Y.Z` on the merge commit and has `nostartstop-vX.Y.Z.apk` attached. `v0.*` releases are marked as pre-releases. Commits pushed straight to `master` without a pull request do not release.
+
+To release by hand instead, push a tag:
 
 ```sh
 git tag v0.2.0 && git push origin v0.2.0
 ```
 
-[Renovate](https://docs.renovatebot.com/) (`renovate.json`) opens pull requests for new versions of the GitHub Actions and the pinned JDK patch level. It needs the Renovate GitHub App installed on the repository.
+[Renovate](https://docs.renovatebot.com/) (`renovate.json`) opens pull requests for new versions of the GitHub Actions (keeping them pinned to commit SHAs) and the pinned JDK patch level. It needs the Renovate GitHub App installed on the repository.
 
-Releases are signed with the key in the repository secrets `RELEASE_KEYSTORE_B64` (base64 of a PKCS12 keystore, alias `release`) and `RELEASE_KEYSTORE_PASSWORD`. A tag build fails if they are missing. Keep a copy of that keystore: if it is lost, later releases cannot update earlier installs.
+Releases are signed with the key in the repository secrets `RELEASE_KEYSTORE_B64` (base64 of a PKCS12 keystore, alias `release`) and `RELEASE_KEYSTORE_PASSWORD`. A release build fails if they are missing. Keep a copy of that keystore: if it is lost, later releases cannot update earlier installs.
 
 ## How it works
 
