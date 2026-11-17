@@ -85,13 +85,27 @@ jobs:
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             tag="$GITHUB_REF_NAME"
           elif [ "$GITHUB_EVENT_NAME" = push ]; then
-            branch=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
-              --jq '[.[] | select(.merged_at != null)][0].head.ref // empty')
+            # Only a pull request merged into master counts, and it must be the only one for this commit.
+            branches=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
+              --jq '.[] | select(.merged_at != null and .base.ref == "master") | .head.ref')
+            if [ "$(printf '%s' "$branches" | grep -c .)" -gt 1 ]; then
+              echo "::error::more than one merged pull request matches this commit"
+              exit 1
+            fi
+            branch="$branches"
             if [ -n "$branch" ]; then
-              latest=$(gh api "repos/$GITHUB_REPOSITORY/tags" --paginate --jq '.[].name' \
-                | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)
+              # A failed lookup must stop the job; only a successful, empty answer means "no tags yet".
+              tags=$(gh api "repos/$GITHUB_REPOSITORY/tags" --paginate --jq '.[].name')
+              latest=$(printf '%s\n' "$tags" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)
               tag=$(sh scripts/next-version.sh "$branch" "$latest")
               echo "merged branch '$branch', latest tag '$latest', next tag '$tag'"
+              if [ -n "$tag" ] && [ -n "$latest" ]; then
+                highest=$(printf '%s\n%s\n' "$tag" "$latest" | sort -V | tail -n 1)
+                if [ "$tag" = "$latest" ] || [ "$highest" != "$tag" ]; then
+                  echo "::error::next tag $tag is not newer than $latest"
+                  exit 1
+                fi
+              fi
             fi
           fi
           if [ -n "$tag" ] && ! echo "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
