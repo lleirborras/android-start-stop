@@ -20,9 +20,9 @@ KEY_ALIAS="${KEY_ALIAS:-androiddebugkey}"
 
 rm -rf build && mkdir -p build/stubs build/classes build/dex
 
-javac -nowarn -source 8 -target 8 -cp "$JAR" -d build/stubs $(find stubs -name '*.java')
-javac -nowarn -source 8 -target 8 -cp "$JAR:build/stubs" -d build/classes $(find src -name '*.java')
-"$BT/d8" --min-api 21 --lib "$JAR" --classpath build/stubs --output build/dex $(find build/classes -name '*.class')
+find stubs -name '*.java' -exec javac -nowarn -source 8 -target 8 -cp "$JAR" -d build/stubs {} +
+find src -name '*.java' -exec javac -Xlint:all,-deprecation,-options -Werror -source 8 -target 8 -cp "$JAR:build/stubs" -d build/classes {} +
+find build/classes -name '*.class' -exec "$BT/d8" --min-api 21 --lib "$JAR" --classpath build/stubs --output build/dex {} +
 
 "$BT/aapt2" link -o build/unaligned.apk -I "$JAR" --manifest AndroidManifest.xml \
     --replace-version --version-name "$VERSION_NAME" --version-code "$VERSION_CODE"

@@ -19,11 +19,6 @@ final class CanBox {
     }
 
     private static final String TAG = "NoStartStop";
-    private static final int MSG_CANBOX = 1281;
-    private static final int CMD_SET = 128;
-    private static final int CMD_QUERY = 143;
-    private static final int SET_START_STOP = 13;
-    private static final int STATUS_SETTINGS = 56;
     private static int instances;
 
     private final Listener listener;
@@ -35,7 +30,7 @@ final class CanBox {
     private final Handler handler = new Handler(Looper.getMainLooper()) {
         @Override
         public void handleMessage(Message msg) {
-            if (tw != null && msg.what == MSG_CANBOX && msg.arg1 == STATUS_SETTINGS
+            if (tw != null && msg.what == Protocol.MSG_CANBOX && msg.arg1 == Protocol.STATUS_SETTINGS
                     && msg.obj instanceof byte[]) {
                 onFrame((byte[]) msg.obj);
             }
@@ -51,7 +46,7 @@ final class CanBox {
         TWUtil t = null;
         try {
             t = new TWUtil();
-            int rc = t.open(new short[]{(short) MSG_CANBOX});
+            int rc = t.open(new short[]{(short) Protocol.MSG_CANBOX});
             if (rc == 0) {
                 t.addHandler(tag, handler);
                 t.start();
@@ -88,7 +83,7 @@ final class CanBox {
     }
 
     void query() {
-        write(CMD_QUERY, new byte[]{(byte) STATUS_SETTINGS, 0});
+        write(Protocol.CMD_QUERY, Protocol.query());
     }
 
     void set(boolean startStopEnabled, boolean permanentlyClosed) {
@@ -96,8 +91,7 @@ final class CanBox {
             log("not open, nothing sent");
             return;
         }
-        int value = (permanentlyClosed ? 0x80 : 0) | (startStopEnabled ? 1 : 0);
-        int rc = write(CMD_SET, new byte[]{(byte) SET_START_STOP, (byte) value});
+        int rc = write(Protocol.CMD_SET, Protocol.set(startStopEnabled, permanentlyClosed));
         log("sent start-stop enabled=" + startStopEnabled + " permClosed=" + permanentlyClosed
                 + ", rc=" + rc);
         handler.postDelayed(new Runnable() {
@@ -109,7 +103,7 @@ final class CanBox {
     }
 
     private void onFrame(byte[] b) {
-        if (b.length < 9) {
+        if (b.length < Protocol.MIN_STATUS_LENGTH) {
             if (!shortFrameLogged) {
                 shortFrameLogged = true;
                 log("status frame too short: " + hex(b));
@@ -120,7 +114,7 @@ final class CanBox {
             lastFrame = b.clone();
             log("status " + hex(b));
         }
-        listener.onState((b[5] & 0x40) != 0, (b[8] & 0x40) != 0);
+        listener.onState(Protocol.startStopEnabled(b), Protocol.permanentlyClosed(b));
     }
 
     private int write(int cmd, byte[] data) {
@@ -129,7 +123,7 @@ final class CanBox {
             return -1;
         }
         try {
-            return tw.write(MSG_CANBOX, cmd, data.length, data);
+            return tw.write(Protocol.MSG_CANBOX, cmd, data.length, data);
         } catch (Throwable e) {
             log("write failed: " + e);
             return -1;

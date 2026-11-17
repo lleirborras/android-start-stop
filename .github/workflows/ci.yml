@@ -1,4 +1,4 @@
-name: build
+name: ci
 
 on:
   push:
@@ -10,7 +10,24 @@ permissions:
   contents: read
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Lint shell scripts
+        run: shellcheck build.sh test.sh
+
+      - name: Unit tests
+        run: sh test.sh
+
   build:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -44,6 +61,19 @@ jobs:
             export VERSION_NAME="dev-${GITHUB_SHA::7}"
           fi
           sh build.sh
+
+      - name: Check APK contents
+        run: |
+          bt="$ANDROID_HOME/build-tools/34.0.0"
+          "$bt/aapt2" dump badging build/nostartstop.apk | grep -q "launchable-activity: name='com.furgo.nostartstop.MainActivity'"
+          "$bt/dexdump" build/nostartstop.apk | grep 'Class descriptor' > classes.txt
+          grep -q "Lcom/furgo/nostartstop/BootService;" classes.txt
+          grep -q "Lcom/furgo/nostartstop/BootReceiver;" classes.txt
+          # The TWUtil stub is compile-only; packaging it would shadow the head unit's real class.
+          if grep -q "Landroid/tw/john/TWUtil;" classes.txt; then
+            echo "::error::TWUtil stub was packaged into the APK"
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@v7
         with:
