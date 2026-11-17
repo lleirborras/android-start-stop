@@ -20,8 +20,28 @@ KEY_ALIAS="${KEY_ALIAS:-androiddebugkey}"
 
 rm -rf build && mkdir -p build/stubs build/classes build/dex
 
+# Diagnostics are compiled in only when POSTHOG_KEY is set (CI sets it from a repository variable).
+# The key is a public, write-only PostHog project key.
+POSTHOG_KEY="${POSTHOG_KEY:-}"
+POSTHOG_HOST="${POSTHOG_HOST:-https://eu.i.posthog.com}"
+case "$POSTHOG_KEY" in *[!A-Za-z0-9_]*) echo "POSTHOG_KEY has unexpected characters" >&2; exit 1 ;; esac
+case "$POSTHOG_HOST" in
+    https://*[!A-Za-z0-9.-]*) echo "POSTHOG_HOST must look like https://host" >&2; exit 1 ;;
+    https://?*) ;;
+    *) echo "POSTHOG_HOST must look like https://host" >&2; exit 1 ;;
+esac
+mkdir -p build/gen/com/furgo/nostartstop
+cat > build/gen/com/furgo/nostartstop/BuildConfig.java <<JAVA
+package com.furgo.nostartstop;
+
+final class BuildConfig {
+    static final String POSTHOG_KEY = "$POSTHOG_KEY";
+    static final String POSTHOG_HOST = "$POSTHOG_HOST";
+}
+JAVA
+
 find stubs -name '*.java' -exec javac -nowarn -source 8 -target 8 -cp "$JAR" -d build/stubs {} +
-find src -name '*.java' -exec javac -Xlint:all,-deprecation,-options -Werror -source 8 -target 8 -cp "$JAR:build/stubs" -d build/classes {} +
+find src build/gen -name '*.java' -exec javac -Xlint:all,-deprecation,-options -Werror -source 8 -target 8 -cp "$JAR:build/stubs" -d build/classes {} +
 find build/classes -name '*.class' -exec "$BT/d8" --min-api 21 --lib "$JAR" --classpath build/stubs --output build/dex {} +
 
 "$BT/aapt2" link -o build/unaligned.apk -I "$JAR" --manifest AndroidManifest.xml \

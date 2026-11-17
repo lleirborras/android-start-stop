@@ -1,6 +1,7 @@
 package com.furgo.nostartstop;
 
 import android.app.Activity;
+import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -51,6 +52,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private boolean updateBusy;
     private Updater.Release available;   // non-null once a newer release was found
     private TextView bootPill;
+    private TextView telemetryPill;   // null when the build has no PostHog key
     private TextView logView;
     private ScrollView logScroll;
     private Card stopCard;
@@ -89,8 +91,12 @@ public class MainActivity extends Activity implements CanBox.Listener {
     }
 
     private String versionName() {
+        return versionName(this);
+    }
+
+    static String versionName(Context c) {
         try {
-            String name = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+            String name = c.getPackageManager().getPackageInfo(c.getPackageName(), 0).versionName;
             return name == null || name.isEmpty() ? "unknown" : name;
         } catch (Exception e) {
             return "unknown";
@@ -224,6 +230,46 @@ public class MainActivity extends Activity implements CanBox.Listener {
         renderBoot();
     }
 
+    private void toggleTelemetry() {
+        boolean on = !Prefs.telemetry(this);
+        Prefs.setTelemetry(this, on);
+        if (on) {
+            onLog("diagnostics sharing on");
+        } else {
+            Telemetry.clear(this);
+            onLog("diagnostics sharing off");
+        }
+        renderBoot();
+    }
+
+    /** Adds a tappable setting card with an ON/OFF pill to a horizontal row and returns the pill. */
+    private TextView addSetting(LinearLayout row, String title, String hint, View.OnClickListener onClick) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.HORIZONTAL);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setPadding(dp(24), dp(12), dp(24), dp(12));
+        card.setBackgroundDrawable(pressable(CARD, 0xFF1D2430, 1));
+        card.setClickable(true);
+        card.setMinimumHeight(dp(64));
+        card.setOnClickListener(onClick);
+        LinearLayout label = new LinearLayout(this);
+        label.setOrientation(LinearLayout.VERTICAL);
+        label.addView(text(title, 18, TEXT, true));
+        label.addView(text(hint, 14, MUTED, false));
+        card.addView(label, new LinearLayout.LayoutParams(0, -2, 1f));
+        TextView pill = text("OFF", 18, MUTED, true);
+        pill.setGravity(Gravity.CENTER);
+        pill.setMinWidth(dp(88));
+        pill.setPadding(dp(16), dp(10), dp(16), dp(10));
+        LinearLayout.LayoutParams pillLp = new LinearLayout.LayoutParams(-2, -2);
+        pillLp.leftMargin = dp(12);
+        card.addView(pill, pillLp);
+        LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(0, -1, 1f);
+        if (row.getChildCount() > 0) cardLp.leftMargin = dp(16);
+        row.addView(card, cardLp);
+        return pill;
+    }
+
     private void render() {
         String unknownDetail = link == LINK_DOWN ? "CAN box unreachable" : "Waiting for CAN box";
         linkView.setText(link == LINK_LIVE ? "●  CAN BOX LIVE"
@@ -245,7 +291,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
             setState(serviceCard, "UNKNOWN", MUTED, unknownDetail);
             setButton(serviceCard.button, "Close permanently", true);
         } else if (closed) {
-            setState(serviceCard, "● CLOSED", ACCENT, "Permanently closed. Car cannot re-enable stop-start");
+            setState(serviceCard, "● CLOSED", ACCENT, "Permanent. The car cannot re-enable it");
             setButton(serviceCard.button, "Make controllable", false);
         } else {
             setState(serviceCard, "● CONTROLLABLE", WARN, "Car may re-enable stop-start");
@@ -255,10 +301,14 @@ public class MainActivity extends Activity implements CanBox.Listener {
     }
 
     private void renderBoot() {
-        boolean on = Prefs.applyAtBoot(this);
-        bootPill.setText(on ? "ON" : "OFF");
-        bootPill.setTextColor(on ? ON_ACCENT : MUTED);
-        bootPill.setBackgroundDrawable(shape(on ? ACCENT : 0xFF222A35, 999, 0, 0));
+        renderPill(bootPill, Prefs.applyAtBoot(this));
+        if (telemetryPill != null) renderPill(telemetryPill, Prefs.telemetry(this));
+    }
+
+    private void renderPill(TextView pill, boolean on) {
+        pill.setText(on ? "ON" : "OFF");
+        pill.setTextColor(on ? ON_ACCENT : MUTED);
+        pill.setBackgroundDrawable(shape(on ? ACCENT : 0xFF222A35, 999, 0, 0));
     }
 
     private void setState(Card c, String text, int color, String detail) {
@@ -337,33 +387,29 @@ public class MainActivity extends Activity implements CanBox.Listener {
         second.leftMargin = dp(16);
         cards.addView((View) serviceCard.state.getParent(), second);
 
-        LinearLayout boot = new LinearLayout(this);
-        boot.setOrientation(LinearLayout.HORIZONTAL);
-        boot.setGravity(Gravity.CENTER_VERTICAL);
-        boot.setPadding(dp(24), dp(12), dp(24), dp(12));
-        boot.setBackgroundDrawable(pressable(CARD, 0xFF1D2430, 1));
-        boot.setClickable(true);
-        boot.setMinimumHeight(dp(64));
-        boot.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                toggleBoot();
-            }
-        });
-        LinearLayout bootText = new LinearLayout(this);
-        bootText.setOrientation(LinearLayout.VERTICAL);
-        bootText.addView(text("Apply at boot", 18, TEXT, true));
-        TextView bootHint = text("At boot, turns stop-start off and closes the service permanently.", 14, MUTED, false);
-        bootText.addView(bootHint);
-        boot.addView(bootText, new LinearLayout.LayoutParams(0, -2, 1f));
-        bootPill = text("OFF", 18, MUTED, true);
-        bootPill.setGravity(Gravity.CENTER);
-        bootPill.setMinWidth(dp(88));
-        bootPill.setPadding(dp(16), dp(10), dp(16), dp(10));
-        boot.addView(bootPill);
-        LinearLayout.LayoutParams bootLp = new LinearLayout.LayoutParams(-1, -2);
-        bootLp.topMargin = dp(16);
-        left.addView(boot, bootLp);
+        LinearLayout settings = new LinearLayout(this);
+        settings.setOrientation(LinearLayout.HORIZONTAL);
+        bootPill = addSetting(settings, "Apply at boot",
+                "Turns stop-start off and closes the service when the head unit boots.",
+                new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        toggleBoot();
+                    }
+                });
+        if (Telemetry.configured()) {
+            telemetryPill = addSetting(settings, "Share diagnostics",
+                    "Sends this log to the developer. Nothing else is sent.",
+                    new View.OnClickListener() {
+                        @Override
+                        public void onClick(View v) {
+                            toggleTelemetry();
+                        }
+                    });
+        }
+        LinearLayout.LayoutParams settingsLp = new LinearLayout.LayoutParams(-1, -2);
+        settingsLp.topMargin = dp(16);
+        left.addView(settings, settingsLp);
 
         LinearLayout logCard = new LinearLayout(this);
         logCard.setOrientation(LinearLayout.VERTICAL);

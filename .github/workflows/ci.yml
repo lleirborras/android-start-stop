@@ -120,6 +120,9 @@ jobs:
           RELEASE_KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_B64 }}
           KS_PASS: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
           VERSION_CODE: ${{ github.run_number }}
+          # Public, write-only PostHog project key; diagnostics are left out of the build when unset.
+          POSTHOG_KEY: ${{ vars.POSTHOG_KEY }}
+          POSTHOG_HOST: ${{ vars.POSTHOG_HOST }}
         run: |
           if [ -n "$RELEASE_KEYSTORE_B64" ]; then
             echo "$RELEASE_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.p12"

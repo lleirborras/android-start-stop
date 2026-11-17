@@ -19,6 +19,7 @@ The screenshots are from an emulator at 1920x720 with a simulated CAN box. On a 
 - **Apply at boot**: off by default. When on, the app turns stop-start off and closes the service once after the head unit boots, then stops.
 - **Log**: the commands sent and any errors.
 - **Check for updates**: downloads and installs the latest release when you ask for it.
+- **Share diagnostics**: optional, off by default. Sends the app's log lines to the developer.
 
 ## Install from a USB pendrive
 
@@ -42,6 +43,20 @@ With the head unit online (phone hotspot or Wi-Fi):
 4. The app closes when the update finishes. Open it again; the new version is shown next to the title. Settings and the log are kept.
 
 The app only uses the network when you tap that button. It asks `api.github.com` for this repository's latest release and downloads the APK from `github.com`; it sends nothing else. Android refuses any APK that is not signed with the same key as the installed app, so a locally built (debug-signed) install cannot be updated this way.
+
+## Diagnostics
+
+**Share diagnostics** is off by default. When you switch it on, each line the app writes to its log is also sent to the developer's [PostHog](https://posthog.com) project, so problems can be diagnosed without copying the log file by hand.
+
+What is sent with each line:
+
+- the log line itself (the same text as in the LOG panel: commands sent, CAN box status frames, errors, boot activity);
+- the app version, the Android SDK level and the head unit's model name;
+- a random id created for this install, so lines from one head unit can be told apart. It is not tied to you or to the vehicle.
+
+Nothing is sent while the switch is off. Lines logged while the head unit is offline are kept (up to 500) and sent the next time a line is logged with a connection. Switching it off discards anything not sent yet.
+
+The switch only appears in builds made with a PostHog key. Release builds get it from the repository variables `POSTHOG_KEY` and `POSTHOG_HOST`; a local build has no key unless you set those environment variables for `build.sh`. The key is a public, write-only project key.
 
 ## Getting the log off the head unit
 
