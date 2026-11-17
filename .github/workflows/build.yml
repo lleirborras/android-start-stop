@@ -1,0 +1,61 @@
+name: build
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android SDK packages
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;34.0.0" "platforms;android-34" > /dev/null
+
+      - name: Build APK
+        env:
+          RELEASE_KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          VERSION_CODE: ${{ github.run_number }}
+        run: |
+          if [ -n "$RELEASE_KEYSTORE_B64" ]; then
+            echo "$RELEASE_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.p12"
+            export KEYSTORE="$RUNNER_TEMP/release.p12" KEY_ALIAS=release
+          elif [ "$GITHUB_REF_TYPE" = tag ]; then
+            echo "::error::RELEASE_KEYSTORE_B64 secret is missing; refusing to release a debug-signed APK"
+            exit 1
+          fi
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            export VERSION_NAME="${GITHUB_REF_NAME#v}"
+          else
+            export VERSION_NAME="dev-${GITHUB_SHA::7}"
+          fi
+          sh build.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nostartstop-apk
+          path: build/nostartstop.apk
+
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          apk="nostartstop-$GITHUB_REF_NAME.apk"
+          cp build/nostartstop.apk "$apk"
+          case "$GITHUB_REF_NAME" in v0.*) pre=--prerelease ;; *) pre= ;; esac
+          gh release create "$GITHUB_REF_NAME" "$apk" --verify-tag --generate-notes --title "$GITHUB_REF_NAME" $pre

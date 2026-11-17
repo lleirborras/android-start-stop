@@ -21,15 +21,15 @@ The screenshots are from an emulator at 1920x720 with a simulated CAN box. On a 
 
 ## Install from a USB pendrive
 
-1. Build the APK (see [Build](#build)) or take `build/nostartstop.apk` from someone who has.
-2. Copy `nostartstop.apk` to a FAT32 or exFAT pendrive.
+1. Download `nostartstop-vX.Y.Z.apk` from the [Releases](../../releases) page, or build it yourself (see [Build](#build)).
+2. Copy the APK to a FAT32 or exFAT pendrive.
 3. Plug the pendrive into the head unit's USB port.
-4. Open the head unit's **APK Installer** app (or its file manager), pick the USB drive and tap `nostartstop.apk`.
+4. Open the head unit's **APK Installer** app (or its file manager), pick the USB drive and tap the APK.
 5. If Android asks, allow installing from unknown sources for that app, then tap **Install**.
 6. Open **No Start-Stop** once from the app list. Android does not deliver the boot event to an app that has never been opened.
 7. Turn **Apply at boot** on if you want it applied automatically.
 
-To update, install the new APK over the old one the same way. An APK built on a different computer is signed with a different key, so uninstall the old version first.
+To update, install the new APK over the old one the same way. Release APKs all share one signing key, so they update each other. A locally built APK is signed with your own debug key: uninstall the old version before switching between a release and a local build.
 
 ## Install with adb
 
@@ -74,7 +74,21 @@ Needs JDK 17 and the Android SDK with `build-tools/34.0.0` and `platforms/androi
 sh build.sh
 ```
 
-The result is `build/nostartstop.apk`, signed with the local debug key in `~/.android/debug.keystore` (created on first build). That is fine for sideloading onto your own head unit; it is not a release signing setup.
+The result is `build/nostartstop.apk`, signed with the local debug key in `~/.android/debug.keystore` (created on first build). That is fine for sideloading onto your own head unit.
+
+To sign with a stable key instead, set `KEYSTORE` (a PKCS12 file), `KS_PASS` and `KEY_ALIAS`. `VERSION_NAME` and `VERSION_CODE` set the version stamped into the APK.
+
+## CI and releases
+
+GitHub Actions (`.github/workflows/build.yml`) builds the APK on every push to `master` and on pull requests, and keeps it as a workflow artifact.
+
+Pushing a tag `vX.Y.Z` also publishes a GitHub release with `nostartstop-vX.Y.Z.apk` attached. `v0.*` tags are marked as pre-releases.
+
+```sh
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+Releases are signed with the key in the repository secrets `RELEASE_KEYSTORE_B64` (base64 of a PKCS12 keystore, alias `release`) and `RELEASE_KEYSTORE_PASSWORD`. A tag build fails if they are missing. Keep a copy of that keystore: if it is lost, later releases cannot update earlier installs.
 
 ## How it works
 
