@@ -39,6 +39,7 @@ final class LogFile {
         } catch (IOException e) {
             Log.w("NoStartStop", "log file: " + e);
         }
+        Telemetry.log(c, line);
         return stamped;
     }
 
