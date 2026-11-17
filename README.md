@@ -18,6 +18,7 @@ The screenshots are from an emulator at 1920x720 with a simulated CAN box. On a 
 - **Stop-start service**: shows whether the service is controllable or permanently closed and toggles it.
 - **Apply at boot**: off by default. When on, the app turns stop-start off and closes the service once after the head unit boots, then stops.
 - **Log**: the commands sent and any errors.
+- **Check for updates**: downloads and installs the latest release when you ask for it.
 
 ## Install from a USB pendrive
 
@@ -30,6 +31,17 @@ The screenshots are from an emulator at 1920x720 with a simulated CAN box. On a 
 7. Turn **Apply at boot** on if you want it applied automatically.
 
 To update, install the new APK over the old one the same way. Release APKs all share one signing key, so they update each other. A locally built APK is signed with your own debug key: uninstall the old version before switching between a release and a local build.
+
+## Updating from the app
+
+With the head unit online (phone hotspot or Wi-Fi):
+
+1. Tap **Check for updates** at the top of the screen. The button changes to **Install vX.Y.Z** if a newer release exists, or **Up to date**.
+2. Tap **Install vX.Y.Z**. The app downloads the APK and Android asks you to confirm the update.
+3. The first time, Android says the app is not allowed to install unknown apps. Tap **Settings**, allow it for No Start-Stop, go back and tap **Install** again.
+4. The app closes when the update finishes. Open it again; the new version is shown next to the title. Settings and the log are kept.
+
+The app only uses the network when you tap that button. It asks `api.github.com` for this repository's latest release and downloads the APK from `github.com`; it sends nothing else. Android refuses any APK that is not signed with the same key as the installed app, so a locally built (debug-signed) install cannot be updated this way.
 
 ## Getting the log off the head unit
 
