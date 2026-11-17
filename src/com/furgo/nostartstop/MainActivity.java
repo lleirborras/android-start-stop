@@ -236,8 +236,8 @@ public class MainActivity extends Activity implements CanBox.Listener {
         if (on) {
             onLog("diagnostics sharing on");
         } else {
-            Telemetry.clear(this);
             onLog("diagnostics sharing off");
+            Telemetry.clear(this);
         }
         renderBoot();
     }

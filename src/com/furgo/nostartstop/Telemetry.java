@@ -47,11 +47,17 @@ final class Telemetry {
             @Override
             public void run() {
                 try {
+                    // The switch may have been turned off since this line was queued for the worker.
+                    if (!Prefs.telemetry(app)) {
+                        queueFile(app).delete();
+                        return;
+                    }
                     ArrayDeque<String> queued = read(app);
                     queued.addLast(event(app, line, timestamp).toString());
                     while (queued.size() > MAX_QUEUED) queued.removeFirst();
                     write(app, queued);
-                    if (send(queued)) queueFile(app).delete();
+                    if (!send(queued)) return;
+                    queueFile(app).delete();
                 } catch (Exception e) {
                     Log.w(TAG, "telemetry: " + e);
                 }
@@ -59,13 +65,14 @@ final class Telemetry {
         });
     }
 
-    /** Drops anything not sent yet; called when the user switches diagnostics off. */
+    /** Drops anything not sent yet and forgets the install id; called when the user switches diagnostics off. */
     static void clear(Context context) {
         final Context app = context.getApplicationContext();
         WORKER.execute(new Runnable() {
             @Override
             public void run() {
                 queueFile(app).delete();
+                Prefs.clearInstallId(app);
             }
         });
     }

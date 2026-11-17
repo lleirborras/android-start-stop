@@ -54,7 +54,7 @@ What is sent with each line:
 - the app version, the Android SDK level and the head unit's model name;
 - a random id created for this install, so lines from one head unit can be told apart. It is not tied to you or to the vehicle.
 
-Nothing is sent while the switch is off. Lines logged while the head unit is offline are kept (up to 500) and sent the next time a line is logged with a connection. Switching it off discards anything not sent yet.
+Nothing is sent while the switch is off. Lines logged while the head unit is offline are kept (up to 500) and sent the next time a line is logged with a connection. Switching it off discards anything not sent yet and forgets the random id, so switching it on again starts with a new one.
 
 The switch only appears in builds made with a PostHog key. Release builds get it from the repository variables `POSTHOG_KEY` and `POSTHOG_HOST`; a local build has no key unless you set those environment variables for `build.sh`. The key is a public, write-only project key.
 
