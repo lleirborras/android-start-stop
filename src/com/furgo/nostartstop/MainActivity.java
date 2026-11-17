@@ -1,8 +1,6 @@
 package com.furgo.nostartstop;
 
 import android.app.Activity;
-import android.content.Intent;
-import android.content.pm.PackageInstaller;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -219,19 +217,6 @@ public class MainActivity extends Activity implements CanBox.Listener {
 
     private void renderUpdate(String label) {
         updateView.setText(label);
-    }
-
-    @Override
-    protected void onNewIntent(Intent intent) {
-        super.onNewIntent(intent);
-        if (!Updater.ACTION_INSTALL_STATUS.equals(intent.getAction())) return;
-        int status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE);
-        if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
-            Intent confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT);
-            if (confirm != null) startActivity(confirm);
-        } else if (status != PackageInstaller.STATUS_SUCCESS) {
-            onLog("install failed (" + status + "): " + intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE));
-        }
     }
 
     private void toggleBoot() {

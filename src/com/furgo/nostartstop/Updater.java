@@ -22,7 +22,8 @@ import java.net.URL;
  * Both methods block on the network; call them off the main thread.
  */
 final class Updater {
-    static final String ACTION_INSTALL_STATUS = "com.furgo.nostartstop.INSTALL_STATUS";
+    /** Id of the install session this process committed, or -1. Checked by InstallStatusActivity. */
+    static volatile int pendingSession = -1;
 
     private static final String REPO = "lleirborras/android-start-stop";
     private static final String LATEST_URL = "https://api.github.com/repos/" + REPO + "/releases/latest";
@@ -59,8 +60,8 @@ final class Updater {
 
     /**
      * Downloads the APK into an install session and commits it. Android then reports back to
-     * MainActivity (ACTION_INSTALL_STATUS), first to ask the user to confirm. Android itself
-     * rejects an APK that is not signed with the same key as the installed app.
+     * InstallStatusActivity, first to ask the user to confirm. The download is not checked here:
+     * Android itself rejects an APK that is not signed with the same key as the installed app.
      */
     static void install(Context context, Release release) throws IOException {
         if (!release.apkUrl.startsWith(DOWNLOAD_PREFIX)) throw new IOException("unexpected download URL");
@@ -68,27 +69,38 @@ final class Updater {
         PackageInstaller.SessionParams params =
                 new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
         params.setAppPackageName(context.getPackageName());
-        PackageInstaller.Session session = installer.openSession(installer.createSession(params));
+        int sessionId = installer.createSession(params);
+        PackageInstaller.Session session = installer.openSession(sessionId);
         try {
             HttpURLConnection c = open(release.apkUrl);
             try {
                 if (c.getResponseCode() != 200) throw new IOException("download answered " + c.getResponseCode());
-                byte[] apk = read(c.getInputStream(), MAX_APK_BYTES);
-                OutputStream out = session.openWrite("update.apk", 0, apk.length);
+                if (c.getContentLength() > MAX_APK_BYTES) throw new IOException("APK is too large");
+                InputStream in = c.getInputStream();
+                OutputStream out = session.openWrite("update.apk", 0, -1);
                 try {
-                    out.write(apk);
+                    byte[] buf = new byte[16 * 1024];
+                    int total = 0;
+                    int n;
+                    while ((n = in.read(buf)) != -1) {
+                        total += n;
+                        if (total > MAX_APK_BYTES) throw new IOException("APK is too large");
+                        out.write(buf, 0, n);
+                    }
                     session.fsync(out);
                 } finally {
                     out.close();
+                    in.close();
                 }
             } finally {
                 c.disconnect();
             }
-            Intent status = new Intent(context, MainActivity.class).setAction(ACTION_INSTALL_STATUS);
+            Intent status = new Intent(context, InstallStatusActivity.class);
             // The installer fills in the result extras, so from Android 12 the intent must be mutable.
             int flags = PendingIntent.FLAG_UPDATE_CURRENT
                     | (Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0);
-            session.commit(PendingIntent.getActivity(context, 0, status, flags).getIntentSender());
+            pendingSession = sessionId;
+            session.commit(PendingIntent.getActivity(context, sessionId, status, flags).getIntentSender());
         } catch (IOException e) {
             session.abandon();
             throw e;
