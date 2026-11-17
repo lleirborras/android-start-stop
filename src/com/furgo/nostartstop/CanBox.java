@@ -6,6 +6,7 @@ import android.os.Message;
 import android.tw.john.TWUtil;
 import android.util.Log;
 
+import java.util.Arrays;
 import java.util.Locale;
 
 /** One connection to the CAN box through TWUtil. Main-thread only. */
@@ -29,6 +30,7 @@ final class CanBox {
     private final String tag = TAG + "-" + (instances++);
     private TWUtil tw;
     private boolean shortFrameLogged;
+    private byte[] lastFrame;
 
     private final Handler handler = new Handler(Looper.getMainLooper()) {
         @Override
@@ -113,6 +115,10 @@ final class CanBox {
                 log("status frame too short: " + hex(b));
             }
             return;
+        }
+        if (!Arrays.equals(b, lastFrame)) {
+            lastFrame = b.clone();
+            log("status " + hex(b));
         }
         listener.onState((b[5] & 0x40) != 0, (b[8] & 0x40) != 0);
     }

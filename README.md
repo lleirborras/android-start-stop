@@ -31,6 +31,32 @@ The screenshots are from an emulator at 1920x720 with a simulated CAN box. On a 
 
 To update, install the new APK over the old one the same way. Release APKs all share one signing key, so they update each other. A locally built APK is signed with your own debug key: uninstall the old version before switching between a release and a local build.
 
+## Getting the log off the head unit
+
+The app writes everything shown in its LOG panel, plus what the boot service did, to a text file:
+
+```
+Android/data/com.furgo.nostartstop/files/nostartstop.log
+```
+
+on the head unit's internal storage (full path `/storage/emulated/0/Android/data/com.furgo.nostartstop/files/nostartstop.log`; the app shows the exact path under the LOG title). When it passes 512 KB it is renamed to `nostartstop.log.1` and a new file is started.
+
+To copy it without adb:
+
+1. Plug a pendrive into the head unit.
+2. Open the head unit's file manager and go to internal storage, then `Android/data/com.furgo.nostartstop/files/`.
+3. Copy `nostartstop.log` to the pendrive.
+
+Each line has a date and time. Lines to look for:
+
+- `app opened, version …, android …`: app and Android version.
+- `TWUtil open` / `TWUtil unavailable: …`: whether the head unit's MCU link works.
+- `status 00 00 …`: the raw settings frame from the CAN box, logged whenever it changes.
+- `sent start-stop enabled=… permClosed=…, rc=…`: a command sent to the CAN box.
+- `boot: …`: what the boot service did.
+
+With adb the same file is at `adb pull /sdcard/Android/data/com.furgo.nostartstop/files/nostartstop.log`.
+
 ## Install with adb
 
 ```sh

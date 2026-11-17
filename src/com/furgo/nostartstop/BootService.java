@@ -29,6 +29,7 @@ public class BootService extends Service implements CanBox.Listener {
         public void run() {
             long elapsed = SystemClock.elapsedRealtime() - startedAt;
             if (elapsed >= TIMEOUT_MS) {
+                onLog("gave up after " + TIMEOUT_MS / 1000 + " s");
                 finish();
                 return;
             }
@@ -51,6 +52,7 @@ public class BootService extends Service implements CanBox.Listener {
         if (canBox != null) return START_NOT_STICKY;
         startForeground(1, buildNotification());
         canBox = new CanBox(this);
+        onLog("service started");
         startedAt = SystemClock.elapsedRealtime();
         handler.post(tick);
         return START_NOT_STICKY;
@@ -72,6 +74,7 @@ public class BootService extends Service implements CanBox.Listener {
     public void onState(boolean startStopEnabled, boolean permanentlyClosed) {
         statusSeen = true;
         if (!startStopEnabled && permanentlyClosed) {
+            onLog("confirmed off and closed");
             finish();
         } else {
             send();
@@ -80,6 +83,7 @@ public class BootService extends Service implements CanBox.Listener {
 
     @Override
     public void onLog(String line) {
+        LogFile.append(this, "boot: " + line);
     }
 
     private void send() {

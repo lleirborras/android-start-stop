@@ -5,6 +5,7 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.StateListDrawable;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.SystemClock;
@@ -16,10 +17,7 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
-import java.text.SimpleDateFormat;
 import java.util.ArrayDeque;
-import java.util.Date;
-import java.util.Locale;
 
 public class MainActivity extends Activity implements CanBox.Listener {
     private static final int BG = 0xFF0B0E13;
@@ -39,7 +37,6 @@ public class MainActivity extends Activity implements CanBox.Listener {
 
     private final Handler handler = new Handler();
     private final ArrayDeque<String> log = new ArrayDeque<String>();
-    private final SimpleDateFormat clock = new SimpleDateFormat("HH:mm:ss", Locale.US);
 
     private CanBox box;
     private boolean opened;
@@ -83,7 +80,17 @@ public class MainActivity extends Activity implements CanBox.Listener {
         density = getResources().getDisplayMetrics().density;
         box = new CanBox(this);
         setContentView(buildUi());
+        LogFile.append(this, "app opened, version " + versionName() + ", android " + Build.VERSION.RELEASE
+                + " (sdk " + Build.VERSION.SDK_INT + "), " + Build.MODEL);
         render();
+    }
+
+    private String versionName() {
+        try {
+            return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception e) {
+            return "unknown";
+        }
     }
 
     @Override
@@ -92,6 +99,10 @@ public class MainActivity extends Activity implements CanBox.Listener {
         enabled = null;
         closed = null;
         link = LINK_WAITING;
+        // Reload from the file so lines written by the boot service show up too.
+        log.clear();
+        log.addAll(LogFile.tail(this, MAX_LOG));
+        renderLog();
         opened = box.open();
         if (!opened) link = LINK_DOWN;
         render();
@@ -118,10 +129,14 @@ public class MainActivity extends Activity implements CanBox.Listener {
 
     @Override
     public void onLog(String line) {
-        log.addLast(clock.format(new Date()) + "  " + line);
+        log.addLast(LogFile.append(this, line));
         while (log.size() > MAX_LOG) log.removeFirst();
+        renderLog();
+    }
+
+    private void renderLog() {
         StringBuilder sb = new StringBuilder();
-        for (String s : log) sb.append(s).append('\n');
+        for (String s : log) sb.append(s.length() > 11 ? s.substring(11) : s).append('\n');
         logView.setText(sb.toString().trim());
         logScroll.post(new Runnable() {
             @Override
@@ -277,6 +292,8 @@ public class MainActivity extends Activity implements CanBox.Listener {
         TextView logTitle = text("LOG", 12, MUTED, true);
         logTitle.setLetterSpacing(0.16f);
         logCard.addView(logTitle);
+        TextView logPath = text(LogFile.file(this).getPath(), 10, MUTED, false);
+        logCard.addView(logPath);
         logScroll = new ScrollView(this);
         logView = text("", 12, MUTED, false);
         logView.setTypeface(Typeface.MONOSPACE);
