@@ -87,7 +87,8 @@ public class MainActivity extends Activity implements CanBox.Listener {
 
     private String versionName() {
         try {
-            return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+            String name = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+            return name == null || name.isEmpty() ? "unknown" : name;
         } catch (Exception e) {
             return "unknown";
         }
