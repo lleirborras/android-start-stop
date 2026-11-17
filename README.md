@@ -125,9 +125,9 @@ Merging a pull request into `master` publishes a release automatically, dependin
 | `fix/`, `perf/` | patch | `v0.3.1` → `v0.3.2` |
 | anything else (`ci/`, `docs/`, `chore/`, `refactor/`, `test/`, `renovate/`, …) | no release | |
 
-The release is tagged `vX.Y.Z` on the merge commit and has `nostartstop-vX.Y.Z.apk` attached. `v0.*` releases are marked as pre-releases. Commits pushed straight to `master` without a pull request do not release.
+The release is tagged `vX.Y.Z` on the merge commit and has `nostartstop-vX.Y.Z.apk` attached. Its notes are the pull request's title and description, so write the description as a changelog for someone installing the APK. Commits pushed straight to `master` without a pull request do not release.
 
-To release by hand instead, push a tag:
+To release by hand instead, push a tag (the notes are then GitHub's generated list of changes):
 
 ```sh
 git tag v0.2.0 && git push origin v0.2.0
