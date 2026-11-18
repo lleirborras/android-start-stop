@@ -3,20 +3,12 @@ package com.furgo.nostartstop;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.os.Build;
 
 public class BootReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         if (!Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) return;
-        if (Prefs.applyAtBoot(context)) {
-            Intent i = new Intent(context, BootService.class);
-            if (Build.VERSION.SDK_INT >= 26) {
-                context.startForegroundService(i);
-            } else {
-                context.startService(i);
-            }
-        }
+        WatchService.start(context, Prefs.newWake(context, "boot"));
         try {
             UpdateJob.schedule(context, true);
         } catch (RuntimeException e) {

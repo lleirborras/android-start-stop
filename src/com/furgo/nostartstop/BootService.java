@@ -12,8 +12,8 @@ import android.os.Looper;
 import android.os.SystemClock;
 
 /**
- * Sends exactly one stop-start switch after boot, then stops. The car turns stop-start on at every
- * engine start, so one switch turns it off; a second one would turn it back on.
+ * Sends exactly one stop-start switch per ignition cycle, then stops. Started by {@link WatchService} once the engine
+ * runs. The car turns stop-start on at every engine start, so one switch turns it off; a second one would turn it back on.
  */
 public class BootService extends Service implements CanBox.Listener {
     private static final long OPEN_RETRY_MS = 2_000;
@@ -28,8 +28,11 @@ public class BootService extends Service implements CanBox.Listener {
     /** Set by the main screen while it is shown, to redraw when {@link #running} changes. */
     static Runnable onRunningChanged;
 
+    private static final LogBudget LINES = new LogBudget(200);
+
     private final Handler handler = new Handler(Looper.getMainLooper());
     private CanBox canBox;
+    private String cycle;
     private long startedAt;
     private boolean sent;
     private boolean done;
@@ -39,7 +42,7 @@ public class BootService extends Service implements CanBox.Listener {
     private final Runnable openTick = new Runnable() {
         @Override
         public void run() {
-            // The MCU link may not be up yet this early in boot.
+            // The MCU link may not be up yet this early in boot or right after a wake.
             if (canBox.open()) {
                 canBox.query();
                 handler.postDelayed(sendOnce, STATUS_WAIT_MS);
@@ -47,7 +50,7 @@ public class BootService extends Service implements CanBox.Listener {
             }
             if (SystemClock.elapsedRealtime() - startedAt >= OPEN_TIMEOUT_MS) {
                 onLog("no link to the car after " + OPEN_TIMEOUT_MS / 1000 + " s, nothing sent");
-                Prefs.setBootSwitchFailed(BootService.this);
+                Prefs.setBootSwitchFailed(BootService.this, cycle);
                 finish();
                 return;
             }
@@ -61,20 +64,25 @@ public class BootService extends Service implements CanBox.Listener {
             if (sent) return;
             sent = true;
             handler.removeCallbacks(this);
+            if (!cycle.equals(Prefs.currentCycle(BootService.this))) {
+                onLog("cycle changed, nothing sent");
+                finish();
+                return;
+            }
             if (alreadySwitched()) {
                 finish();
                 return;
             }
-            Prefs.markBootSwitch(BootService.this);
+            Prefs.markBootSwitch(BootService.this, cycle);
             sentBit = canBox.toggle();
             if (sentBit >= 0) sentAt = SystemClock.elapsedRealtime();
             if (sentBit < 0) {
-                Prefs.setBootSwitchFailed(BootService.this);
+                Prefs.setBootSwitchFailed(BootService.this, cycle);
                 onLog("switch failed, nothing sent");
                 finish();
                 return;
             }
-            Prefs.recordSwitch(BootService.this, true);
+            Prefs.recordSwitch(BootService.this, true, cycle);
             if (sentBit == 0) {
                 // A cleared echo looks the same as no answer, so it cannot confirm this command.
                 onLog("sent with bit 0, which the echo cannot confirm, done");
@@ -95,8 +103,13 @@ public class BootService extends Service implements CanBox.Listener {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        if (canBox != null) return START_NOT_STICKY;
         startForeground(1, buildNotification());
+        if (canBox != null) {
+            onLog("already running, start request dropped");
+            return START_NOT_STICKY;
+        }
+        // The cycle this switch belongs to, even if a new one starts while it is being sent.
+        cycle = Prefs.currentCycle(this);
         canBox = new CanBox(this);
         onLog("service started, " + DeviceWatch.facts(this));
         if (alreadySwitched()) {
@@ -136,18 +149,18 @@ public class BootService extends Service implements CanBox.Listener {
 
     @Override
     public void onLog(String line) {
-        LogFile.append(this, "boot: " + line);
+        if (LINES.take(SystemClock.elapsedRealtime())) LogFile.append(this, "auto: " + line);
     }
 
-    /** A second switch in the same boot would turn stop-start back on, whoever sent the first. */
+    /** A second switch in the same ignition cycle would turn stop-start back on, whoever sent the first. */
     private boolean alreadySwitched() {
-        if (Prefs.bootSwitchDone(this)) {
-            onLog("already switched during this boot, nothing sent");
+        if (Prefs.bootSwitchDone(this, cycle)) {
+            onLog("already switched during this ignition cycle, nothing sent");
             return true;
         }
-        if (Prefs.lastSwitchAt(this) != 0) {
-            Prefs.markBootSwitch(this);
-            onLog("already switched from the screen during this boot, nothing sent");
+        if (Prefs.lastSwitchAt(this, cycle) != 0) {
+            Prefs.markBootSwitch(this, cycle);
+            onLog("already switched from the screen during this ignition cycle, nothing sent");
             return true;
         }
         return false;

@@ -21,6 +21,14 @@ final class CanBox {
         void onLog(String line);
     }
 
+    /** Power messages for the watch service, called on the main thread. */
+    interface PowerListener {
+        /** Message 514 arg1, every time it arrives. */
+        void onPowerState(int state);
+        /** Every valid battery reading, before the log rate limit. */
+        void onBattery(int centivolts);
+    }
+
     private static final String TAG = "NoStartStop";
     private static final int MAX_LINES_PER_FRAME_ID = 20;
     private static final int MAX_FRAME_IDS = 64;
@@ -34,9 +42,13 @@ final class CanBox {
     private static final short[] ALL_IDS = {(short) Protocol.MSG_CANBOX, (short) Protocol.MSG_ENGINE,
             (short) Protocol.MSG_POWER, (short) Protocol.MSG_UNIT_ID, (short) Protocol.MSG_UNIT_CONFIG};
     private static final short[] CANBOX_IDS = {(short) Protocol.MSG_CANBOX};
+    private static final short[] WATCH_IDS = {(short) Protocol.MSG_POWER_STATE, (short) Protocol.MSG_POWER};
     private static int instances;
 
     private final Listener listener;
+    // Set only for the watch service, which opens only the power messages and never sends.
+    private PowerListener power;
+    private String openFailure;
     private final String tag = TAG + "-" + (instances++);
     private TWUtil tw;
     private boolean shortFrameLogged;
@@ -66,6 +78,11 @@ final class CanBox {
         @Override
         public void handleMessage(Message msg) {
             if (tw == null) return;
+            if (power != null) {
+                if (msg.what == Protocol.MSG_POWER_STATE) power.onPowerState(msg.arg1);
+                else if (msg.what == Protocol.MSG_POWER) onCarMessage(msg);
+                return;
+            }
             if (msg.what != Protocol.MSG_CANBOX) {
                 if (captureFrames) onCarMessage(msg);
                 return;
@@ -81,13 +98,25 @@ final class CanBox {
         this.listener = listener;
     }
 
+    /**
+     * Call before {@link #open}. Then open() asks for the power messages only, without the CAN box, and does not log
+     * its failures: {@link #openFailure} has the last one.
+     */
+    void watchPower(PowerListener listener) {
+        power = listener;
+    }
+
+    String openFailure() {
+        return openFailure;
+    }
+
     /** With captureFrames set, also opens the engine and unit ids, falling back to the CAN box alone if they are refused. */
     boolean open() {
         if (tw != null) return true;
         extraIdsRefused = null;
-        TWUtil t = captureFrames ? connect(ALL_IDS, true) : null;
+        TWUtil t = captureFrames && power == null ? connect(ALL_IDS, true) : null;
         extraIds = t != null;
-        if (t == null) t = connect(CANBOX_IDS, false);
+        if (t == null) t = connect(power != null ? WATCH_IDS : CANBOX_IDS, false);
         if (t == null) return false;
         lastFrame = null;
         otherFrames.clear();
@@ -101,13 +130,14 @@ final class CanBox {
             t.addHandler(tag, handler);
             t.start();
         } catch (Throwable e) {
-            log("TWUtil unavailable: " + e);
+            failed("TWUtil unavailable: " + e);
             release(t);
             return false;
         }
         tw = t;
         log(extraIdsRefused == null ? "TWUtil open"
                 : "TWUtil open, CAN box only (engine and unit ids refused: " + extraIdsRefused + ")");
+        if (power != null) return true;
         // The caller asks for the settings frame first; frame 57 and the car data follow its answer.
         firstFunctionPending = true;
         handler.postDelayed(firstFunction, 500);
@@ -139,8 +169,13 @@ final class CanBox {
         }
         release(t);
         if (extra) extraIdsRefused = failure;
-        else log(failure);
+        else failed(failure);
         return null;
+    }
+
+    private void failed(String failure) {
+        if (power != null) openFailure = failure;
+        else log(failure);
     }
 
     private void release(TWUtil t) {
@@ -274,6 +309,7 @@ final class CanBox {
             log("engine rpm=" + (rpm < 0 ? "?" : String.valueOf(rpm)) + " speed=" + speed);
         } else if (msg.what == Protocol.MSG_POWER && msg.arg1 == 0 && msg.obj instanceof byte[]) {
             int cv = Protocol.batteryCentivolts((byte[]) msg.obj);
+            if (power != null && cv >= 0) power.onBattery(cv);
             if (cv < 0 || batteryLines >= MAX_BATTERY_LINES
                     || (loggedCentivolts >= 0 && now - batteryLoggedAt < CAR_DATA_EVERY_MS)
                     || !Protocol.batteryChanged(loggedCentivolts, cv)) return;
