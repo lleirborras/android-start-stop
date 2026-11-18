@@ -9,6 +9,7 @@ import android.graphics.Canvas;
 import android.graphics.DashPathEffect;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.StateListDrawable;
@@ -176,7 +177,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         }
     };
 
-    /** The assumed state as a shape, so on, off and unknown differ without colour: tick, warning triangle, dashed ring. */
+    /** The stop-start symbol: the "A" in a circular arrow, struck through when off; a dashed ring with "?" when unknown. */
     private final class StateBadge extends View {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Path path = new Path();
@@ -197,35 +198,40 @@ public class MainActivity extends Activity implements CanBox.Listener {
             paint.setStrokeCap(Paint.Cap.ROUND);
             paint.setStrokeJoin(Paint.Join.ROUND);
             paint.setPathEffect(null);
-            if (state == AssumedState.OFF) {
-                paint.setStyle(Paint.Style.FILL);
-                paint.setColor(ACCENT);
-                c.drawCircle(cx, cy, u / 2, paint);
+            if (state != AssumedState.UNKNOWN) {
+                int color = state == AssumedState.ON ? WARN : TEXT;
+                float r = u * 0.42f, sw = u * 0.07f;
                 paint.setStyle(Paint.Style.STROKE);
-                paint.setStrokeWidth(u * 0.1f);
-                paint.setColor(BG);
+                paint.setStrokeWidth(sw);
+                paint.setColor(color);
+                c.drawArc(new RectF(cx - r, cy - r, cx + r, cy + r), 300, 285, false, paint);
+                double end = Math.toRadians(225);
+                float px = cx + r * (float) Math.cos(end), py = cy + r * (float) Math.sin(end);
+                float tx = -(float) Math.sin(end), ty = (float) Math.cos(end), nx = ty, ny = -tx;
+                float len = u * 0.22f, half = u * 0.15f;
                 path.reset();
-                path.moveTo(cx - u * 0.2f, cy + u * 0.01f);
-                path.lineTo(cx - u * 0.05f, cy + u * 0.16f);
-                path.lineTo(cx + u * 0.22f, cy - u * 0.14f);
-                c.drawPath(path, paint);
-            } else if (state == AssumedState.ON) {
-                float r = u * 0.08f;
-                paint.setStyle(Paint.Style.FILL_AND_STROKE);
-                paint.setStrokeWidth(r * 2);
-                paint.setColor(WARN);
-                path.reset();
-                path.moveTo(cx, r + u * 0.06f);
-                path.lineTo(w - r - u * 0.04f, h - r - u * 0.08f);
-                path.lineTo(r + u * 0.04f, h - r - u * 0.08f);
+                path.moveTo(px + tx * len, py + ty * len);
+                path.lineTo(px + nx * half, py + ny * half);
+                path.lineTo(px - nx * half, py - ny * half);
                 path.close();
+                paint.setStyle(Paint.Style.FILL_AND_STROKE);
+                paint.setStrokeWidth(sw * 0.4f);
                 c.drawPath(path, paint);
-                paint.setStyle(Paint.Style.STROKE);
-                paint.setStrokeWidth(u * 0.09f);
-                paint.setColor(BG);
-                c.drawLine(cx, cy - u * 0.12f, cx, cy + u * 0.1f, paint);
                 paint.setStyle(Paint.Style.FILL);
-                c.drawCircle(cx, cy + u * 0.24f, u * 0.06f, paint);
+                paint.setTextAlign(Paint.Align.CENTER);
+                paint.setTypeface(Typeface.DEFAULT_BOLD);
+                paint.setTextSize(u * 0.56f);
+                c.drawText("A", cx, cy + u * 0.2f, paint);
+                if (state == AssumedState.OFF) {
+                    float d = u * 0.46f;
+                    paint.setStyle(Paint.Style.STROKE);
+                    paint.setStrokeWidth(sw * 1.6f);
+                    paint.setColor(CARD);
+                    c.drawLine(cx - d, cy + d * 0.55f, cx + d, cy - d * 0.55f, paint);
+                    paint.setStrokeWidth(sw * 0.9f);
+                    paint.setColor(color);
+                    c.drawLine(cx - d, cy + d * 0.55f, cx + d, cy - d * 0.55f, paint);
+                }
             } else {
                 float sw = u * 0.07f;
                 paint.setStyle(Paint.Style.STROKE);
@@ -677,9 +683,9 @@ public class MainActivity extends Activity implements CanBox.Listener {
                 : pressable(NEUTRAL, NEUTRAL_PRESSED, 2));
 
         int assumed = Prefs.assumedState(this);
-        int stateColor = assumed == AssumedState.OFF ? ACCENT : assumed == AssumedState.ON ? WARN : MUTED;
+        int stateColor = assumed == AssumedState.OFF ? TEXT : assumed == AssumedState.ON ? WARN : MUTED;
         badge.setState(assumed);
-        stateCard.setBackgroundDrawable(shape(CARD, 20, 2, assumed == AssumedState.UNKNOWN ? CARD_EDGE : stateColor));
+        stateCard.setBackgroundDrawable(shape(CARD, 20, 2, assumed == AssumedState.UNKNOWN ? CARD_EDGE : assumed == AssumedState.OFF ? 0xFF5B6678 : WARN));
         String word = assumed == AssumedState.UNKNOWN ? "UNKNOWN" : AssumedState.name(assumed).toUpperCase(Locale.ROOT);
         SpannableStringBuilder sb = new SpannableStringBuilder(word);
         if (assumed != AssumedState.UNKNOWN) {
