@@ -220,3 +220,7 @@ These were read from the decompiled vendor app `com.tw.car` (`PsaRaiseSettingsAc
 - **Stop-start ends up on after a tap**: each tap flips it, so it was off before. Tap once more and check the instrument cluster message.
 - **Switch off at boot does nothing**: open the app once after installing. Many head units sleep on ignition-off instead of rebooting, and the app only acts on a real boot. The log shows `boot:` lines for every boot it acted on.
 - **Stop-start is on after a boot with Switch off at boot on**: the head unit probably booted twice in the same engine run, so the second switch turned it back on. Tap the button once.
+
+## License
+
+[MIT](LICENSE).
