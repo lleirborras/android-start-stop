@@ -7,13 +7,14 @@
   "packageRules": [
     {
       "description": "Stay on JDK 17; newer majors gain nothing for this build.",
-      "matchManagers": [
-        "asdf"
-      ],
       "matchUpdateTypes": [
         "major"
       ],
-      "enabled": false
+      "enabled": false,
+      "matchDepNames": [
+        "java",
+        "java-jdk"
+      ]
     }
   ]
 }
