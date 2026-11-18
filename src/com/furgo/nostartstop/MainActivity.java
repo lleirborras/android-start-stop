@@ -4,7 +4,6 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Context;
 import android.content.DialogInterface;
-import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.StateListDrawable;
@@ -57,7 +56,9 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private boolean opened;
     private int link = LINK_WAITING;
     private long lastFrameAt;
-    private int pendingBit = -1;   // bit of the switch command sent and not yet echoed; -1 = none
+    // A tap first waits for a fresh status frame to pick the bit, then for the echo of the command.
+    private static final int IDLE = 0, AWAIT_FRAME = 1, AWAIT_ECHO = 2;
+    private int phase = IDLE;
     private String result = "";    // outcome of the last switch command
     private int resultColor = MUTED;
     private String note;           // replaces the result line for a few seconds
@@ -88,11 +89,26 @@ public class MainActivity extends Activity implements CanBox.Listener {
         }
     };
 
+    private final Runnable noFrame = new Runnable() {
+        @Override
+        public void run() {
+            phase = IDLE;
+            showResult("No answer from the car. Nothing sent.", WARN);
+        }
+    };
+
     private final Runnable noAnswer = new Runnable() {
         @Override
         public void run() {
-            pendingBit = -1;
+            phase = IDLE;
             showResult("No answer from the car.", WARN);
+        }
+    };
+
+    private final Runnable rerender = new Runnable() {
+        @Override
+        public void run() {
+            render();
         }
     };
 
@@ -150,6 +166,8 @@ public class MainActivity extends Activity implements CanBox.Listener {
         log.clear();
         log.addAll(LogFile.tail(this, MAX_LOG));
         renderLog();
+        result = "";
+        BootService.onRunningChanged = rerender;
         box.setCaptureFrames(Prefs.captureFrames(this));
         opened = box.open();
         if (!opened) link = LINK_DOWN;
@@ -162,8 +180,10 @@ public class MainActivity extends Activity implements CanBox.Listener {
     @Override
     protected void onPause() {
         handler.removeCallbacks(requery);
+        handler.removeCallbacks(noFrame);
         handler.removeCallbacks(noAnswer);
-        pendingBit = -1;
+        BootService.onRunningChanged = null;
+        phase = IDLE;
         box.close();
         opened = false;
         super.onPause();
@@ -173,14 +193,43 @@ public class MainActivity extends Activity implements CanBox.Listener {
     public void onEcho(boolean echo) {
         link = LINK_LIVE;
         lastFrameAt = SystemClock.elapsedRealtime();
-        // The first frames after sending may still carry the old echo; only the changed bit is an answer.
-        if (pendingBit >= 0 && echo == (pendingBit == 1)) {
-            pendingBit = -1;
+        if (phase == AWAIT_FRAME) {
+            handler.removeCallbacks(noFrame);
+            phase = IDLE;
+            send();
+        } else if (phase == AWAIT_ECHO && echo) {
+            phase = IDLE;
             handler.removeCallbacks(noAnswer);
-            showResult("Sent at " + clock() + ". Check the instrument cluster.", ACCENT);
+            showSent();
         } else {
             render();
         }
+    }
+
+    /** Called with a status frame that has just arrived, so the bit is picked from the car's current echo. */
+    private void send() {
+        if (BootService.running) {
+            render();
+            return;
+        }
+        int bit = box.toggle();
+        if (bit < 0) {
+            showResult("Could not send to the car. Nothing sent.", WARN);
+            return;
+        }
+        Prefs.recordSwitch(this, false);
+        if (bit == 0) {
+            // A cleared echo looks the same as no answer, so it cannot confirm this command.
+            showSent();
+            return;
+        }
+        phase = AWAIT_ECHO;
+        handler.postDelayed(noAnswer, ANSWER_MS);
+        render();
+    }
+
+    private void showSent() {
+        showResult("Sent at " + clock() + ". Check the instrument cluster.", ACCENT);
     }
 
     @Override
@@ -203,7 +252,11 @@ public class MainActivity extends Activity implements CanBox.Listener {
     }
 
     private static String clock() {
-        return new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date());
+        return clock(System.currentTimeMillis());
+    }
+
+    private static String clock(long wallMs) {
+        return new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date(wallMs));
     }
 
     private void showResult(String text, int color) {
@@ -221,21 +274,17 @@ public class MainActivity extends Activity implements CanBox.Listener {
 
     private void onSwitchTap() {
         // A second command while one is pending would flip stop-start straight back.
-        if (pendingBit >= 0) return;
+        if (phase != IDLE || BootService.running) return;
         if (link == LINK_DOWN) {
             flash("Not connected to the car. Nothing sent.");
             return;
         }
         note = null;
         handler.removeCallbacks(clearNote);
-        int bit = box.toggle();
-        if (bit < 0) {
-            flash("Not connected to the car. Nothing sent.");
-            return;
-        }
-        pendingBit = bit;
         result = "";
-        handler.postDelayed(noAnswer, ANSWER_MS);
+        phase = AWAIT_FRAME;
+        box.query();
+        handler.postDelayed(noFrame, ANSWER_MS);
         render();
     }
 
@@ -339,7 +388,8 @@ public class MainActivity extends Activity implements CanBox.Listener {
                 .setTitle("Help fix problems?")
                 .setMessage("Send this app's log to the developer? Each line includes the app version, "
                         + "Android version, head unit model and a random ID. The log holds the commands "
-                        + "sent to the car and the car's replies.\n\n"
+                        + "sent to the car and the car's replies. With Record car data on, it also holds raw "
+                        + "car data that may include vehicle details.\n\n"
                         + "You can change this later with the Share diagnostics switch.")
                 .setCancelable(false)
                 .setPositiveButton("Share", new DialogInterface.OnClickListener() {
@@ -411,19 +461,27 @@ public class MainActivity extends Activity implements CanBox.Listener {
                 : link == LINK_DOWN ? "○  NO LINK TO CAR" : "○  CONNECTING…");
         linkView.setTextColor(link == LINK_LIVE ? ACCENT : link == LINK_DOWN ? LINK_BAD : MUTED);
 
+        boolean bootBusy = BootService.running;
+        long last = Prefs.lastSwitchAt(this);
         if (note != null) {
             feedback.setText(note);
             feedback.setTextColor(WARN);
+        } else if (bootBusy) {
+            feedback.setText("Switching at boot…");
+            feedback.setTextColor(MUTED);
         } else if (result.isEmpty() && link == LINK_DOWN) {
             feedback.setText("This head unit did not let the app reach the car.");
+            feedback.setTextColor(MUTED);
+        } else if (result.isEmpty() && last != 0) {
+            feedback.setText("Last switch: " + clock(last) + (Prefs.lastSwitchAtBoot(this) ? ", at boot" : ""));
             feedback.setTextColor(MUTED);
         } else {
             feedback.setText(result);
             feedback.setTextColor(resultColor);
         }
 
-        boolean pending = pendingBit >= 0;
-        boolean usable = !pending && link != LINK_DOWN;
+        boolean pending = phase != IDLE;
+        boolean usable = !pending && !bootBusy && link != LINK_DOWN;
         switchButton.setText(pending ? "Sending…" : "Switch stop-start");
         switchButton.setTextColor(usable ? TEXT : MUTED);
         switchButton.setBackgroundDrawable(usable ? pressable(PRIMARY, PRIMARY_PRESSED, 0)

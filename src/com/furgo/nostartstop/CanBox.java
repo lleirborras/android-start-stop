@@ -3,6 +3,7 @@ package com.furgo.nostartstop;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.os.SystemClock;
 import android.tw.john.TWUtil;
 import android.util.Log;
 
@@ -25,6 +26,8 @@ final class CanBox {
     private static final int MAX_FRAME_IDS = 64;
     private static final int MAX_FRAME_LINES = 400;
     private static int instances;
+    /** elapsedRealtime of the last switch command written by any CanBox in this process; 0 = none. */
+    static long lastSwitchAt;
 
     private final Listener listener;
     private final String tag = TAG + "-" + (instances++);
@@ -104,8 +107,9 @@ final class CanBox {
     }
 
     /**
-     * Sends one stop-start switch command, which flips stop-start on the car. Returns the bit sent,
-     * which the echo of the next frames should show, or -1 when nothing was sent.
+     * Sends one stop-start switch command, which flips stop-start on the car. Its bit is the opposite of the
+     * echo in the last status frame, so call it right after a fresh frame. Returns the bit sent, or -1 when
+     * nothing was sent.
      */
     int toggle() {
         if (tw == null) {
@@ -114,6 +118,11 @@ final class CanBox {
         }
         int bit = Protocol.toggleValue(lastFrame);
         int rc = write(Protocol.CMD_SET, Protocol.set(bit));
+        if (rc < 0) {
+            log("stop-start switch not sent, bit=" + bit + ", rc=" + rc);
+            return -1;
+        }
+        lastSwitchAt = SystemClock.elapsedRealtime();
         log("sent stop-start switch, bit=" + bit + ", rc=" + rc);
         handler.postDelayed(new Runnable() {
             @Override

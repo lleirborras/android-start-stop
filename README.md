@@ -16,8 +16,13 @@ The screenshots are from an emulator at 1920x720 with a simulated CAN box. On a 
 
 - **Switch stop-start**: one button that sends one switch command to the car. The command is a toggle: each tap turns stop-start off if it was on, and on if it was off.
 - **No on/off display**: the car does not report whether stop-start is on or off, so the app does not show it. The instrument cluster shows a message when stop-start is switched off or on; look there after a tap.
-- **Feedback**: the button shows "Sending…" until the CAN box echoes the command. The card then says "Sent at HH:mm. Check the instrument cluster.", or "No answer from the car." after 3 seconds without an echo. Taps while a command is pending are ignored, so a double tap does not switch it straight back.
-- **Switch off at boot**: off by default. When on, the app sends one switch command after the head unit boots, then stops. The car turns stop-start on at every engine start, so one switch turns it off. See [the limits](#switch-off-at-boot-limits).
+- **Feedback**: a tap first asks the CAN box for a fresh status frame and picks the command from it, then sends. The button shows "Sending…" meanwhile. The card then says:
+  - "Sent at HH:mm. Check the instrument cluster." once the CAN box echoes the command. When the command's bit is 0 the echo cannot confirm it, so this shows as soon as it is sent.
+  - "No answer from the car." when the command was sent but not echoed within 3 seconds. Check the instrument cluster before tapping again: the switch may have worked.
+  - "No answer from the car. Nothing sent." when no status frame came within 3 seconds, and "Could not send to the car. Nothing sent." when the head unit refused the command.
+
+  Taps while a command is pending, or while **Switch off at boot** is sending ("Switching at boot…"), are ignored, so a double tap does not switch it straight back. When idle, the card shows the last switch sent since the head unit started, for example "Last switch: 08:41, at boot".
+- **Switch off at boot**: off by default. When on, the app sends one switch command after the head unit boots, then stops. It sends at most once per boot, even if Android starts it twice. The car turns stop-start on at every engine start, so one switch turns it off. See [the limits](#switch-off-at-boot-limits).
 - **Record car data**: off by default. When on, the log also records the raw frames the CAN box passes on from the car, to help find where the car reports the real stop-start state. These frames may include vehicle details (for example the VIN, speed or position), so leave it off unless you are helping with that.
 - **Log**: the commands sent, the CAN box status frames and any errors.
 - **Check for updates**: downloads and installs the latest release when you ask for it.
@@ -56,7 +61,7 @@ The app only uses the network when you tap that button. It asks `api.github.com`
 
 ## Diagnostics
 
-The first time a release build is opened it asks **Share diagnostics?**. Nothing is sent before you answer. If you choose **Share**, each line the app writes to its log is also sent to the developer's [PostHog](https://posthog.com) project, so problems can be diagnosed without copying the log file by hand. The **Share diagnostics** switch on the main screen changes your answer at any time.
+The first time a release build is opened it asks **Share diagnostics?**. Nothing is sent before you answer. If you choose **Share**, each line the app writes to its log is also sent to the developer's [PostHog](https://posthog.com) project, so problems can be diagnosed without copying the log file by hand. The **Share diagnostics** switch on the main screen changes your answer at any time. With **Record car data** on, the log also holds raw car data that may include vehicle details. Lines are uploaded in batches, at most one request every 3 seconds.
 
 What is sent with each line:
 
@@ -150,7 +155,7 @@ To sign with a stable key instead, set `KEYSTORE` (a PKCS12 file), `KS_PASS` and
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on every push to `master` and on pull requests:
 
-- **test**: `shellcheck` on the scripts and the unit tests (`sh test.sh`). The tests cover the CAN box frame encoding, the echo bit and the switch value in `Protocol.java`, and the version bump rules; they need only a JDK.
+- **test**: `shellcheck` on the scripts and the unit tests (`sh test.sh`). The tests cover the CAN box frame encoding, the echo bit and the switch value in `Protocol.java`, the boot id used to switch once per boot in `BootId.java`, and the version bump rules; they need only a JDK.
 - **security**: `gitleaks` scans the commits for leaked secrets and `zizmor` audits the workflow file. Actions are pinned to commit SHAs.
 - **build**: compiles with javac warnings as errors, builds the APK, checks its contents (launcher activity, boot components, and that the `TWUtil` stub is not packaged) and keeps it as a workflow artifact.
 
@@ -186,14 +191,14 @@ The head unit's MCU relays CAN box frames through the framework class `android.t
 | Action | Call |
 |---|---|
 | Query settings status | `write(1281, 143, 2, {56, 0})` |
-| Switch stop-start | `write(1281, 128, 2, {13, value})`. Any change of bit 0 flips stop-start on the car, so the app sends the opposite of the echo bit (1 when no frame was seen). Bit 7 ("service permanently closed") has no effect on this van and is always sent as 0 |
+| Switch stop-start | `write(1281, 128, 2, {13, value})`. Every command that changes bit 0 flips stop-start on the car, so the app sends the opposite of the echo bit in a status frame it has just asked for (the boot service sends 1 if no frame arrives within 5 seconds). Bit 7 ("service permanently closed") has no effect on this van and is always sent as 0 |
 | Status frame | message `what = 1281`, `arg1 = 56`, 9 bytes. `byte[5]` bit 6 echoes bit 0 of the last command and clears by itself after about 8 seconds; it is **not** the stop-start state. No byte of this frame was seen to follow the real state |
 
 These were read from the decompiled vendor app `com.tw.car` (`PsaRaiseSettingsActivity`) and checked on the van. The vendor app reads `byte[5]` bit 6 as the stop-start state, so it shows the same wrong value.
 
 ## Status
 
-- Tested on a real Jumpy head unit (Android 10). The switch command works: every command flips stop-start, and the instrument cluster shows a message each time.
+- Tested on a real Jumpy head unit (Android 10). The switch command works: every command that changes bit 0 flips stop-start, and the instrument cluster shows a message each time.
 - The car's real stop-start state is not readable through the settings frame. With **Record car data** on, the app logs the other CAN box frames (`frame …` lines) so it can be looked for.
 - "Permanently closed" does nothing on this van.
 
@@ -201,7 +206,9 @@ These were read from the decompiled vendor app `com.tw.car` (`PsaRaiseSettingsAc
 
 - **Log shows `TWUtil unavailable`**: Android is blocking the vendor class for a non-system app. With adb: `adb shell settings put global hidden_api_policy 1`.
 - **"NO LINK TO CAR" and a grey button**: the app could not open the head unit's link to the car, usually the `TWUtil unavailable` case above. Nothing is sent in this state.
-- **"No answer from the car."**: the command was sent but the CAN box did not echo it within 3 seconds. Check the instrument cluster anyway, and the log for the `sent stop-start switch` line and its `rc`.
+- **"No answer from the car."**: the command was sent but the CAN box did not echo it within 3 seconds. Check the instrument cluster before tapping again, since the switch may have worked, and the log for the `sent stop-start switch` line and its `rc`.
+- **"No answer from the car. Nothing sent."**: the CAN box did not send a status frame within 3 seconds of the tap, so no command was sent. Wait for "CONNECTED TO CAR" and tap again.
+- **The instrument cluster showed no message after a tap**: the command may not have changed bit 0 for the car, or the car ignored it. Wait 10 seconds, then tap once more and watch the cluster. If it still shows nothing, share the log: the `sent stop-start switch` and `status` lines around the tap show what happened.
 - **Stop-start ends up on after a tap**: each tap flips it, so it was off before. Tap once more and check the instrument cluster message.
 - **Switch off at boot does nothing**: open the app once after installing. Many head units sleep on ignition-off instead of rebooting, and the app only acts on a real boot. The log shows `boot:` lines for every boot it acted on.
 - **Stop-start is on after a boot with Switch off at boot on**: the head unit probably booted twice in the same engine run, so the second switch turned it back on. Tap the button once.

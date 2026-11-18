@@ -21,6 +21,11 @@ public class BootService extends Service implements CanBox.Listener {
     private static final long STATUS_WAIT_MS = 5_000;
     private static final long ECHO_WAIT_MS = 3_000;
 
+    /** True while the service is working; the main screen does not send meanwhile. Main thread only. */
+    static boolean running;
+    /** Set by the main screen while it is shown, to redraw when {@link #running} changes. */
+    static Runnable onRunningChanged;
+
     private final Handler handler = new Handler(Looper.getMainLooper());
     private CanBox canBox;
     private long startedAt;
@@ -51,8 +56,27 @@ public class BootService extends Service implements CanBox.Listener {
             if (sent) return;
             sent = true;
             handler.removeCallbacks(this);
+            if (CanBox.lastSwitchAt > startedAt) {
+                onLog("a switch was sent from the screen since boot, nothing sent");
+                finish();
+                return;
+            }
+            if (Prefs.bootSwitchDone(BootService.this)) {
+                onLog("already switched during this boot, nothing sent");
+                finish();
+                return;
+            }
+            Prefs.markBootSwitch(BootService.this);
             sentBit = canBox.toggle();
             if (sentBit < 0) {
+                onLog("switch failed, nothing sent");
+                finish();
+                return;
+            }
+            Prefs.recordSwitch(BootService.this, true);
+            if (sentBit == 0) {
+                // A cleared echo looks the same as no answer, so it cannot confirm this command.
+                onLog("sent with bit 0, which the echo cannot confirm, done");
                 finish();
                 return;
             }
@@ -74,6 +98,12 @@ public class BootService extends Service implements CanBox.Listener {
         startForeground(1, buildNotification());
         canBox = new CanBox(this);
         onLog("service started");
+        if (Prefs.bootSwitchDone(this)) {
+            onLog("already switched during this boot, nothing sent");
+            finish();
+            return START_NOT_STICKY;
+        }
+        setRunning(true);
         startedAt = SystemClock.elapsedRealtime();
         handler.post(openTick);
         return START_NOT_STICKY;
@@ -81,6 +111,7 @@ public class BootService extends Service implements CanBox.Listener {
 
     @Override
     public void onDestroy() {
+        setRunning(false);
         handler.removeCallbacksAndMessages(null);
         if (canBox != null) canBox.close();
         super.onDestroy();
@@ -96,7 +127,7 @@ public class BootService extends Service implements CanBox.Listener {
         if (!sent) {
             onLog("status received, echo bit " + (echo ? 1 : 0));
             sendOnce.run();
-        } else if (sentBit >= 0 && echo == (sentBit == 1)) {
+        } else if (sentBit == 1 && echo) {
             onLog("echo bit changed to " + sentBit + ", done");
             finish();
         }
@@ -107,7 +138,14 @@ public class BootService extends Service implements CanBox.Listener {
         LogFile.append(this, "boot: " + line);
     }
 
+    private static void setRunning(boolean on) {
+        if (running == on) return;
+        running = on;
+        if (onRunningChanged != null) onRunningChanged.run();
+    }
+
     private void finish() {
+        setRunning(false);
         handler.removeCallbacksAndMessages(null);
         canBox.close();
         stopSelf();
@@ -124,7 +162,7 @@ public class BootService extends Service implements CanBox.Listener {
         }
         return b.setSmallIcon(android.R.drawable.ic_lock_idle_lock)
                 .setContentTitle("No Start-Stop")
-                .setContentText("Switching stop-start off")
+                .setContentText("Sending stop-start switch")
                 .build();
     }
 }

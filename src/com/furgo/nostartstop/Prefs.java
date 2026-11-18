@@ -2,6 +2,9 @@ package com.furgo.nostartstop;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.Build;
+import android.os.SystemClock;
+import android.provider.Settings;
 
 import java.util.UUID;
 
@@ -10,6 +13,10 @@ final class Prefs {
     private static final String APPLY_AT_BOOT = "apply_at_boot";
     private static final String TELEMETRY = "telemetry";
     private static final String CAPTURE_FRAMES = "capture_frames";
+    private static final String BOOT_SWITCH_BOOT = "boot_switch_boot";
+    private static final String LAST_SWITCH_AT = "last_switch_at";
+    private static final String LAST_SWITCH_AT_BOOT = "last_switch_at_boot";
+    private static final String LAST_SWITCH_BOOT = "last_switch_boot";
     private static final String INSTALL_ID = "install_id";
 
     static boolean applyAtBoot(Context c) {
@@ -18,6 +25,45 @@ final class Prefs {
 
     static void setApplyAtBoot(Context c, boolean on) {
         c.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean(APPLY_AT_BOOT, on).apply();
+    }
+
+    static String currentBoot(Context c) {
+        int count = Build.VERSION.SDK_INT >= 24
+                ? Settings.Global.getInt(c.getContentResolver(), Settings.Global.BOOT_COUNT, -1) : -1;
+        return BootId.of(count, System.currentTimeMillis(), SystemClock.elapsedRealtime());
+    }
+
+    /** True once the boot service has sent its switch during the current boot. */
+    static boolean bootSwitchDone(Context c) {
+        return currentBoot(c).equals(prefs(c).getString(BOOT_SWITCH_BOOT, null));
+    }
+
+    /** Written to disk before the boot service sends, so even a crash right after cannot lead to a second send. */
+    static void markBootSwitch(Context c) {
+        prefs(c).edit().putString(BOOT_SWITCH_BOOT, currentBoot(c)).commit();
+    }
+
+    /** Records a switch command that was sent, by a tap or by the boot service. */
+    static void recordSwitch(Context c, boolean atBoot) {
+        prefs(c).edit()
+                .putLong(LAST_SWITCH_AT, System.currentTimeMillis())
+                .putBoolean(LAST_SWITCH_AT_BOOT, atBoot)
+                .putString(LAST_SWITCH_BOOT, currentBoot(c))
+                .apply();
+    }
+
+    /** Wall-clock time of the last switch sent during the current boot, or 0 if there was none. */
+    static long lastSwitchAt(Context c) {
+        SharedPreferences p = prefs(c);
+        return currentBoot(c).equals(p.getString(LAST_SWITCH_BOOT, null)) ? p.getLong(LAST_SWITCH_AT, 0) : 0;
+    }
+
+    static boolean lastSwitchAtBoot(Context c) {
+        return prefs(c).getBoolean(LAST_SWITCH_AT_BOOT, false);
+    }
+
+    private static SharedPreferences prefs(Context c) {
+        return c.getSharedPreferences(FILE, Context.MODE_PRIVATE);
     }
 
     /** Off by default: unknown CAN frames may hold vehicle details, and the log can be shared. */
