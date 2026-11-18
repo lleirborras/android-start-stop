@@ -8,7 +8,7 @@ public class BootReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         if (!Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) return;
-        WatchService.start(context, Prefs.newWake(context, "boot"));
+        WatchService.start(context, PowerWatch.AT_BOOT);
         try {
             UpdateJob.schedule(context, true);
         } catch (RuntimeException e) {

@@ -1,20 +1,32 @@
 package com.furgo.nostartstop;
 
 /**
- * When the head unit counts as woken up. The car turns stop-start on at every engine start, so the automatic switch is
- * sent at most once per ignition cycle: one wake of the head unit, numbered within the current boot.
+ * Ignition cycles. The car turns stop-start on at every engine start, so the automatic switch is sent at most once per
+ * cycle: an ignition on or an engine start, numbered within the current boot.
  */
 final class WakeRules {
-    /** Wake signals closer together than this in the same boot are one wake, for example boot plus ACC on. */
-    static final long DEDUPE_MS = 60_000;
-    /** Message 514 arg1 when the head unit is awake again, from decompiled vendor code. */
-    static final int POWER_AWAKE = 6;
-
     private WakeRules() {
     }
 
-    static boolean isNewWake(boolean sameBoot, long lastWakeAt, long now) {
-        return !sameBoot || now < lastWakeAt || now - lastWakeAt >= DEDUPE_MS;
+    /** FIRED is any switch sent, by the app or by a tap. */
+    static final int OFF_SEEN = 0, IGNITION_ON_CYCLE = 1, CRANK_CYCLE = 2, FIRED = 3;
+
+    /**
+     * The persisted "ignition off seen" flag after an event. A crank cycle or a sent switch clears it, so a short
+     * ignition off and on that did not stop the app cannot turn a later restart of the app in the middle of a drive
+     * into an ignition on. A cycle started by the flag keeps it until it fires: the service may have been restarted
+     * while the head unit was still off, and a later start must still count.
+     */
+    static boolean ignitionOffAfter(boolean flag, int event) {
+        return ignitionOffAfter(flag, event, false);
+    }
+
+    /** offNow: the last power state seen was ignition off; a switch sent then keeps the flag for the next ignition on. */
+    static boolean ignitionOffAfter(boolean flag, int event, boolean offNow) {
+        if (event == OFF_SEEN) return true;
+        if (event == FIRED && offNow) return flag;
+        if (event == CRANK_CYCLE || event == FIRED) return false;
+        return flag;
     }
 
     static int nextWake(boolean sameBoot, int count) {
@@ -23,18 +35,5 @@ final class WakeRules {
 
     static String cycle(String boot, int wake) {
         return boot + ", wake " + wake;
-    }
-
-    /**
-     * A switch sent shortly before a new cycle starts, for example a tap while the wake is still being noticed, counts
-     * for the new cycle, so the automatic switch does not undo it.
-     */
-    static boolean carrySwitch(boolean inPreviousCycle, long switchAt, long now) {
-        return inPreviousCycle && now >= switchAt && now - switchAt < DEDUPE_MS;
-    }
-
-    /** Message 514 arg1: 1 going to sleep, 5 and 9 off or asleep. */
-    static boolean isSleepState(int state) {
-        return state == 1 || state == 5 || state == 9;
     }
 }

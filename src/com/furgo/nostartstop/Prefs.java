@@ -20,7 +20,7 @@ final class Prefs {
     private static final String BOOT_SWITCH_FAILED = "boot_switch_failed";
     private static final String WAKE_BOOT = "wake_boot";
     private static final String WAKE_COUNT = "wake_count";
-    private static final String WAKE_AT = "wake_at";
+    private static final String IGNITION_OFF = "ignition_off";
     private static final String LAST_SWITCH_ELAPSED = "last_switch_elapsed";
     private static final LogBudget WAKE_LINES = new LogBudget(30);
     private static String currentBoot;
@@ -54,28 +54,26 @@ final class Prefs {
         return WakeRules.cycle(boot, boot.equals(p.getString(WAKE_BOOT, null)) ? p.getInt(WAKE_COUNT, 0) : 0);
     }
 
-    /**
-     * Starts a new ignition cycle unless one started less than a minute ago in this boot. Returns whether it did. A
-     * switch sent less than a minute before counts for the new cycle.
-     */
-    static synchronized boolean newWake(Context c, String source) {
+    /** Starts a new ignition cycle; event is {@link WakeRules#IGNITION_ON_CYCLE} or {@link WakeRules#CRANK_CYCLE}. */
+    static synchronized void newWake(Context c, String source, int event) {
         String boot = currentBoot(c);
         SharedPreferences p = prefs(c);
         boolean sameBoot = boot.equals(p.getString(WAKE_BOOT, null));
         long now = SystemClock.elapsedRealtime();
-        if (!WakeRules.isNewWake(sameBoot, p.getLong(WAKE_AT, 0), now)) return false;
-        String previous = currentCycle(c);
         int n = WakeRules.nextWake(sameBoot, p.getInt(WAKE_COUNT, 0));
-        long switchAt = p.getLong(LAST_SWITCH_ELAPSED, 0);
-        boolean carry = WakeRules.carrySwitch(previous.equals(p.getString(LAST_SWITCH_BOOT, null)), switchAt, now);
-        SharedPreferences.Editor e = p.edit().putString(WAKE_BOOT, boot).putInt(WAKE_COUNT, n).putLong(WAKE_AT, now);
-        if (carry) e.putString(LAST_SWITCH_BOOT, WakeRules.cycle(boot, n));
-        e.commit();
-        if (WAKE_LINES.take(now)) {
-            LogFile.append(c, "wake " + n + " (" + source + ")"
-                    + (carry ? ", switch sent " + (now - switchAt) / 1000 + " s before counts for it" : ""));
-        }
-        return true;
+        p.edit().putString(WAKE_BOOT, boot).putInt(WAKE_COUNT, n)
+                .putBoolean(IGNITION_OFF, WakeRules.ignitionOffAfter(ignitionOff(c), event))
+                .commit();
+        if (WAKE_LINES.take(now)) LogFile.append(c, "wake " + n + " (" + source + ")");
+    }
+
+    /** Written at once: the head unit kills the app a few seconds after ignition off. */
+    static void ignitionEvent(Context c, int event) {
+        prefs(c).edit().putBoolean(IGNITION_OFF, WakeRules.ignitionOffAfter(ignitionOff(c), event)).commit();
+    }
+
+    static boolean ignitionOff(Context c) {
+        return prefs(c).getBoolean(IGNITION_OFF, false);
     }
 
     /** True once the automatic switch was sent during the given ignition cycle. */
@@ -92,11 +90,16 @@ final class Prefs {
         recordSwitch(c, atBoot, currentCycle(c));
     }
 
-    /** Records a switch command that was sent, by a tap or automatically. Written at once: the boot service reads it. */
+    /**
+     * Records a switch command that was sent, by a tap or automatically. Written at once: the boot service reads it.
+     * Clears the ignition off flag: stop-start is no longer in the state the car set at its last start.
+     */
     static void recordSwitch(Context c, boolean atBoot, String cycle) {
         prefs(c).edit()
                 .putLong(LAST_SWITCH_AT, System.currentTimeMillis())
                 .putLong(LAST_SWITCH_ELAPSED, SystemClock.elapsedRealtime())
+                .putBoolean(IGNITION_OFF,
+                        WakeRules.ignitionOffAfter(ignitionOff(c), WakeRules.FIRED, WatchService.ignitionOffNow))
                 .putBoolean(LAST_SWITCH_AT_BOOT, atBoot)
                 .putString(LAST_SWITCH_BOOT, cycle)
                 .remove(BOOT_SWITCH_FAILED)
@@ -120,6 +123,12 @@ final class Prefs {
     static long lastSwitchAt(Context c, String cycle) {
         SharedPreferences p = prefs(c);
         return cycle.equals(p.getString(LAST_SWITCH_BOOT, null)) ? p.getLong(LAST_SWITCH_AT, 0) : 0;
+    }
+
+    /** elapsedRealtime of the last switch sent during the current cycle, or -1 if there was none. */
+    static long lastSwitchElapsed(Context c) {
+        SharedPreferences p = prefs(c);
+        return currentCycle(c).equals(p.getString(LAST_SWITCH_BOOT, null)) ? p.getLong(LAST_SWITCH_ELAPSED, -1) : -1;
     }
 
     static boolean lastSwitchAtBoot(Context c) {
