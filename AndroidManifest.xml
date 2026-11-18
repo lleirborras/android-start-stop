@@ -14,7 +14,7 @@
     <!-- Network up/down lines in the log. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
 
-    <application android:label="No Start-Stop" android:icon="@mipmap/ic_launcher" android:allowBackup="false">
+    <application android:name=".App" android:label="No Start-Stop" android:icon="@mipmap/ic_launcher" android:allowBackup="false">
         <activity android:name=".MainActivity" android:exported="true"
             android:configChanges="uiMode|orientation|screenSize|keyboardHidden">
             <intent-filter>
@@ -28,12 +28,29 @@
 
         <service android:name=".BootService" android:exported="false"/>
 
+        <service android:name=".WatchService" android:exported="false"/>
+
         <service android:name=".UpdateJob" android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE"/>
 
         <receiver android:name=".BootReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED"/>
+            </intent-filter>
+        </receiver>
+
+        <!-- Exported: any app can send these. Each is only logged, and ACC_ON counts as at most one wake a minute. -->
+        <receiver android:name=".WakeReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="com.unisound.intent.action.ACC_ON"/>
+                <action android:name="com.unisound.intent.action.ACC_OFF"/>
+                <action android:name="com.unisound.intent.action.DO_SLEEP"/>
+                <action android:name="android.intent.action.QUICKBOOT_POWERON"/>
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON"/>
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_MOUNTED"/>
+                <data android:scheme="file"/>
             </intent-filter>
         </receiver>
 

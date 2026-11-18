@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Context;
 import android.content.DialogInterface;
+import android.content.Intent;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.StateListDrawable;
@@ -199,6 +200,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         renderLog();
         result = "";
         BootService.onRunningChanged = rerender;
+        WatchService.start(this, null);
         box.setCaptureFrames(Prefs.captureFrames(this));
         opened = box.open();
         if (!opened) link = LINK_DOWN;
@@ -426,7 +428,11 @@ public class MainActivity extends Activity implements CanBox.Listener {
     }
 
     private void toggleBoot() {
-        Prefs.setApplyAtBoot(this, !Prefs.applyAtBoot(this));
+        boolean on = !Prefs.applyAtBoot(this);
+        Prefs.setApplyAtBoot(this, on);
+        onLog(on ? "automatic switch on" : "automatic switch off");
+        if (on) WatchService.start(this, null);
+        else stopService(new Intent(this, WatchService.class));
         renderBoot();
     }
 
@@ -538,7 +544,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
             feedback.setText(note);
             feedback.setTextColor(WARN);
         } else if (bootBusy) {
-            feedback.setText("Switching at boot…");
+            feedback.setText("Switching…");
             feedback.setTextColor(MUTED);
         } else if (result.isEmpty() && phase != IDLE) {
             feedback.setText("");
@@ -546,10 +552,10 @@ public class MainActivity extends Activity implements CanBox.Listener {
             feedback.setText("This head unit did not let the app reach the car.");
             feedback.setTextColor(MUTED);
         } else if (result.isEmpty() && Prefs.bootSwitchFailed(this)) {
-            feedback.setText("Switch at boot failed. Tap to switch.");
+            feedback.setText("Automatic switch failed. Tap to switch.");
             feedback.setTextColor(WARN);
         } else if (result.isEmpty() && last != 0) {
-            feedback.setText("Last switch: " + clock(last) + (Prefs.lastSwitchAtBoot(this) ? ", at boot" : ""));
+            feedback.setText("Last switch: " + clock(last) + (Prefs.lastSwitchAtBoot(this) ? ", automatic" : ""));
             feedback.setTextColor(MUTED);
         } else {
             feedback.setText(result);
@@ -629,8 +635,8 @@ public class MainActivity extends Activity implements CanBox.Listener {
 
         LinearLayout settings = new LinearLayout(this);
         settings.setOrientation(LinearLayout.HORIZONTAL);
-        bootSwitch = addSetting(settings, "Switch off at boot",
-                "At most one switch per radio boot.",
+        bootSwitch = addSetting(settings, "Switch off at engine start",
+                "One switch each time the car starts.",
                 new View.OnClickListener() {
                     @Override
                     public void onClick(View v) {

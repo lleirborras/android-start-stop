@@ -12,8 +12,8 @@ import android.os.Looper;
 import android.os.SystemClock;
 
 /**
- * Sends exactly one stop-start switch after boot, then stops. The car turns stop-start on at every
- * engine start, so one switch turns it off; a second one would turn it back on.
+ * Sends exactly one stop-start switch per ignition cycle, then stops. Started by {@link WatchService} once the engine
+ * runs. The car turns stop-start on at every engine start, so one switch turns it off; a second one would turn it back on.
  */
 public class BootService extends Service implements CanBox.Listener {
     private static final long OPEN_RETRY_MS = 2_000;
@@ -39,7 +39,7 @@ public class BootService extends Service implements CanBox.Listener {
     private final Runnable openTick = new Runnable() {
         @Override
         public void run() {
-            // The MCU link may not be up yet this early in boot.
+            // The MCU link may not be up yet this early in boot or right after a wake.
             if (canBox.open()) {
                 canBox.query();
                 handler.postDelayed(sendOnce, STATUS_WAIT_MS);
@@ -136,18 +136,18 @@ public class BootService extends Service implements CanBox.Listener {
 
     @Override
     public void onLog(String line) {
-        LogFile.append(this, "boot: " + line);
+        LogFile.append(this, "auto: " + line);
     }
 
-    /** A second switch in the same boot would turn stop-start back on, whoever sent the first. */
+    /** A second switch in the same ignition cycle would turn stop-start back on, whoever sent the first. */
     private boolean alreadySwitched() {
         if (Prefs.bootSwitchDone(this)) {
-            onLog("already switched during this boot, nothing sent");
+            onLog("already switched during this ignition cycle, nothing sent");
             return true;
         }
         if (Prefs.lastSwitchAt(this) != 0) {
             Prefs.markBootSwitch(this);
-            onLog("already switched from the screen during this boot, nothing sent");
+            onLog("already switched from the screen during this ignition cycle, nothing sent");
             return true;
         }
         return false;
