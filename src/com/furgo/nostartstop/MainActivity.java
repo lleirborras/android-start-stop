@@ -12,6 +12,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.SystemClock;
+import android.util.DisplayMetrics;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
@@ -178,7 +179,8 @@ public class MainActivity extends Activity implements CanBox.Listener {
         box = new CanBox(this);
         setContentView(buildUi());
         LogFile.append(this, "app opened, version " + versionName() + ", android " + Build.VERSION.RELEASE
-                + " (sdk " + Build.VERSION.SDK_INT + "), " + Build.MODEL + ", " + DeviceWatch.facts(this));
+                + " (sdk " + Build.VERSION.SDK_INT + "), " + Build.MODEL + ", " + display() + ", "
+                + DeviceWatch.facts(this));
         watch = new DeviceWatch(this, this);
         watch.start();
         render();
@@ -188,6 +190,13 @@ public class MainActivity extends Activity implements CanBox.Listener {
     protected void onDestroy() {
         watch.stop();
         super.onDestroy();
+    }
+
+    /** For example "display 1920x720, 240 dpi": the head units' panels and densities differ. */
+    private String display() {
+        DisplayMetrics m = new DisplayMetrics();
+        getWindowManager().getDefaultDisplay().getRealMetrics(m);
+        return "display " + m.widthPixels + "x" + m.heightPixels + ", " + m.densityDpi + " dpi";
     }
 
     private String versionName() {
@@ -637,11 +646,16 @@ public class MainActivity extends Activity implements CanBox.Listener {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.HORIZONTAL);
         root.setBackgroundColor(BG);
-        root.setPadding(dp(32), dp(16), dp(32), dp(16));
+        root.setPadding(dp(32), dp(8), dp(32), dp(8));
 
         LinearLayout left = new LinearLayout(this);
         left.setOrientation(LinearLayout.VERTICAL);
-        root.addView(left, new LinearLayout.LayoutParams(0, -1, 3f));
+        // The switch card takes the space left over, but never less than its content: on a short screen the column
+        // scrolls instead of squeezing the card's lower rows to nothing.
+        ScrollView leftScroll = new ScrollView(this);
+        leftScroll.setFillViewport(true);
+        leftScroll.addView(left, new FrameLayout.LayoutParams(-1, -2));
+        root.addView(leftScroll, new LinearLayout.LayoutParams(0, -1, 3f));
 
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
@@ -697,7 +711,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
                     });
         }
         LinearLayout.LayoutParams settingsLp = new LinearLayout.LayoutParams(-1, -2);
-        settingsLp.topMargin = dp(12);
+        settingsLp.topMargin = dp(8);
         left.addView(settings, settingsLp);
 
         LinearLayout capture = new LinearLayout(this);
@@ -718,7 +732,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
                     }
                 });
         LinearLayout.LayoutParams captureLp = new LinearLayout.LayoutParams(-1, -2);
-        captureLp.topMargin = dp(12);
+        captureLp.topMargin = dp(8);
         left.addView(capture, captureLp);
 
         LinearLayout logCard = new LinearLayout(this);
@@ -746,7 +760,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private View switchCard() {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.HORIZONTAL);
-        box.setPadding(dp(24), dp(16), dp(20), dp(20));
+        box.setPadding(dp(24), dp(12), dp(20), dp(12));
         box.setBackgroundDrawable(shape(CARD, 20, 1, CARD_EDGE));
 
         LinearLayout words = new LinearLayout(this);
@@ -762,47 +776,47 @@ public class MainActivity extends Activity implements CanBox.Listener {
                 + "The instrument cluster shows a message when stop-start is switched off or on.", 18, TEXT, false);
         about.setLineSpacing(0, 1.15f);
         LinearLayout.LayoutParams aboutLp = new LinearLayout.LayoutParams(-1, -2);
-        aboutLp.topMargin = dp(8);
+        aboutLp.topMargin = dp(4);
         words.addView(about, aboutLp);
 
         feedback = text("", 18, MUTED, true);
         feedback.setGravity(Gravity.BOTTOM);
         LinearLayout.LayoutParams feedbackLp = new LinearLayout.LayoutParams(-1, 0, 1f);
-        feedbackLp.topMargin = dp(8);
+        feedbackLp.topMargin = dp(4);
         words.addView(feedback, feedbackLp);
 
-        LinearLayout stateRow = new LinearLayout(this);
-        stateRow.setGravity(Gravity.CENTER_VERTICAL);
         assumedView = text("", 18, TEXT, true);
-        stateRow.addView(assumedView, new LinearLayout.LayoutParams(0, -2, 1f));
-        wrongButton = text("Status is wrong", 14, MUTED, true);
-        wrongButton.setGravity(Gravity.CENTER);
-        wrongButton.setPadding(dp(20), 0, dp(20), 0);
-        wrongButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                onWrongTap();
-            }
-        });
-        LinearLayout.LayoutParams wrongLp = new LinearLayout.LayoutParams(-2, dp(44));
-        wrongLp.leftMargin = dp(12);
-        stateRow.addView(wrongButton, wrongLp);
-        LinearLayout.LayoutParams stateLp = new LinearLayout.LayoutParams(-1, -2);
-        stateLp.topMargin = dp(8);
-        words.addView(stateRow, stateLp);
+        LinearLayout.LayoutParams assumedLp = new LinearLayout.LayoutParams(-1, -2);
+        assumedLp.topMargin = dp(4);
+        words.addView(assumedView, assumedLp);
 
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.VERTICAL);
         switchButton = text("", 24, TEXT, true);
         switchButton.setGravity(Gravity.CENTER);
         switchButton.setClickable(true);
+        switchButton.setMinHeight(dp(48));
         switchButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 onSwitchTap();
             }
         });
-        LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(0, -1, 1f);
-        btnLp.leftMargin = dp(24);
-        box.addView(switchButton, btnLp);
+        actions.addView(switchButton, new LinearLayout.LayoutParams(-1, 0, 1f));
+        wrongButton = text("Status is wrong", 14, MUTED, true);
+        wrongButton.setGravity(Gravity.CENTER);
+        wrongButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                onWrongTap();
+            }
+        });
+        LinearLayout.LayoutParams wrongLp = new LinearLayout.LayoutParams(-1, dp(48));
+        wrongLp.topMargin = dp(8);
+        actions.addView(wrongButton, wrongLp);
+        LinearLayout.LayoutParams actionsLp = new LinearLayout.LayoutParams(0, -1, 1f);
+        actionsLp.leftMargin = dp(24);
+        box.addView(actions, actionsLp);
         return box;
     }
 
