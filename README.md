@@ -139,6 +139,8 @@ sh build.sh
 
 The result is `build/nostartstop.apk`, signed with the local debug key in `~/.android/debug.keystore` (created on first build). That is fine for sideloading onto your own head unit.
 
+The launcher icon is drawn in `art/icon.svg`. After editing it, regenerate the PNGs in `res/mipmap-*` (48, 72, 96, 144 and 192 px) with Inkscape or `rsvg-convert`.
+
 To sign with a stable key instead, set `KEYSTORE` (a PKCS12 file), `KS_PASS` and `KEY_ALIAS`. `VERSION_NAME` and `VERSION_CODE` set the version stamped into the APK.
 
 ## CI and releases
