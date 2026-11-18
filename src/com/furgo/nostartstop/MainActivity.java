@@ -5,6 +5,10 @@ import android.app.AlertDialog;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.graphics.Canvas;
+import android.graphics.DashPathEffect;
+import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.StateListDrawable;
@@ -12,6 +16,10 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.SystemClock;
+import android.text.SpannableStringBuilder;
+import android.text.style.AbsoluteSizeSpan;
+import android.text.style.ForegroundColorSpan;
+import android.text.style.StyleSpan;
 import android.util.DisplayMetrics;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -83,7 +91,10 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private ScrollView logScroll;
     private TextView feedback;
     private TextView switchButton;
-    private TextView assumedView;
+    private TextView assumedWord;
+    private TextView assumedHint;
+    private StateBadge badge;
+    private LinearLayout stateCard;
     private TextView wrongButton;
     private long reportedAt = -HOLD_MS;
 
@@ -164,6 +175,74 @@ public class MainActivity extends Activity implements CanBox.Listener {
             showStoredUpdate();
         }
     };
+
+    /** The assumed state as a shape, so on, off and unknown differ without colour: tick, warning triangle, dashed ring. */
+    private final class StateBadge extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Path path = new Path();
+        private int state = AssumedState.UNKNOWN;
+
+        StateBadge(Context c) {
+            super(c);
+        }
+
+        void setState(int s) {
+            state = s;
+            invalidate();
+        }
+
+        @Override
+        protected void onDraw(Canvas c) {
+            float w = getWidth(), h = getHeight(), u = Math.min(w, h), cx = w / 2, cy = h / 2;
+            paint.setStrokeCap(Paint.Cap.ROUND);
+            paint.setStrokeJoin(Paint.Join.ROUND);
+            paint.setPathEffect(null);
+            if (state == AssumedState.OFF) {
+                paint.setStyle(Paint.Style.FILL);
+                paint.setColor(ACCENT);
+                c.drawCircle(cx, cy, u / 2, paint);
+                paint.setStyle(Paint.Style.STROKE);
+                paint.setStrokeWidth(u * 0.1f);
+                paint.setColor(BG);
+                path.reset();
+                path.moveTo(cx - u * 0.2f, cy + u * 0.01f);
+                path.lineTo(cx - u * 0.05f, cy + u * 0.16f);
+                path.lineTo(cx + u * 0.22f, cy - u * 0.14f);
+                c.drawPath(path, paint);
+            } else if (state == AssumedState.ON) {
+                float r = u * 0.08f;
+                paint.setStyle(Paint.Style.FILL_AND_STROKE);
+                paint.setStrokeWidth(r * 2);
+                paint.setColor(WARN);
+                path.reset();
+                path.moveTo(cx, r + u * 0.06f);
+                path.lineTo(w - r - u * 0.04f, h - r - u * 0.08f);
+                path.lineTo(r + u * 0.04f, h - r - u * 0.08f);
+                path.close();
+                c.drawPath(path, paint);
+                paint.setStyle(Paint.Style.STROKE);
+                paint.setStrokeWidth(u * 0.09f);
+                paint.setColor(BG);
+                c.drawLine(cx, cy - u * 0.12f, cx, cy + u * 0.1f, paint);
+                paint.setStyle(Paint.Style.FILL);
+                c.drawCircle(cx, cy + u * 0.24f, u * 0.06f, paint);
+            } else {
+                float sw = u * 0.07f;
+                paint.setStyle(Paint.Style.STROKE);
+                paint.setStrokeWidth(sw);
+                paint.setColor(MUTED);
+                paint.setStrokeCap(Paint.Cap.BUTT);
+                paint.setPathEffect(new DashPathEffect(new float[]{u * 0.14f, u * 0.1f}, 0));
+                c.drawCircle(cx, cy, u / 2 - sw, paint);
+                paint.setPathEffect(null);
+                paint.setStyle(Paint.Style.FILL);
+                paint.setTextAlign(Paint.Align.CENTER);
+                paint.setTypeface(Typeface.DEFAULT_BOLD);
+                paint.setTextSize(u * 0.5f);
+                c.drawText("?", cx, cy + u * 0.18f, paint);
+            }
+        }
+    }
 
     private static final class Toggle {
         FrameLayout track;
@@ -598,14 +677,29 @@ public class MainActivity extends Activity implements CanBox.Listener {
                 : pressable(NEUTRAL, NEUTRAL_PRESSED, 2));
 
         int assumed = Prefs.assumedState(this);
-        assumedView.setText(assumed == AssumedState.UNKNOWN ? "Stop-start: unknown"
-                : "Stop-start: " + AssumedState.name(assumed) + " (assumed)");
-        assumedView.setTextColor(assumed == AssumedState.UNKNOWN ? MUTED : TEXT);
+        int stateColor = assumed == AssumedState.OFF ? ACCENT : assumed == AssumedState.ON ? WARN : MUTED;
+        badge.setState(assumed);
+        stateCard.setBackgroundDrawable(shape(CARD, 20, 2, assumed == AssumedState.UNKNOWN ? CARD_EDGE : stateColor));
+        String word = assumed == AssumedState.UNKNOWN ? "UNKNOWN" : AssumedState.name(assumed).toUpperCase(Locale.ROOT);
+        SpannableStringBuilder sb = new SpannableStringBuilder(word);
+        if (assumed != AssumedState.UNKNOWN) {
+            int from = sb.length();
+            sb.append("  assumed");
+            sb.setSpan(new AbsoluteSizeSpan(20, true), from, sb.length(), 0);
+            sb.setSpan(new ForegroundColorSpan(MUTED), from, sb.length(), 0);
+            sb.setSpan(new StyleSpan(Typeface.NORMAL), from, sb.length(), 0);
+        }
+        assumedWord.setText(sb);
+        assumedWord.setTextColor(stateColor);
+        assumedHint.setText(assumed == AssumedState.OFF ? "Not read from the car. Check the instrument cluster."
+                : assumed == AssumedState.ON ? "Not read from the car. Tap Switch to turn it off."
+                : "The app has not seen this drive start. Check the instrument cluster.");
         boolean canReport = assumed != AssumedState.UNKNOWN && !pending && !bootBusy
                 && SystemClock.elapsedRealtime() >= reportedAt + HOLD_MS;
         wrongButton.setEnabled(canReport);
-        wrongButton.setTextColor(canReport ? TEXT : MUTED);
-        wrongButton.setBackgroundDrawable(canReport ? pressable(NEUTRAL, NEUTRAL_PRESSED, 1) : pressable(0, 0, 1));
+        wrongButton.setTextColor(canReport ? TEXT : 0xFF5C6676);
+        wrongButton.setBackgroundDrawable(canReport ? outlined()
+                : dashed());
         renderBoot();
     }
 
@@ -759,36 +853,42 @@ public class MainActivity extends Activity implements CanBox.Listener {
 
     private View switchCard() {
         LinearLayout box = new LinearLayout(this);
+        stateCard = box;
         box.setOrientation(LinearLayout.HORIZONTAL);
         box.setPadding(dp(24), dp(12), dp(20), dp(12));
-        box.setBackgroundDrawable(shape(CARD, 20, 1, CARD_EDGE));
 
         LinearLayout words = new LinearLayout(this);
         words.setOrientation(LinearLayout.VERTICAL);
         box.addView(words, new LinearLayout.LayoutParams(0, -1, 1.4f));
 
+        LinearLayout head = new LinearLayout(this);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        badge = new StateBadge(this);
+        head.addView(badge, new LinearLayout.LayoutParams(dp(60), dp(60)));
+        LinearLayout stack = new LinearLayout(this);
+        stack.setOrientation(LinearLayout.VERTICAL);
         TextView t = text("STOP-START", 14, MUTED, true);
         t.setLetterSpacing(0.14f);
-        words.addView(t);
+        stack.addView(t);
+        assumedWord = text("", 44, TEXT, true);
+        assumedWord.setIncludeFontPadding(false);
+        stack.addView(assumedWord);
+        LinearLayout.LayoutParams stackLp = new LinearLayout.LayoutParams(0, -2, 1f);
+        stackLp.leftMargin = dp(16);
+        head.addView(stack, stackLp);
+        words.addView(head, new LinearLayout.LayoutParams(-1, -2));
 
-        TextView about = text("The car does not tell the app whether stop-start is on or off. "
-                + "Each tap switches it. "
-                + "The instrument cluster shows a message when stop-start is switched off or on.", 18, TEXT, false);
-        about.setLineSpacing(0, 1.15f);
-        LinearLayout.LayoutParams aboutLp = new LinearLayout.LayoutParams(-1, -2);
-        aboutLp.topMargin = dp(4);
-        words.addView(about, aboutLp);
+        assumedHint = text("", 18, TEXT, false);
+        assumedHint.setLineSpacing(0, 1.1f);
+        LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(-1, -2);
+        hintLp.topMargin = dp(8);
+        words.addView(assumedHint, hintLp);
 
         feedback = text("", 18, MUTED, true);
         feedback.setGravity(Gravity.BOTTOM);
         LinearLayout.LayoutParams feedbackLp = new LinearLayout.LayoutParams(-1, 0, 1f);
         feedbackLp.topMargin = dp(4);
         words.addView(feedback, feedbackLp);
-
-        assumedView = text("", 18, TEXT, true);
-        LinearLayout.LayoutParams assumedLp = new LinearLayout.LayoutParams(-1, -2);
-        assumedLp.topMargin = dp(4);
-        words.addView(assumedView, assumedLp);
 
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.VERTICAL);
@@ -803,7 +903,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
             }
         });
         actions.addView(switchButton, new LinearLayout.LayoutParams(-1, 0, 1f));
-        wrongButton = text("Status is wrong", 14, MUTED, true);
+        wrongButton = text("Car shows the opposite", 16, MUTED, true);
         wrongButton.setGravity(Gravity.CENTER);
         wrongButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -841,6 +941,21 @@ public class MainActivity extends Activity implements CanBox.Listener {
         StateListDrawable s = new StateListDrawable();
         s.addState(new int[]{android.R.attr.state_pressed}, shape(pressed, 16, strokeDp, CARD_EDGE));
         s.addState(new int[]{}, shape(normal, 16, strokeDp, CARD_EDGE));
+        return s;
+    }
+
+    private StateListDrawable outlined() {
+        StateListDrawable s = new StateListDrawable();
+        s.addState(new int[]{android.R.attr.state_pressed}, shape(NEUTRAL_PRESSED, 16, 2, 0xFF5B6678));
+        s.addState(new int[]{}, shape(NEUTRAL, 16, 2, 0xFF4A5568));
+        return s;
+    }
+
+    private StateListDrawable dashed() {
+        GradientDrawable d = shape(0, 16, 0, 0);
+        d.setStroke(dp(2), 0xFF39414F, dp(6), dp(5));
+        StateListDrawable s = new StateListDrawable();
+        s.addState(new int[]{}, d);
         return s;
     }
 
