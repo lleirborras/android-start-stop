@@ -17,16 +17,16 @@ public class PowerWatchTest {
         same("6 after 9 ends the crank", p.onState(6, 16_000), CRANK);
         same("another 6 is nothing", p.onState(6, 17_000), N);
 
-        // A second crank less than 10 s after the first crank end is ignored; at 10 s it counts.
-        same("9", p.onState(9, 20_000), N);
-        same("crank end 9 s after the last one", p.onState(6, 25_999), N);
-        same("9", p.onState(9, 26_000), N);
-        same("ignored crank does not move the dedupe window", p.onState(6, 36_000), CRANK);
+        // A second crank end less than 5 s after the first one is ignored; at 5 s it counts.
+        same("9", p.onState(9, 18_000), N);
+        same("crank end 4.999 s after the last one", p.onState(6, 20_999), N);
+        same("9", p.onState(9, 21_000), N);
+        same("ignored crank does not move the dedupe window", p.onState(6, 21_500), CRANK);
         p = new PowerWatch();
         p.onState(9, 0);
         same("first crank", p.onState(6, 5_000), CRANK);
-        p.onState(9, 10_000);
-        same("second crank 10 s after the first end", p.onState(6, 15_000), CRANK);
+        p.onState(9, 7_000);
+        same("second crank 5 s after the first end", p.onState(6, 10_000), CRANK);
         p.onState(9, 20_000);
         same("driver starts again within 30 s", p.onState(6, 25_000), CRANK);
 
@@ -44,12 +44,19 @@ public class PowerWatchTest {
         p.linkClosed();
         same("6 answering the reopen", p.onState(6, 11_000), N);
 
-        // Service start: an ignition on only after ignition off was seen, and not when a broadcast started it.
-        check("start after ignition off", PowerWatch.startIsIgnitionOn(true, false, false));
-        check("start without ignition off", !PowerWatch.startIsIgnitionOn(false, false, false));
-        check("broadcast start after ignition off", !PowerWatch.startIsIgnitionOn(true, true, false));
-        check("broadcast start without ignition off", !PowerWatch.startIsIgnitionOn(false, true, false));
-        check("start while a switch is pending", !PowerWatch.startIsIgnitionOn(true, false, true));
+        // Service start: an ignition on only after ignition off was seen, for a known reason, while nothing is pending
+        // and this service has not itself seen the ignition go off.
+        for (String how : new String[]{PowerWatch.BY_APP, PowerWatch.AT_BOOT, PowerWatch.AFTER_UPDATE,
+                PowerWatch.RESTARTED}) {
+            check("start " + how + " after ignition off", PowerWatch.startIsIgnitionOn(true, how, false, false));
+            check("start " + how + " without ignition off", !PowerWatch.startIsIgnitionOn(false, how, false, false));
+            check("start " + how + " while pending", !PowerWatch.startIsIgnitionOn(true, how, true, false));
+            check("start " + how + " after state 1 in this service",
+                    !PowerWatch.startIsIgnitionOn(true, how, false, true));
+        }
+        check("broadcast start", !PowerWatch.startIsIgnitionOn(true, PowerWatch.BY_BROADCAST, false, false));
+        check("start without a reason", !PowerWatch.startIsIgnitionOn(true, null, false, false));
+        check("start with an unknown reason", !PowerWatch.startIsIgnitionOn(true, "by someone", false, false));
 
         System.out.println("PowerWatchTest passed");
     }

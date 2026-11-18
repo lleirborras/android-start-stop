@@ -21,6 +21,7 @@ final class Prefs {
     private static final String WAKE_BOOT = "wake_boot";
     private static final String WAKE_COUNT = "wake_count";
     private static final String IGNITION_OFF = "ignition_off";
+    private static final String LAST_SWITCH_ELAPSED = "last_switch_elapsed";
     private static final LogBudget WAKE_LINES = new LogBudget(30);
     private static String currentBoot;
     private static final String INSTALL_ID = "install_id";
@@ -89,10 +90,15 @@ final class Prefs {
         recordSwitch(c, atBoot, currentCycle(c));
     }
 
-    /** Records a switch command that was sent, by a tap or automatically. Written at once: the boot service reads it. */
+    /**
+     * Records a switch command that was sent, by a tap or automatically. Written at once: the boot service reads it.
+     * Clears the ignition off flag: stop-start is no longer in the state the car set at its last start.
+     */
     static void recordSwitch(Context c, boolean atBoot, String cycle) {
         prefs(c).edit()
                 .putLong(LAST_SWITCH_AT, System.currentTimeMillis())
+                .putLong(LAST_SWITCH_ELAPSED, SystemClock.elapsedRealtime())
+                .putBoolean(IGNITION_OFF, WakeRules.ignitionOffAfter(ignitionOff(c), WakeRules.FIRED))
                 .putBoolean(LAST_SWITCH_AT_BOOT, atBoot)
                 .putString(LAST_SWITCH_BOOT, cycle)
                 .remove(BOOT_SWITCH_FAILED)
@@ -116,6 +122,12 @@ final class Prefs {
     static long lastSwitchAt(Context c, String cycle) {
         SharedPreferences p = prefs(c);
         return cycle.equals(p.getString(LAST_SWITCH_BOOT, null)) ? p.getLong(LAST_SWITCH_AT, 0) : 0;
+    }
+
+    /** elapsedRealtime of the last switch sent during the current cycle, or -1 if there was none. */
+    static long lastSwitchElapsed(Context c) {
+        SharedPreferences p = prefs(c);
+        return currentCycle(c).equals(p.getString(LAST_SWITCH_BOOT, null)) ? p.getLong(LAST_SWITCH_ELAPSED, -1) : -1;
     }
 
     static boolean lastSwitchAtBoot(Context c) {

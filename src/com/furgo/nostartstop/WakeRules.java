@@ -8,6 +8,7 @@ final class WakeRules {
     private WakeRules() {
     }
 
+    /** FIRED is any switch sent, by the app or by a tap. */
     static final int OFF_SEEN = 0, IGNITION_ON_CYCLE = 1, CRANK_CYCLE = 2, FIRED = 3;
 
     /**

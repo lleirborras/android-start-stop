@@ -35,7 +35,7 @@ final class Protocol {
     static final int STATUS_TRIP = 51;
     static final int MSG_ENGINE = 1291;
     static final int MSG_POWER = 1292;
-    /** Head unit power state in arg1, see {@link WakeRules#isSleepState}. */
+    /** Head unit power state in arg1, see {@link PowerWatch}. */
     static final int MSG_POWER_STATE = 514;
     static final int MSG_UNIT_ID = 266;
     static final int MSG_UNIT_CONFIG = 267;

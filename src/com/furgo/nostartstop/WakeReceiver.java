@@ -29,7 +29,7 @@ public class WakeReceiver extends BroadcastReceiver {
         String action = intent.getAction();
         if (!MANIFEST_ACTIONS.contains(action)) return;
         log(context, action, "manifest");
-        WatchService.start(context, WatchService.BY_BROADCAST);
+        WatchService.start(context, PowerWatch.BY_BROADCAST);
     }
 
     /** Only the action name, never extras or data. Callers pass only actions from the lists above. */

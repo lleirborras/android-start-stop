@@ -21,13 +21,12 @@ import android.os.SystemClock;
  * engine start; broadcasts any app could send are only logged.
  */
 public class WatchService extends Service implements CanBox.Listener, CanBox.PowerListener {
-    static final String BY_APP = "by the app", AT_BOOT = "at boot", AFTER_UPDATE = "after update",
-            BY_BROADCAST = "by a broadcast";
     private static final String EXTRA_HOW = "how";
     private static final int NOTIFICATION_ID = 3;
     private static final long[] OPEN_BACKOFF_MS = {1_000, 2_000, 4_000, 8_000, 15_000};
     private static final long SILENT_MS = 60_000;
     private static final long MAX_REOPEN_MS = 10 * 60_000;
+    private static final long BUSY_RETRY_MS = 2_000;
     private static final LogBudget POWER_LINES = new LogBudget(60);
     private static final LogBudget AUTO_LINES = new LogBudget(50);
     private static final LogBudget WATCH_LINES = new LogBudget(50);
@@ -47,6 +46,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
     private boolean quietReopen;
     private int lastPowerState = -1;
     private long armedAt;
+    private boolean offSeenHere;
 
     static void start(Context c, String how) {
         if (!Prefs.applyAtBoot(c)) return;
@@ -118,7 +118,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
             stopSelf();
             return START_NOT_STICKY;
         }
-        String how = intent == null ? "restarted by the system" : intent.getStringExtra(EXTRA_HOW);
+        String how = intent == null ? PowerWatch.RESTARTED : intent.getStringExtra(EXTRA_HOW);
         if (canBox == null) {
             watchLog("service started (" + (how == null ? "unknown" : how) + "), " + DeviceWatch.facts(this));
             canBox = new CanBox(this);
@@ -128,7 +128,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
             registerReceiver(receiver, f);
             handler.postDelayed(health, SILENT_MS);
         }
-        if (PowerWatch.startIsIgnitionOn(Prefs.ignitionOff(this), BY_BROADCAST.equals(how), auto.armed())) {
+        if (PowerWatch.startIsIgnitionOn(Prefs.ignitionOff(this), how, auto.armed(), offSeenHere)) {
             Prefs.newWake(this, "ignition on", WakeRules.IGNITION_ON_CYCLE);
             auto.arm(SystemClock.elapsedRealtime(), false);
             armed("ignition on");
@@ -162,15 +162,21 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
         }
         int event = power.onState(state, lastMessageAt);
         if (event == PowerWatch.IGNITION_OFF) {
+            offSeenHere = true;
             Prefs.ignitionEvent(this, WakeRules.OFF_SEEN);
             handler.removeCallbacks(tick);
             if (auto.disarm()) autoLog("ignition off, nothing sent");
+        } else if (state == PowerWatch.STATE_CRANK) {
+            auto.onCrankStart(lastMessageAt);
         } else if (event == PowerWatch.CRANK_END) {
             autoLog("crank seen");
-            boolean fresh = auto.onCrank(lastMessageAt, Prefs.lastSwitchAt(this) != 0);
+            boolean fresh = auto.onCrank(lastMessageAt, Prefs.lastSwitchElapsed(this));
             if (fresh) Prefs.newWake(this, "engine start", WakeRules.CRANK_CYCLE);
             else Prefs.ignitionEvent(this, WakeRules.CRANK_CYCLE);
             armed(fresh ? "engine start" : "engine start, same cycle");
+        } else if (state == PowerWatch.STATE_AWAKE) {
+            auto.crankOver();
+            handler.post(tick);
         }
     }
 
@@ -231,7 +237,13 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
             return;
         }
         if (BootService.running) {
-            autoLog("a switch is already being sent, nothing more sent");
+            boolean first = !auto.deferring();
+            if (auto.defer(SystemClock.elapsedRealtime())) {
+                if (first) autoLog("another switch is still being sent, waiting");
+                handler.postDelayed(tick, BUSY_RETRY_MS);
+            } else {
+                autoLog("another switch was still being sent after " + AutoSwitch.BUSY_MS / 1000 + " s, nothing sent");
+            }
             return;
         }
         autoLog("engine running (" + Protocol.volts(auto.newest()) + " V), switching");

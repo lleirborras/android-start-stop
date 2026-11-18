@@ -1,5 +1,8 @@
 package com.furgo.nostartstop;
 
+import java.util.Arrays;
+import java.util.List;
+
 /**
  * Reads the head unit's power state (message 514 arg1) as measured on the van: 1 at ignition off, 9 while the engine
  * cranks, then 6 a few seconds later. The unit also answers 6 every time the link is opened, so 6 alone means nothing.
@@ -11,7 +14,12 @@ final class PowerWatch {
     static final int NONE = 0, IGNITION_OFF = 1, CRANK_END = 2;
     /** A 6 this long after the last 9 is not the end of that crank. */
     static final long MAX_CRANK_MS = 30_000;
-    static final long CRANK_DEDUPE_MS = 10_000;
+    static final long CRANK_DEDUPE_MS = 5_000;
+
+    /** Why the watch service was started; also used in its log line. */
+    static final String BY_APP = "by the app", AT_BOOT = "at boot", AFTER_UPDATE = "after update",
+            RESTARTED = "restarted by the system", BY_BROADCAST = "by a broadcast";
+    private static final List<String> WAKE_REASONS = Arrays.asList(BY_APP, AT_BOOT, AFTER_UPDATE, RESTARTED);
 
     private boolean cranking;
     private long crankAt;
@@ -44,10 +52,11 @@ final class PowerWatch {
 
     /**
      * Whether a start of the watch service is an ignition on: the last state seen was ignition off. The head unit kills
-     * the app soon after ignition off and starts it again at ignition on. A start by a broadcast does not count, since
-     * any app can send one, and neither does a start while a switch is already pending.
+     * the app soon after ignition off and starts it again at ignition on. Only the known reasons count: a broadcast
+     * start does not, since any app can send one. Neither does a start while a switch is pending, or one in a service
+     * that saw the ignition go off itself: the app is about to be stopped.
      */
-    static boolean startIsIgnitionOn(boolean ignitionOffSeen, boolean byBroadcast, boolean pending) {
-        return ignitionOffSeen && !byBroadcast && !pending;
+    static boolean startIsIgnitionOn(boolean ignitionOffSeen, String how, boolean pending, boolean offSeenHere) {
+        return ignitionOffSeen && WAKE_REASONS.contains(how) && !pending && !offSeenHere;
     }
 }

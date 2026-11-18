@@ -9,6 +9,6 @@ public class UpdatedReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         if (!Intent.ACTION_MY_PACKAGE_REPLACED.equals(intent.getAction())) return;
-        WatchService.start(context, WatchService.AFTER_UPDATE);
+        WatchService.start(context, PowerWatch.AFTER_UPDATE);
     }
 }
