@@ -33,7 +33,7 @@ import java.util.zip.ZipException;
  * per line. Days other than the current one are gzip-compressed into yyyy-MM-dd.gz. Files are streamed chunk by chunk,
  * never loaded whole. Plain Java so it can be unit-tested; not thread-safe, Telemetry uses it from its single worker.
  */
-final class TelemetryStore {
+class TelemetryStore {
     enum Outcome { SENT, REJECTED, FAILED }
 
     /** Uploads one chunk of events. */
@@ -63,6 +63,7 @@ final class TelemetryStore {
     static final String GZ = ".gz";
     private static final String TMP = ".tmp";
     private static final long LAST_MS = 253402300799999L;   // 9999-12-31T23:59:59.999Z
+    private static final int MAX_READ_FAILURES = 5;
     private static final long MIN_BACKOFF_MS = 60 * 1000;
     private static final long MAX_BACKOFF_MS = 15 * 60 * 1000;
     private static final Charset UTF8 = Charset.forName("UTF-8");
@@ -77,6 +78,7 @@ final class TelemetryStore {
     private int requests;
     private int sent;
     private boolean truncated;
+    private final Map<String, Integer> readFailures = new TreeMap<String, Integer>();
 
     TelemetryStore(File dir, Limits limits, Warnings warnings) {
         this.dir = dir;
@@ -154,10 +156,10 @@ final class TelemetryStore {
         return drop;
     }
 
-    /** 2xx is sent; 408, 429, 5xx and anything unexpected are worth a retry; other 4xx will never be accepted. */
+    /** 2xx is sent; 400, 413 and 422 mean this batch will never be accepted; anything else is worth a retry. */
     static Outcome outcome(int status) {
         if (status >= 200 && status < 300) return Outcome.SENT;
-        if (status >= 400 && status < 500 && status != 408 && status != 429) return Outcome.REJECTED;
+        if (status == 400 || status == 413 || status == 422) return Outcome.REJECTED;
         return Outcome.FAILED;
     }
 
@@ -201,13 +203,15 @@ final class TelemetryStore {
     /**
      * Sends today's file, then older days from oldest to newest, in chunks of at most maxPerRequest lines and at most
      * maxRequests requests. Lines go once the request carrying them was sent or rejected. Returns the number of lines
-     * sent, or -1 when a request failed; it and everything after it stay for the next attempt. Deletes everything and
-     * returns 0 when the sender is no longer enabled.
+     * sent, or -1 when a request failed (it and everything after it stay for the next attempt) or a file could not be
+     * read (it is skipped, and dropped after MAX_READ_FAILURES attempts in a row). Deletes everything and returns 0 when
+     * the sender is no longer enabled.
      */
-    int send(Sender sender, String today) throws IOException {
+    int send(Sender sender, String today) {
         tidy(today);
         requests = 0;
         sent = 0;
+        boolean failed = false;
         for (String name : uploadOrder(names(), today)) {
             if (requests >= limits.maxRequests) break;
             Stop stop;
@@ -217,18 +221,34 @@ final class TelemetryStore {
                 warnings.warn("deleted " + name + ": too big to read");
                 drop(new File(dir, name));
                 continue;
+            } catch (IOException e) {
+                failed = true;
+                Integer before = readFailures.get(name);
+                int n = before == null ? 1 : before + 1;
+                if (n >= MAX_READ_FAILURES) {
+                    warnings.warn("deleted " + name + " after " + n + " failed reads: " + e);
+                    drop(new File(dir, name));
+                    readFailures.remove(name);
+                } else {
+                    warnings.warn("skipped " + name + ": " + e);
+                    readFailures.put(name, n);
+                }
+                continue;
             }
+            readFailures.remove(name);
             if (stop == Stop.OPTED_OUT) {
                 deleteAll();
                 return 0;
             }
             if (stop == Stop.FAILED) {
-                if (sent > 0) warnings.warn("sent " + sent + " lines before a request failed");
-                return -1;
+                failed = true;
+                break;
             }
             if (stop == Stop.CAP) break;
         }
-        return sent;
+        if (!failed) return sent;
+        if (sent > 0) warnings.warn("sent " + sent + " lines before a failure");
+        return -1;
     }
 
     /** Returns why it stopped before the end of the file, or null when all of it went. */
@@ -241,32 +261,27 @@ final class TelemetryStore {
         Stop stop = null;
         List<String> chunk;
         try {
-            try {
-                while (true) {
-                    chunk = nextChunk(in, name);
-                    if (chunk.isEmpty()) break;
-                    if (requests >= limits.maxRequests) {
-                        stop = Stop.CAP;
-                    } else if (!sender.enabled()) {
-                        stop = Stop.OPTED_OUT;
+            // A read error leaves the file as it is: lines already sent may go again, PostHog drops them by uuid.
+            while (true) {
+                chunk = nextChunk(in, name);
+                if (chunk.isEmpty()) break;
+                if (requests >= limits.maxRequests) {
+                    stop = Stop.CAP;
+                } else if (!sender.enabled()) {
+                    stop = Stop.OPTED_OUT;
+                } else {
+                    requests++;
+                    Outcome outcome = sender.send(chunk);
+                    if (outcome == Outcome.FAILED) {
+                        stop = Stop.FAILED;
                     } else {
-                        requests++;
-                        Outcome outcome = sender.send(chunk);
-                        if (outcome == Outcome.FAILED) {
-                            stop = Stop.FAILED;
-                        } else {
-                            if (outcome == Outcome.REJECTED) warnings.warn("dropped " + chunk.size() + " rejected lines");
-                            else sent += chunk.size();
-                            consumed = true;
-                            continue;
-                        }
+                        if (outcome == Outcome.REJECTED) warnings.warn("dropped " + chunk.size() + " rejected lines");
+                        else sent += chunk.size();
+                        consumed = true;
+                        continue;
                     }
-                    break;
                 }
-            } catch (IOException e) {
-                // Lines already sent must not go again.
-                if (consumed) drop(f);
-                throw e;
+                break;
             }
             if (stop == Stop.OPTED_OUT) return stop;
             if (stop == null) {
@@ -360,8 +375,10 @@ final class TelemetryStore {
                 compress(merged, tmp);
                 replace(tmp, gz);
             } catch (OutOfMemoryError e) {
-                warnings.warn("deleted " + name + ": too big to compress");
+                warnings.warn("deleted " + name + GZ + ": too big to compress");
                 drop(gz);
+                // The plain lines get their own try next time, without the old compressed ones.
+                continue;
             } finally {
                 merged.delete();
             }
@@ -449,7 +466,7 @@ final class TelemetryStore {
 
     /** Reader for a day file, or null when it is not a readable file; such a file is deleted. Other errors are thrown. */
     private BufferedReader open(File f) throws IOException {
-        InputStream in = new FileInputStream(f);
+        InputStream in = input(f);
         try {
             if (f.getName().endsWith(GZ)) in = new GZIPInputStream(in);
         } catch (ZipException | EOFException e) {
@@ -462,6 +479,11 @@ final class TelemetryStore {
             throw e;
         }
         return new BufferedReader(new InputStreamReader(in, UTF8));
+    }
+
+    /** Opens a file for reading; tests override it to simulate I/O errors. */
+    InputStream input(File f) throws IOException {
+        return new FileInputStream(f);
     }
 
     private static Writer openWriter(File f, boolean gzip) throws IOException {
@@ -520,6 +542,7 @@ final class TelemetryStore {
         dir.delete();
         tidiedFor = null;
         appendedSinceTidy = 0;
+        readFailures.clear();
     }
 
     private void makeDir() throws IOException {

@@ -43,7 +43,8 @@ public class TelemetryStoreTest {
             optOut();
             failedRewrite();
             damagedFiles();
-            unreadableIsRetried();
+            unreadableIsSkipped();
+            readErrorAfterSending();
             limits();
             mergedDayCap();
         } finally {
@@ -105,8 +106,11 @@ public class TelemetryStoreTest {
         check("200", TelemetryStore.outcome(200) == TelemetryStore.Outcome.SENT);
         check("204", TelemetryStore.outcome(204) == TelemetryStore.Outcome.SENT);
         check("400", TelemetryStore.outcome(400) == TelemetryStore.Outcome.REJECTED);
-        check("401", TelemetryStore.outcome(401) == TelemetryStore.Outcome.REJECTED);
         check("413", TelemetryStore.outcome(413) == TelemetryStore.Outcome.REJECTED);
+        check("422", TelemetryStore.outcome(422) == TelemetryStore.Outcome.REJECTED);
+        check("401", TelemetryStore.outcome(401) == TelemetryStore.Outcome.FAILED);
+        check("403", TelemetryStore.outcome(403) == TelemetryStore.Outcome.FAILED);
+        check("404", TelemetryStore.outcome(404) == TelemetryStore.Outcome.FAILED);
         check("408", TelemetryStore.outcome(408) == TelemetryStore.Outcome.FAILED);
         check("429", TelemetryStore.outcome(429) == TelemetryStore.Outcome.FAILED);
         check("500", TelemetryStore.outcome(500) == TelemetryStore.Outcome.FAILED);
@@ -202,7 +206,7 @@ public class TelemetryStoreTest {
                 TelemetryStore.Outcome.FAILED);
         WARNINGS.clear();
         check("failure returns -1", s.send(sender, TODAY) == -1);
-        check("sent count logged", WARNINGS.contains("sent 503 lines before a request failed"));
+        check("sent count logged", WARNINGS.contains("sent 503 lines before a failure"));
         check("stopped at the failure", sender.chunks.size() == 3);
         check("today gone", !new File(dir, TODAY).exists());
         List<String> left = lines(new File(dir, "2026-11-10.gz"));
@@ -312,19 +316,87 @@ public class TelemetryStoreTest {
         check("plain lines survive", Collections.singletonList("{\"late\":1}").equals(lines(new File(dir, "2026-11-04.gz"))));
     }
 
-    private static void unreadableIsRetried() throws IOException {
-        TelemetryStore s = store("unreadable", new TelemetryStore.Limits());
+    private static void unreadableIsSkipped() throws IOException {
         File dir = new File(root, "unreadable");
-        File f = new File(dir, "2026-11-01.gz");
-        writeGz(f, events("one", 3));
-        if (!f.setReadable(false) || f.canRead()) return;   // running as root: cannot test
-        try {
-            s.send(new FakeSender(), TODAY);
-            check("an I/O error is thrown, not swallowed", false);
-        } catch (IOException e) {
-            check("file kept for a retry", f.exists());
-        } finally {
-            f.setReadable(true);
+        TelemetryStore s = new FailingStore(dir, "2026-11-01.gz", 0);
+        writeGz(new File(dir, "2026-11-01.gz"), events("one", 3));
+        writeGz(new File(dir, "2026-11-02.gz"), events("two", 2));
+        FakeSender sender = new FakeSender();
+        check("unreadable day fails the flush", s.send(sender, TODAY) == -1);
+        check("later day still sent", sender.chunks.size() == 1 && sender.chunks.get(0).equals(events("two", 2)));
+        check("unreadable day kept", new File(dir, "2026-11-01.gz").exists());
+        for (int attempt = 2; attempt <= 4; attempt++) {
+            check("attempt " + attempt + " fails", s.send(new FakeSender(), TODAY) == -1);
+        }
+        check("kept after 4 failed reads", new File(dir, "2026-11-01.gz").exists());
+        check("5th attempt fails", s.send(new FakeSender(), TODAY) == -1);
+        check("dropped after 5 failed reads", !new File(dir, "2026-11-01.gz").exists());
+        check("then nothing left to fail", s.send(new FakeSender(), TODAY) == 0);
+    }
+
+    private static void readErrorAfterSending() throws IOException {
+        File dir = new File(root, "readerror");
+        // BufferedReader reads 8 KB at a time: the first chunks are read before the error.
+        TelemetryStore s = new FailingStore(dir, TODAY, 8192);
+        List<String> lines = new ArrayList<String>();
+        for (int i = 0; i < 300; i++) lines.add("{\"n\":" + i + ",\"pad\":\"" + new String(new char[80]).replace('\0', 'x') + "\"}");
+        for (String line : lines) s.add(TODAY, line);
+        FakeSender sender = new FakeSender();
+        check("read error fails the flush", s.send(sender, TODAY) == -1);
+        check("some chunks went first: " + sender.chunks.size(), sender.chunks.size() > 0 && sender.chunks.size() < 30);
+        check("file kept whole for the next attempt", lines(new File(dir, TODAY)).equals(lines));
+    }
+
+    /** Store whose reads of one file fail with a plain I/O error after the given number of bytes. */
+    private static final class FailingStore extends TelemetryStore {
+        private final String failing;
+        private final int okBytes;
+
+        FailingStore(File dir, String failing, int okBytes) {
+            super(dir, limitsFor(okBytes), new TelemetryStore.Warnings() {
+                @Override
+                public void warn(String message) {
+                    WARNINGS.add(message);
+                }
+            });
+            this.failing = failing;
+            this.okBytes = okBytes;
+        }
+
+        private static TelemetryStore.Limits limitsFor(int okBytes) {
+            TelemetryStore.Limits l = new TelemetryStore.Limits();
+            if (okBytes > 0) l.maxPerRequest = 10;
+            return l;
+        }
+
+        @Override
+        InputStream input(File f) throws IOException {
+            if (!f.getName().equals(failing)) return super.input(f);
+            if (okBytes == 0) throw new IOException("simulated read error");
+            final InputStream in = super.input(f);
+            return new InputStream() {
+                private int read;
+
+                @Override
+                public int read() throws IOException {
+                    if (read >= okBytes) throw new IOException("simulated read error");
+                    read++;
+                    return in.read();
+                }
+
+                @Override
+                public int read(byte[] b, int off, int len) throws IOException {
+                    if (read >= okBytes) throw new IOException("simulated read error");
+                    int n = in.read(b, off, Math.min(len, okBytes - read));
+                    if (n > 0) read += n;
+                    return n;
+                }
+
+                @Override
+                public void close() throws IOException {
+                    in.close();
+                }
+            };
         }
     }
 
