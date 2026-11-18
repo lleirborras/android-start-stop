@@ -167,7 +167,7 @@ To copy it without adb:
 
 Each line has a date and time. Lines to look for:
 
-- `app opened, version …, android … (sdk …), <model>, boot count 7, up 42 s, network up (wifi)`: app and Android version, the head unit's model name, how many times the head unit has booted, seconds since it booted, and the network state. `boot count unknown` before Android 7.
+- `app opened, version …, android … (sdk …), <model>, display 1920x720, 240 dpi, boot count 7, up 42 s, network up (wifi)`: app and Android version, the head unit's model name, its screen size in pixels and density, how many times the head unit has booted, seconds since it booted, and the network state. `boot count unknown` before Android 7.
 - `TWUtil open` / `TWUtil unavailable: …`: whether the head unit's MCU link works. With **Record car data** on, `TWUtil open, CAN box only (engine and unit ids refused: …)` means the head unit refused the engine and unit messages; the switch works the same.
 - `status 00 4A …`: the raw settings frame (id 56) from the CAN box, logged whenever it changes.
 - `function 05 12 02 01 (stop-start field=2)`: the CAN box function frame (id 57), asked for after the first status frame when the link opens and 1.5 and 5 seconds after each switch, logged when it changes since the app started (at most 40 lines each time the app connects). The field is a candidate for the real stop-start state (1 on, 2 off, 0 not reported); it is not verified and the app does not use it.
