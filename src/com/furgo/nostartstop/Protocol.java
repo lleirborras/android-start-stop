@@ -32,7 +32,11 @@ final class Protocol {
 
     // Everything below comes from decompiled vendor code and is not verified on the van; it is only logged.
     static final int STATUS_FUNCTION = 57;
-    static final int STATUS_TRIP = 51;
+    /** Trip computer (51), 81 and 125 change every second while driving and say nothing about stop-start. */
+    static boolean noisyFrame(int id) {
+        return id == 51 || id == 81 || id == 125;
+    }
+
     static final int MSG_ENGINE = 1291;
     static final int MSG_POWER = 1292;
     /** Head unit power state in arg1, see {@link PowerWatch}. */

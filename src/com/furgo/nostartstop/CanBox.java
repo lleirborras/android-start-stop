@@ -208,9 +208,8 @@ final class CanBox {
         else if (!was && tw != null) requestCarData();
     }
 
-    /** Trip computer frame and head unit identity, only asked for while the user records car data. */
+    /** Head unit identity, only asked for while the user records car data. */
     private void requestCarData() {
-        write(Protocol.CMD_QUERY, Protocol.query(Protocol.STATUS_TRIP));
         if (!extraIds || (unitIdLogged && unitConfigLogged)) return;
         try {
             tw.write(Protocol.MSG_UNIT_ID, 255, 0);
@@ -256,12 +255,11 @@ final class CanBox {
                 query();
             }
         }, 1000);
-        // Frame 57 and the trip frame may change some time after the car acts on the switch.
+        // Frame 57 may change some time after the car acts on the switch.
         Runnable after = new Runnable() {
             @Override
             public void run() {
                 write(Protocol.CMD_QUERY, Protocol.query(Protocol.STATUS_FUNCTION));
-                if (captureFrames) write(Protocol.CMD_QUERY, Protocol.query(Protocol.STATUS_TRIP));
             }
         };
         handler.postDelayed(after, 1500);
@@ -329,7 +327,7 @@ final class CanBox {
     }
 
     private void onOtherFrame(int id, byte[] b) {
-        if (!captureFrames || frameLines >= MAX_FRAME_LINES) return;
+        if (!captureFrames || Protocol.noisyFrame(id) || frameLines >= MAX_FRAME_LINES) return;
         Integer lines = otherFrameLines.get(id);
         if (lines == null && otherFrameLines.size() >= MAX_FRAME_IDS) return;
         int n = lines == null ? 0 : lines;

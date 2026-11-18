@@ -34,7 +34,10 @@ public class ProtocolTest {
         toggle("only neighbours set", noise, 1);
 
         bytes("query function", Protocol.query(57), 57, 0);
-        bytes("query trip", Protocol.query(51), 51, 0);
+        check("frame 51 left out", Protocol.noisyFrame(51), true);
+        check("frame 81 left out", Protocol.noisyFrame(81), true);
+        check("frame 125 left out", Protocol.noisyFrame(125), true);
+        check("frame 52 kept", Protocol.noisyFrame(52), false);
 
         same("field enabled", Protocol.stopStartField(new byte[]{0x05, 0x12, 0x01, 0x01}), 1);
         same("field disabled", Protocol.stopStartField(new byte[]{0x05, 0x12, 0x02}), 2);
