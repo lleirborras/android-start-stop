@@ -4,6 +4,12 @@ Android app for Topway head units (TS18 and similar) that switches the PSA engin
 
 Built for a Peugeot/Citroën Jumpy (2015–23) with CAN box setting `02: Raise` / `96: PSA Peugeot Citroen`, and tested on a real Jumpy head unit (Android 10). See [Status](#status).
 
+## Why
+
+On recent Euro 6 versions of these vans the physical stop-start button is gone, and the plug-in modules that used to press it for you no longer work. Stop-start comes back on at every engine start, so the only way left is to go through the touchscreen menu on every trip. This app does that step for you, from one button or by itself when the radio boots.
+
+It changes nothing in the car: no ECU reflash, no coding, no wiring. It sends the same command the car's own settings menu sends. Turn the boot option off or uninstall the app and the van behaves exactly as it left the factory, for example for an inspection.
+
 ![Main screen](docs/main.png)
 
 ![After a tap: sent, check the instrument cluster](docs/sent.png)
