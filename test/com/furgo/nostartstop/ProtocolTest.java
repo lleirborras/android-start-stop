@@ -33,7 +33,59 @@ public class ProtocolTest {
         toggle("echo set, neighbours clear", frame(0x40), 0);
         toggle("only neighbours set", noise, 1);
 
+        bytes("query function", Protocol.query(57), 57, 0);
+        bytes("query trip", Protocol.query(51), 51, 0);
+
+        same("field enabled", Protocol.stopStartField(new byte[]{0x05, 0x12, 0x01, 0x01}), 1);
+        same("field disabled", Protocol.stopStartField(new byte[]{0x05, 0x12, 0x02}), 2);
+        same("field not reported", Protocol.stopStartField(new byte[]{0x05, 0x12, 0x00}), 0);
+        same("field ignores high bits", Protocol.stopStartField(new byte[]{0, 0, (byte) 0xFE}), 2);
+        same("field too short", Protocol.stopStartField(new byte[]{0x05, 0x12}), -1);
+        same("field empty", Protocol.stopStartField(new byte[0]), -1);
+        same("field null", Protocol.stopStartField(null), -1);
+
+        same("battery 12.34 V", Protocol.batteryCentivolts(new byte[]{0x04, (byte) 0xD2}), 1234);
+        same("battery 14.40 V", Protocol.batteryCentivolts(new byte[]{0x05, (byte) 0xA0, 0x77}), 1440);
+        same("battery invalid flag", Protocol.batteryCentivolts(new byte[]{(byte) 0x84, (byte) 0xD2}), -1);
+        same("battery too short", Protocol.batteryCentivolts(new byte[]{0x04}), -1);
+        same("battery null", Protocol.batteryCentivolts(null), -1);
+
+        same("rpm idle", Protocol.rpm(780), 780);
+        same("rpm stopped", Protocol.rpm(0), 0);
+        same("rpm invalid", Protocol.rpm(65535), -1);
+        same("rpm negative", Protocol.rpm(-5), -1);
+
+        check("engine first line", Protocol.engineChanged(false, 0, 0, 800, 0), true);
+        check("engine small change", Protocol.engineChanged(true, 800, 0, 900, 5), false);
+        check("engine rpm change", Protocol.engineChanged(true, 800, 0, 1100, 0), true);
+        check("engine stopped", Protocol.engineChanged(true, 120, 0, 0, 0), true);
+        check("engine started", Protocol.engineChanged(true, 0, 0, 150, 0), true);
+        check("engine rpm became invalid", Protocol.engineChanged(true, 800, 0, -1, 0), true);
+        check("engine still invalid", Protocol.engineChanged(true, -1, 30, -1, 35), false);
+        check("engine speed change", Protocol.engineChanged(true, 1500, 40, 1500, 50), true);
+
+        check("battery first line", Protocol.batteryChanged(-1, 1234), true);
+        check("battery small change", Protocol.batteryChanged(1234, 1250), false);
+        check("battery charging", Protocol.batteryChanged(1240, 1440), true);
+        check("battery drop", Protocol.batteryChanged(1240, 1220), true);
+
+        text("volts", Protocol.volts(1234), "12.34");
+        text("volts with leading zero", Protocol.volts(1205), "12.05");
+        text("volts round", Protocol.volts(1400), "14.00");
+
         System.out.println("ProtocolTest passed");
+    }
+
+    private static void same(String name, int got, int want) {
+        if (got != want) throw new AssertionError(name + ": expected " + want + " but got " + got);
+    }
+
+    private static void check(String name, boolean got, boolean want) {
+        if (got != want) throw new AssertionError(name + ": expected " + want);
+    }
+
+    private static void text(String name, String got, String want) {
+        if (!want.equals(got)) throw new AssertionError(name + ": expected " + want + " but got " + got);
     }
 
     private static byte[] frame(int byte5) {

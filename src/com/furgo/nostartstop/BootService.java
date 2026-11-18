@@ -20,6 +20,8 @@ public class BootService extends Service implements CanBox.Listener {
     private static final long OPEN_TIMEOUT_MS = 30_000;
     private static final long STATUS_WAIT_MS = 5_000;
     private static final long ECHO_WAIT_MS = 3_000;
+    // CanBox asks for frame 57 again 1.5 s and 5 s after a switch; keep the link open for the answers.
+    private static final long FUNCTION_WAIT_MS = 6_000;
 
     /** True while the service is working; the main screen does not send meanwhile. Main thread only. */
     static boolean running;
@@ -30,6 +32,8 @@ public class BootService extends Service implements CanBox.Listener {
     private CanBox canBox;
     private long startedAt;
     private boolean sent;
+    private boolean done;
+    private long sentAt;
     private int sentBit = -1;
 
     private final Runnable openTick = new Runnable() {
@@ -63,6 +67,7 @@ public class BootService extends Service implements CanBox.Listener {
             }
             Prefs.markBootSwitch(BootService.this);
             sentBit = canBox.toggle();
+            if (sentBit >= 0) sentAt = SystemClock.elapsedRealtime();
             if (sentBit < 0) {
                 Prefs.setBootSwitchFailed(BootService.this);
                 onLog("switch failed, nothing sent");
@@ -93,7 +98,7 @@ public class BootService extends Service implements CanBox.Listener {
         if (canBox != null) return START_NOT_STICKY;
         startForeground(1, buildNotification());
         canBox = new CanBox(this);
-        onLog("service started");
+        onLog("service started, " + DeviceWatch.facts(this));
         if (alreadySwitched()) {
             finish();
             return START_NOT_STICKY;
@@ -119,6 +124,7 @@ public class BootService extends Service implements CanBox.Listener {
 
     @Override
     public void onEcho(boolean echo) {
+        if (done) return;
         if (!sent) {
             onLog("status received, echo bit " + (echo ? 1 : 0));
             sendOnce.run();
@@ -154,11 +160,25 @@ public class BootService extends Service implements CanBox.Listener {
     }
 
     private void finish() {
+        done = true;
         setRunning(false);
+        stopForeground(true);
         handler.removeCallbacksAndMessages(null);
-        canBox.close();
-        stopSelf();
+        long left = sentAt == 0 ? 0 : sentAt + FUNCTION_WAIT_MS - SystemClock.elapsedRealtime();
+        if (left <= 0) {
+            stop.run();
+            return;
+        }
+        handler.postDelayed(stop, left);
     }
+
+    private final Runnable stop = new Runnable() {
+        @Override
+        public void run() {
+            canBox.close();
+            stopSelf();
+        }
+    };
 
     private Notification buildNotification() {
         Notification.Builder b;

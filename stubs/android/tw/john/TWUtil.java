@@ -12,4 +12,5 @@ public class TWUtil {
     public void addHandler(String tag, Handler handler) { throw new RuntimeException("stub"); }
     public void removeHandler(String tag) { throw new RuntimeException("stub"); }
     public int write(int what, int arg1, int arg2, Object obj) { throw new RuntimeException("stub"); }
+    public int write(int what, int arg1, int arg2) { throw new RuntimeException("stub"); }
 }

@@ -13,4 +13,13 @@ final class BootId {
         if (bootCount >= 0) return "count " + bootCount;
         return "time " + Math.round((wallMs - elapsedMs) / 10_000.0);
     }
+
+    /** For the log, for example "boot count 7, up 42 s". */
+    static String facts(int bootCount, long elapsedMs) {
+        return "boot count " + (bootCount >= 0 ? String.valueOf(bootCount) : "unknown") + ", " + up(elapsedMs);
+    }
+
+    static String up(long elapsedMs) {
+        return "up " + elapsedMs / 1000 + " s";
+    }
 }

@@ -13,6 +13,11 @@ public class BootIdTest {
         same("same boot, 2 s drift", BootId.of(-1, boot + 60_000, 60_000), BootId.of(-1, boot + 62_000, 60_000));
         differ("a boot a minute later", BootId.of(-1, boot + 60_000, 60_000), BootId.of(-1, boot + 120_000, 60_000));
 
+        same("facts", BootId.facts(7, 42_900), "boot count 7, up 42 s");
+        same("facts without a boot count", BootId.facts(-1, 5_000), "boot count unknown, up 5 s");
+        same("facts first boot", BootId.facts(0, 999), "boot count 0, up 0 s");
+        same("up", BootId.up(3_600_000), "up 3600 s");
+
         System.out.println("BootIdTest passed");
     }
 
