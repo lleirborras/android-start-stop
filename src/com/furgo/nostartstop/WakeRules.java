@@ -25,6 +25,14 @@ final class WakeRules {
         return boot + ", wake " + wake;
     }
 
+    /**
+     * A switch sent shortly before a new cycle starts, for example a tap while the wake is still being noticed, counts
+     * for the new cycle, so the automatic switch does not undo it.
+     */
+    static boolean carrySwitch(boolean inPreviousCycle, long switchAt, long now) {
+        return inPreviousCycle && now >= switchAt && now - switchAt < DEDUPE_MS;
+    }
+
     /** Message 514 arg1: 1 going to sleep, 5 and 9 off or asleep. */
     static boolean isSleepState(int state) {
         return state == 1 || state == 5 || state == 9;

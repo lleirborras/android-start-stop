@@ -19,6 +19,13 @@ public class WakeRulesTest {
         check("cycle never equals the bare boot id", !WakeRules.cycle("count 7", 0).equals("count 7"));
         check("cycle wake 1 vs boot count 71", !WakeRules.cycle("count 7", 1).equals(WakeRules.cycle("count 71", 0)));
 
+        // Tap before the wake is noticed: the switch counts for the new cycle.
+        check("tap 10 s before the new cycle carries", WakeRules.carrySwitch(true, 100_000, 110_000));
+        check("tap 59.999 s before carries", WakeRules.carrySwitch(true, 100_000, 159_999));
+        check("tap 60 s before does not", !WakeRules.carrySwitch(true, 100_000, 160_000));
+        check("switch from an older cycle does not", !WakeRules.carrySwitch(false, 100_000, 110_000));
+        check("switch time after now does not", !WakeRules.carrySwitch(true, 110_000, 100_000));
+
         for (int s = -1; s <= 10; s++) {
             check("sleep state " + s, WakeRules.isSleepState(s) == (s == 1 || s == 5 || s == 9));
         }

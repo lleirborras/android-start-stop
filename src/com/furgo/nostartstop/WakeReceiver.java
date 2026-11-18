@@ -9,8 +9,8 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * Logs the broadcasts that may mark ignition on and off, and treats ACC on as a wake. Exported, so any app can send
- * these actions: the one-minute wake dedupe and the per-cycle guard limit what a fake one can do.
+ * Logs broadcasts that may mark ignition on and off, to learn how the head unit behaves. Exported, so any app can send
+ * them: they are only logged and never start or end a cycle or cause a switch.
  */
 public class WakeReceiver extends BroadcastReceiver {
     static final String ACC_ON = "com.unisound.intent.action.ACC_ON";
@@ -22,27 +22,20 @@ public class WakeReceiver extends BroadcastReceiver {
     static final List<String> RUNTIME_ACTIONS = Arrays.asList(ACC_ON, ACC_OFF, DO_SLEEP,
             Intent.ACTION_SCREEN_ON, Intent.ACTION_SCREEN_OFF,
             Intent.ACTION_POWER_CONNECTED, Intent.ACTION_POWER_DISCONNECTED);
-    private static final int MAX_LINES = 30;
-    private static int lines;   // per process
+    private static final LogBudget LINES = new LogBudget(30);
 
     @Override
     public void onReceive(Context context, Intent intent) {
         String action = intent.getAction();
         if (!MANIFEST_ACTIONS.contains(action)) return;
         log(context, action, "manifest");
-        if (ACC_ON.equals(action)) {
-            WatchService.start(context, Prefs.newWake(context, "ACC_ON") ? WatchService.EXTRA_WAKE : null);
-        } else if (ACC_OFF.equals(action) || DO_SLEEP.equals(action)) {
-            WatchService.start(context, WatchService.EXTRA_SLEEP);
-        } else {
-            WatchService.start(context, null);
-        }
+        WatchService.start(context, false);
     }
 
     /** Only the action name, never extras or data. Callers pass only actions from the lists above. */
-    static synchronized void log(Context context, String action, String via) {
-        if (lines >= MAX_LINES) return;
-        lines++;
-        LogFile.append(context, "broadcast " + action + " (" + via + "), " + BootId.up(SystemClock.elapsedRealtime()));
+    static void log(Context context, String action, String via) {
+        long now = SystemClock.elapsedRealtime();
+        if (!LINES.take(now)) return;
+        LogFile.append(context, "broadcast " + action + " (" + via + "), " + BootId.up(now));
     }
 }

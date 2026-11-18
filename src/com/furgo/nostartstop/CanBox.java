@@ -42,13 +42,13 @@ final class CanBox {
     private static final short[] ALL_IDS = {(short) Protocol.MSG_CANBOX, (short) Protocol.MSG_ENGINE,
             (short) Protocol.MSG_POWER, (short) Protocol.MSG_UNIT_ID, (short) Protocol.MSG_UNIT_CONFIG};
     private static final short[] CANBOX_IDS = {(short) Protocol.MSG_CANBOX};
-    private static final short[] WATCH_IDS = {(short) Protocol.MSG_CANBOX, (short) Protocol.MSG_POWER_STATE,
-            (short) Protocol.MSG_POWER};
+    private static final short[] WATCH_IDS = {(short) Protocol.MSG_POWER_STATE, (short) Protocol.MSG_POWER};
     private static int instances;
 
     private final Listener listener;
-    // Set only for the watch service, which uses only the power messages and never sends.
+    // Set only for the watch service, which opens only the power messages and never sends.
     private PowerListener power;
+    private String openFailure;
     private final String tag = TAG + "-" + (instances++);
     private TWUtil tw;
     private boolean shortFrameLogged;
@@ -98,21 +98,25 @@ final class CanBox {
         this.listener = listener;
     }
 
-    /** Call before {@link #open}. Opens the power ids too, and ignores CAN box frames. */
+    /**
+     * Call before {@link #open}. Then open() asks for the power messages only, without the CAN box, and does not log
+     * its failures: {@link #openFailure} has the last one.
+     */
     void watchPower(PowerListener listener) {
         power = listener;
     }
 
-    /**
-     * With captureFrames set, also opens the engine and unit ids, or with {@link #watchPower} the power ids, falling
-     * back to the CAN box alone if they are refused.
-     */
+    String openFailure() {
+        return openFailure;
+    }
+
+    /** With captureFrames set, also opens the engine and unit ids, falling back to the CAN box alone if they are refused. */
     boolean open() {
         if (tw != null) return true;
         extraIdsRefused = null;
-        TWUtil t = power != null ? connect(WATCH_IDS, true) : captureFrames ? connect(ALL_IDS, true) : null;
+        TWUtil t = captureFrames && power == null ? connect(ALL_IDS, true) : null;
         extraIds = t != null;
-        if (t == null) t = connect(CANBOX_IDS, false);
+        if (t == null) t = connect(power != null ? WATCH_IDS : CANBOX_IDS, false);
         if (t == null) return false;
         lastFrame = null;
         otherFrames.clear();
@@ -126,13 +130,13 @@ final class CanBox {
             t.addHandler(tag, handler);
             t.start();
         } catch (Throwable e) {
-            log("TWUtil unavailable: " + e);
+            failed("TWUtil unavailable: " + e);
             release(t);
             return false;
         }
         tw = t;
-        log(extraIdsRefused == null ? "TWUtil open" : "TWUtil open, CAN box only ("
-                + (power != null ? "power" : "engine and unit") + " ids refused: " + extraIdsRefused + ")");
+        log(extraIdsRefused == null ? "TWUtil open"
+                : "TWUtil open, CAN box only (engine and unit ids refused: " + extraIdsRefused + ")");
         if (power != null) return true;
         // The caller asks for the settings frame first; frame 57 and the car data follow its answer.
         firstFunctionPending = true;
@@ -165,8 +169,13 @@ final class CanBox {
         }
         release(t);
         if (extra) extraIdsRefused = failure;
-        else log(failure);
+        else failed(failure);
         return null;
+    }
+
+    private void failed(String failure) {
+        if (power != null) openFailure = failure;
+        else log(failure);
     }
 
     private void release(TWUtil t) {

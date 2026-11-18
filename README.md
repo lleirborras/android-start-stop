@@ -51,12 +51,14 @@ There is no "keep it off" or lock option: the vendor app's "permanently closed" 
 
 ### Switch off at engine start: how and limits
 
-Most head units do not reboot at each engine start: they sleep when the ignition goes off and wake up when it comes back on. While the option is on, the app keeps a small background service running (with a silent notification) that watches for the head unit waking up: a boot, the `ACC_ON` broadcast, or the head unit's power state changing from asleep to awake. Wake signals less than a minute apart count as one. After a wake it waits for the engine to run, which it reads from the battery voltage (13.2 V or more three times in a row), and then sends one switch. If the head unit gives no battery reading within 15 seconds of waking, it sends after those 15 seconds anyway. If the engine is not seen running within 10 minutes, or the head unit goes back to sleep first, nothing is sent.
+Most head units do not reboot at each engine start: they sleep when the ignition goes off and wake up when it comes back on. While the option is on, the app keeps a small background service running (with a silent notification) that listens to the head unit's power state and battery voltage. A new ignition cycle starts only on a boot, or when the head unit reports that it is awake again after it reported going to sleep. Signals less than a minute apart count as one.
 
-- Wake detection is not verified on the real head unit yet. The log records what it sees (`wake`, `power state`, `broadcast` lines) so it can be checked. If no wake is detected, nothing is sent and stop-start stays on.
-- It sends at most one switch per wake, and none if you already switched from the screen since the head unit woke up. If the head unit wakes or boots twice during the same engine run, the second switch turns stop-start back on.
-- A restart of the app or its service is not a wake, so it never sends in the middle of a drive because of that.
-- Other apps can send the `ACC_ON` broadcast too. A fake one could make the app switch once, at most once a minute.
+After a wake from sleep, the app waits to see the engine start: the battery below 13.0 V, then at 13.2 V or more three times in a row. If the battery already shows 13.2 V or more at the first reading, the engine was running before the wake and nothing is sent. After a boot the engine is usually running already, so three readings at 13.2 V or more are enough. If the engine is not seen running within 3 minutes, or the head unit goes back to sleep first, nothing is sent. Without battery readings nothing is sent, except after a boot on a head unit that refuses the power messages: then the switch is sent 15 seconds after the boot.
+
+- Wake detection is not verified on the real head unit yet. The log records what the app sees (`wake`, `power state` and `broadcast` lines) so it can be checked. If no wake is detected, nothing is sent and stop-start stays on.
+- It sends at most one switch per cycle, and none if you already switched from the screen in that cycle or less than a minute before it started. If the head unit wakes or boots twice during the same engine run, a second switch can turn stop-start back on.
+- A restart or update of the app is not a wake, so it never sends in the middle of a drive because of that.
+- Broadcasts such as `ACC_ON` are only logged. Any app can send them, so they never start a cycle or cause a switch.
 - If the link to the car does not come up within 30 seconds, nothing is sent.
 - If the head unit refuses the command, nothing is sent and it is not retried until the next wake. The main screen then says "Automatic switch failed. Tap to switch." until you switch from the screen.
 
@@ -132,7 +134,7 @@ Each line has a date and time. Lines to look for:
 - `unit id …` / `unit config …`: the head unit's identity text and configuration block, once each time the app starts, only while **Record car data** is on.
 - `sent stop-start switch, bit=…, rc=…`: a switch command sent to the CAN box. With **Record car data** on and the engine speed known, it ends with `, rpm=…`.
 - `auto: …`: what the automatic switch did, including why it sent or did not send and whether the CAN box echoed the command. `watch: …` lines come from the background service that waits for the engine.
-- `process started, pid …`, `wake <n> (<source>)`, `power state <n>` and `broadcast <action> (manifest|runtime), up … s`: what the app sees across ignition cycles, to learn how the head unit sleeps and wakes. Capped at 60 `power state` and 30 `broadcast` lines each time the app's process starts.
+- `process started, pid …`, `wake <n> (<source>)`, `power state <n>` and `broadcast <action> (manifest|runtime), up … s`: what the app sees across ignition cycles, to learn how the head unit sleeps and wakes. Capped at 30 `wake`, 60 `power state` and 30 `broadcast` lines per 24 hours; the `auto:` and `watch:` lines are capped too.
 - `screen off, up … s` / `screen on, up … s`, `network up (…)` / `network down`: while the app is open, at most 50 network lines each time the app starts.
 - `shutdown, up … s`: the head unit shut down cleanly. Android 9 and later only tell the app while it is running (open or in the background), so on those a missing line does not prove a power cut.
 
@@ -191,7 +193,7 @@ To sign with a stable key instead, set `KEYSTORE` (a PKCS12 file), `KS_PASS` and
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on every push to `master` and on pull requests:
 
-- **test**: `shellcheck` on the scripts and the unit tests (`sh test.sh`). The tests cover the CAN box frame encoding, the echo bit, the switch value and the parsing of the logged diagnostic data in `Protocol.java`, the boot id and the boot facts in `BootId.java`, the wake and ignition cycle rules in `WakeRules.java`, when the automatic switch fires in `AutoSwitch.java`, and the version bump rules; they need only a JDK.
+- **test**: `shellcheck` on the scripts and the unit tests (`sh test.sh`). The tests cover the CAN box frame encoding, the echo bit, the switch value and the parsing of the logged diagnostic data in `Protocol.java`, the boot id and the boot facts in `BootId.java`, the wake and ignition cycle rules in `WakeRules.java`, when the automatic switch fires in `AutoSwitch.java`, the log caps in `LogBudget.java`, and the version bump rules; they need only a JDK.
 - **security**: `gitleaks` scans the commits for leaked secrets and `zizmor` audits the workflow file. Actions are pinned to commit SHAs.
 - **build**: compiles with javac warnings as errors, builds the APK, checks its contents (launcher activity, boot components, and that the `TWUtil` stub is not packaged) and keeps it as a workflow artifact.
 
@@ -242,7 +244,7 @@ The app also logs these, which come from the vendor code and are **not verified*
 | Battery | message `what = 1292`, `arg1 = 0`: `((b[0] & 0x7F) << 8 \| b[1]) * 0.01` V when `b[0]` bit 7 is clear |
 | Head unit identity | `write(266, 255, 0)` answered by `what = 266` with a text; `write(267, 255, 0)` by `what = 267` with a block of bytes |
 
-The engine, battery and identity messages are only opened, together with the CAN box, while **Record car data** is on. Turning it on takes effect for them the next time the app's screen is shown. If the head unit refuses them, the app opens the CAN box alone, as before. The automatic switch opens the CAN box alone to send; its background service opens the CAN box with the power state (514) and battery messages.
+The engine, battery and identity messages are only opened, together with the CAN box, while **Record car data** is on. Turning it on takes effect for them the next time the app's screen is shown. If the head unit refuses them, the app opens the CAN box alone, as before. The automatic switch opens the CAN box alone to send; its background service opens only the power state (514) and battery messages, and reopens them if they stay silent for a minute.
 
 ## Status
 
@@ -258,7 +260,7 @@ The engine, battery and identity messages are only opened, together with the CAN
 - **"No answer from the car. Nothing sent."**: the CAN box did not send a status frame within 3 seconds of the tap, so no command was sent. Wait for "CONNECTED TO CAR" and tap again.
 - **The instrument cluster showed no message after a tap**: the command may not have changed bit 0 for the car, or the car ignored it. Wait 10 seconds, then tap once more and watch the cluster. If it still shows nothing, share the log: the `sent stop-start switch` and `status` lines around the tap show what happened.
 - **Stop-start ends up on after a tap**: each tap flips it, so it was off before. Tap once more and check the instrument cluster message.
-- **Switch off at engine start does nothing**: open the app once after installing. Then check the log for `wake` and `auto:` lines after an engine start; without a `wake` line the app did not notice the head unit waking up.
+- **Switch off at engine start does nothing**: open the app once after installing. Then check the log for `wake` and `auto:` lines after an engine start; without a `wake` line the app did not notice the head unit waking up, and `auto: engine already running at wake` means the engine was started before the head unit woke.
 - **Stop-start is on after an engine start with Switch off at engine start on**: the head unit probably woke or booted twice in the same engine run, so the second switch turned it back on. Tap the button once.
 
 ## License

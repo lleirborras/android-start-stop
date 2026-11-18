@@ -21,6 +21,8 @@ final class Prefs {
     private static final String WAKE_BOOT = "wake_boot";
     private static final String WAKE_COUNT = "wake_count";
     private static final String WAKE_AT = "wake_at";
+    private static final String LAST_SWITCH_ELAPSED = "last_switch_elapsed";
+    private static final LogBudget WAKE_LINES = new LogBudget(30);
     private static String currentBoot;
     private static final String INSTALL_ID = "install_id";
 
@@ -52,41 +54,57 @@ final class Prefs {
         return WakeRules.cycle(boot, boot.equals(p.getString(WAKE_BOOT, null)) ? p.getInt(WAKE_COUNT, 0) : 0);
     }
 
-    /** Starts a new ignition cycle unless one started less than a minute ago in this boot. Returns whether it did. */
+    /**
+     * Starts a new ignition cycle unless one started less than a minute ago in this boot. Returns whether it did. A
+     * switch sent less than a minute before counts for the new cycle.
+     */
     static synchronized boolean newWake(Context c, String source) {
         String boot = currentBoot(c);
         SharedPreferences p = prefs(c);
         boolean sameBoot = boot.equals(p.getString(WAKE_BOOT, null));
         long now = SystemClock.elapsedRealtime();
         if (!WakeRules.isNewWake(sameBoot, p.getLong(WAKE_AT, 0), now)) return false;
+        String previous = currentCycle(c);
         int n = WakeRules.nextWake(sameBoot, p.getInt(WAKE_COUNT, 0));
-        p.edit().putString(WAKE_BOOT, boot).putInt(WAKE_COUNT, n).putLong(WAKE_AT, now).commit();
-        LogFile.append(c, "wake " + n + " (" + source + ")");
+        long switchAt = p.getLong(LAST_SWITCH_ELAPSED, 0);
+        boolean carry = WakeRules.carrySwitch(previous.equals(p.getString(LAST_SWITCH_BOOT, null)), switchAt, now);
+        SharedPreferences.Editor e = p.edit().putString(WAKE_BOOT, boot).putInt(WAKE_COUNT, n).putLong(WAKE_AT, now);
+        if (carry) e.putString(LAST_SWITCH_BOOT, WakeRules.cycle(boot, n));
+        e.commit();
+        if (WAKE_LINES.take(now)) {
+            LogFile.append(c, "wake " + n + " (" + source + ")"
+                    + (carry ? ", switch sent " + (now - switchAt) / 1000 + " s before counts for it" : ""));
+        }
         return true;
     }
 
-    /** True once the automatic switch was sent during the current ignition cycle. */
-    static boolean bootSwitchDone(Context c) {
-        return currentCycle(c).equals(prefs(c).getString(BOOT_SWITCH_BOOT, null));
+    /** True once the automatic switch was sent during the given ignition cycle. */
+    static boolean bootSwitchDone(Context c, String cycle) {
+        return cycle.equals(prefs(c).getString(BOOT_SWITCH_BOOT, null));
     }
 
     /** Written to disk before the automatic switch is sent, so even a crash right after cannot lead to a second send. */
-    static void markBootSwitch(Context c) {
-        prefs(c).edit().putString(BOOT_SWITCH_BOOT, currentCycle(c)).commit();
+    static void markBootSwitch(Context c, String cycle) {
+        prefs(c).edit().putString(BOOT_SWITCH_BOOT, cycle).commit();
+    }
+
+    static void recordSwitch(Context c, boolean atBoot) {
+        recordSwitch(c, atBoot, currentCycle(c));
     }
 
     /** Records a switch command that was sent, by a tap or automatically. Written at once: the boot service reads it. */
-    static void recordSwitch(Context c, boolean atBoot) {
+    static void recordSwitch(Context c, boolean atBoot, String cycle) {
         prefs(c).edit()
                 .putLong(LAST_SWITCH_AT, System.currentTimeMillis())
+                .putLong(LAST_SWITCH_ELAPSED, SystemClock.elapsedRealtime())
                 .putBoolean(LAST_SWITCH_AT_BOOT, atBoot)
-                .putString(LAST_SWITCH_BOOT, currentCycle(c))
+                .putString(LAST_SWITCH_BOOT, cycle)
                 .remove(BOOT_SWITCH_FAILED)
                 .commit();
     }
 
-    static void setBootSwitchFailed(Context c) {
-        prefs(c).edit().putString(BOOT_SWITCH_FAILED, currentCycle(c)).apply();
+    static void setBootSwitchFailed(Context c, String cycle) {
+        prefs(c).edit().putString(BOOT_SWITCH_FAILED, cycle).apply();
     }
 
     /** True when the automatic switch could not be sent during the current cycle, and no switch was sent since. */
@@ -94,10 +112,14 @@ final class Prefs {
         return currentCycle(c).equals(prefs(c).getString(BOOT_SWITCH_FAILED, null));
     }
 
-    /** Wall-clock time of the last switch sent during the current cycle, or 0 if there was none. */
     static long lastSwitchAt(Context c) {
+        return lastSwitchAt(c, currentCycle(c));
+    }
+
+    /** Wall-clock time of the last switch sent during the given cycle, or 0 if there was none. */
+    static long lastSwitchAt(Context c, String cycle) {
         SharedPreferences p = prefs(c);
-        return currentCycle(c).equals(p.getString(LAST_SWITCH_BOOT, null)) ? p.getLong(LAST_SWITCH_AT, 0) : 0;
+        return cycle.equals(p.getString(LAST_SWITCH_BOOT, null)) ? p.getLong(LAST_SWITCH_AT, 0) : 0;
     }
 
     static boolean lastSwitchAtBoot(Context c) {

@@ -39,7 +39,7 @@
             </intent-filter>
         </receiver>
 
-        <!-- Exported: any app can send these. Each is only logged, and ACC_ON counts as at most one wake a minute. -->
+        <!-- Exported: any app can send these, so they are only logged and never start, end or act on a cycle. -->
         <receiver android:name=".WakeReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="com.unisound.intent.action.ACC_ON"/>
@@ -51,6 +51,12 @@
             <intent-filter>
                 <action android:name="android.intent.action.MEDIA_MOUNTED"/>
                 <data android:scheme="file"/>
+            </intent-filter>
+        </receiver>
+
+        <receiver android:name=".UpdatedReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
             </intent-filter>
         </receiver>
 
