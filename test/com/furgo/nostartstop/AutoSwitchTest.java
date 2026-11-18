@@ -2,115 +2,71 @@ package com.furgo.nostartstop;
 
 /** Plain-Java test, no test framework: run by test.sh, exits non-zero on the first failure. */
 public class AutoSwitchTest {
-    private static final int W = AutoSwitch.WAIT, F = AutoSwitch.FIRE, FB = AutoSwitch.FIRE_FALLBACK,
-            G = AutoSwitch.GIVE_UP, R = AutoSwitch.ALREADY_RUNNING;
-    private static final boolean BOOT = true, WAKE = false;
+    private static final int W = AutoSwitch.WAIT, F = AutoSwitch.FIRE, G = AutoSwitch.GIVE_UP;
+    private static final long SETTLE = AutoSwitch.SETTLE_MS, GIVE_UP = AutoSwitch.GIVE_UP_MS;
 
     public static void main(String[] args) {
         AutoSwitch a = new AutoSwitch();
         same("not armed: battery", a.onBattery(1400, 1_000), W);
-        same("not armed: tick", a.onTick(100_000, true), W);
+        same("not armed: tick", a.onTick(100_000), W);
         check("not armed: disarm reports nothing pending", !a.disarm());
 
-        // Boot: level trigger, three readings in a row at or above 13.2 V.
-        a.arm(0, BOOT);
-        same("boot 1st high", a.onBattery(1390, 1_000), W);
-        same("boot 2nd high", a.onBattery(1320, 2_000), W);
-        same("boot 3rd high fires", a.onBattery(1400, 3_000), F);
-        same("no second fire", a.onBattery(1400, 4_000), W);
-        same("no tick after firing", a.onTick(AutoSwitch.GIVE_UP_MS, true), W);
+        // One reading of 13.0 V or more after arming fires once 5 s have passed.
+        a.arm(0);
+        same("13.38 V before 5 s waits", a.onBattery(1338, 1_000), W);
+        same("tick before 5 s", a.onTick(SETTLE - 1), W);
+        same("tick at 5 s fires", a.onTick(SETTLE), F);
+        same("no second fire", a.onBattery(1400, SETTLE + 1_000), W);
+        same("no tick after firing", a.onTick(GIVE_UP), W);
 
-        // Boot: a reading below 13.2 V restarts the count.
-        a.arm(0, BOOT);
-        same("high", a.onBattery(1400, 1_000), W);
-        same("high", a.onBattery(1400, 2_000), W);
-        same("13.19 V resets", a.onBattery(1319, 3_000), W);
-        same("high", a.onBattery(1400, 4_000), W);
-        same("high", a.onBattery(1400, 5_000), W);
-        same("3rd in a row fires", a.onBattery(1400, 6_000), F);
+        a.arm(0);
+        same("reading after 5 s fires at once", a.onBattery(1300, SETTLE + 1), F);
 
-        // Wake: edge trigger, low first, then three high.
-        a.arm(0, WAKE);
-        same("wake low", a.onBattery(1220, 1_000), W);
-        same("wake high", a.onBattery(1400, 2_000), W);
-        same("wake high", a.onBattery(1400, 3_000), W);
-        same("wake 3rd high fires", a.onBattery(1400, 4_000), F);
-
-        // Wake: first reading already high means the engine ran before the wake.
-        a.arm(0, WAKE);
-        same("invalid reading is ignored", a.onBattery(-1, 500), W);
-        same("first reading high", a.onBattery(1400, 1_000), R);
-        same("nothing after that", a.onBattery(1200, 2_000), W);
-        same("nothing after that, tick", a.onTick(AutoSwitch.GIVE_UP_MS, true), W);
-
-        // Wake: the first reading must be low; 13.0 V or more first means the engine was already running.
-        a.arm(0, WAKE);
-        same("13.10 V first", a.onBattery(1310, 1_000), R);
-        same("nothing after that", a.onBattery(1200, 2_000), W);
-        a.arm(0, WAKE);
-        same("13.00 V first is not low", a.onBattery(1300, 1_000), R);
-        a.arm(0, WAKE);
-        same("12.99 V first is low", a.onBattery(1299, 1_000), W);
-        same("13.10 V after low is not high", a.onBattery(1310, 2_000), W);
-        same("high", a.onBattery(1400, 3_000), W);
-        same("high", a.onBattery(1400, 4_000), W);
-        same("3rd high after low fires", a.onBattery(1400, 5_000), F);
-
-        // Give up 3 minutes after arming, with readings or without.
-        a.arm(0, BOOT);
-        same("engine off", a.onBattery(1200, 1_000), W);
-        same("still waiting just before", a.onTick(AutoSwitch.GIVE_UP_MS - 1, false), W);
-        same("give up at 3 min", a.onTick(AutoSwitch.GIVE_UP_MS, false), G);
-        same("nothing after giving up", a.onBattery(1400, AutoSwitch.GIVE_UP_MS + 1), W);
-        a.arm(0, WAKE);
-        same("late high", a.onBattery(1200, 1_000), W);
-        same("late high", a.onBattery(1400, AutoSwitch.GIVE_UP_MS - 2), W);
-        same("late high", a.onBattery(1400, AutoSwitch.GIVE_UP_MS - 1), W);
-        same("late high past the limit gives up", a.onBattery(1400, AutoSwitch.GIVE_UP_MS), G);
-
-        // Fallback: only after a boot, only when the power messages were refused.
-        a.arm(1_000, BOOT);
-        same("boot, refused, before 15 s", a.onTick(1_000 + AutoSwitch.FALLBACK_MS - 1, true), W);
-        same("boot, refused, at 15 s", a.onTick(1_000 + AutoSwitch.FALLBACK_MS, true), FB);
-        same("fallback fires once", a.onTick(1_000 + AutoSwitch.FALLBACK_MS + 1, true), W);
-        a.arm(0, BOOT);
-        same("boot, still trying to open", a.onTick(AutoSwitch.FALLBACK_MS, false), W);
-        same("refused after the retries, past 15 s", a.onTick(40_000, true), FB);
-        a.arm(0, BOOT);
-        a.linkOpened();
-        same("boot, link open but no readings", a.onTick(AutoSwitch.FALLBACK_MS, false), W);
-        same("opened once, then failed to reopen: no fallback", a.onTick(40_000, true), W);
-        same("opened once: gives up", a.onTick(AutoSwitch.GIVE_UP_MS, true), G);
-        a.arm(0, BOOT);
-        same("re-arm forgets the earlier open", a.onTick(AutoSwitch.FALLBACK_MS, true), FB);
-        a.arm(0, WAKE);
-        same("wake, refused: no fallback", a.onTick(AutoSwitch.FALLBACK_MS, true), W);
-        same("wake, refused: gives up", a.onTick(AutoSwitch.GIVE_UP_MS, true), G);
-        a.arm(0, BOOT);
-        a.onBattery(1200, 1_000);
-        same("boot with readings: no fallback", a.onTick(AutoSwitch.FALLBACK_MS, true), W);
-        a.arm(0, BOOT);
-        same("very late tick gives up instead of falling back", a.onTick(AutoSwitch.GIVE_UP_MS + 5_000, true), G);
-
-        // Sleep disarms.
-        a.arm(0, WAKE);
-        a.onBattery(1200, 1_000);
-        check("disarm reports pending", a.disarm());
-        same("disarmed: battery", a.onBattery(1400, 2_000), W);
-        same("disarmed: tick", a.onTick(AutoSwitch.FALLBACK_MS, true), W);
-
-        // Re-arming starts fresh.
-        a.arm(0, BOOT);
+        // A reading from before arming does not count: nothing until a new one arrives.
+        a.arm(0);
         a.onBattery(1400, 1_000);
-        a.onBattery(1400, 2_000);
-        a.arm(100_000, BOOT);
-        same("count restarts after re-arm", a.onBattery(1400, 101_000), W);
-        same("count restarts after re-arm", a.onBattery(1400, 102_000), W);
-        same("count restarts after re-arm", a.onBattery(1400, 103_000), F);
-        a.arm(0, WAKE);
-        a.onBattery(1200, 1_000);
-        a.arm(100_000, WAKE);
-        same("low is forgotten after re-arm", a.onBattery(1400, 101_000), R);
+        a.arm(10_000);
+        same("reading before the re-arm does not count", a.onTick(10_000 + SETTLE), W);
+        same("new reading counts", a.onBattery(1400, 10_000 + SETTLE + 1), F);
+
+        // The newest reading decides: a drop below 13.0 V before the 5 s mark does not fire.
+        a.arm(0);
+        same("high", a.onBattery(1338, 1_000), W);
+        same("12.99 V", a.onBattery(1299, 3_000), W);
+        same("tick at 5 s with the newest reading low", a.onTick(SETTLE), W);
+        same("high again fires", a.onBattery(1340, 20_000), F);
+
+        // Engine off: no reading at 13.0 V, give up 3 minutes after arming.
+        a.arm(0);
+        same("12.0 V", a.onBattery(1200, 1_000), W);
+        same("just before 3 min", a.onTick(GIVE_UP - 1), W);
+        same("give up at 3 min", a.onTick(GIVE_UP), G);
+        same("nothing after giving up", a.onBattery(1400, GIVE_UP + 1), W);
+        a.arm(0);
+        same("no readings at all: no fallback", a.onTick(SETTLE), W);
+        same("no readings at all: give up", a.onTick(GIVE_UP), G);
+        a.arm(0);
+        same("high reading past 3 min gives up", a.onBattery(1400, GIVE_UP), G);
+
+        // Ignition off disarms.
+        a.arm(0);
+        a.onBattery(1400, 1_000);
+        check("disarm reports pending", a.disarm());
+        same("disarmed: tick", a.onTick(SETTLE), W);
+        same("disarmed: battery", a.onBattery(1400, SETTLE + 1), W);
+
+        // A crank restarts a pending switch without a new cycle, and starts a new cycle once it fired or gave up.
+        a.arm(0);
+        a.onBattery(1400, 1_000);
+        check("crank while pending: same cycle", !a.onCrank(3_000));
+        same("re-armed: 5 s counts from the crank, old reading gone", a.onTick(3_000 + SETTLE), W);
+        same("reading after the crank fires", a.onBattery(1338, 3_000 + SETTLE + 1), F);
+        check("crank after a fire: new cycle", a.onCrank(30_000));
+        same("new reading fires again", a.onBattery(1338, 30_000 + SETTLE), F);
+        a.arm(0);
+        a.onTick(GIVE_UP);
+        check("crank after giving up: new cycle", a.onCrank(GIVE_UP + 1));
+        check("crank on a fresh watch: new cycle", new AutoSwitch().onCrank(0));
 
         System.out.println("AutoSwitchTest passed");
     }

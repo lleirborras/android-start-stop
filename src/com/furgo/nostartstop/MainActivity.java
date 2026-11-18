@@ -200,7 +200,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         renderLog();
         result = "";
         BootService.onRunningChanged = rerender;
-        WatchService.start(this, false);
+        WatchService.start(this, WatchService.BY_APP);
         box.setCaptureFrames(Prefs.captureFrames(this));
         opened = box.open();
         if (!opened) link = LINK_DOWN;
@@ -431,7 +431,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         boolean on = !Prefs.applyAtBoot(this);
         Prefs.setApplyAtBoot(this, on);
         onLog(on ? "automatic switch on" : "automatic switch off");
-        if (on) WatchService.start(this, false);
+        if (on) WatchService.start(this, WatchService.BY_APP);
         else stopService(new Intent(this, WatchService.class));
         renderBoot();
     }
