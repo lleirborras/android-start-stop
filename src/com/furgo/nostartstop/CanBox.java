@@ -3,7 +3,6 @@ package com.furgo.nostartstop;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
-import android.os.SystemClock;
 import android.tw.john.TWUtil;
 import android.util.Log;
 
@@ -26,8 +25,6 @@ final class CanBox {
     private static final int MAX_FRAME_IDS = 64;
     private static final int MAX_FRAME_LINES = 400;
     private static int instances;
-    /** elapsedRealtime of the last switch command written by any CanBox in this process; 0 = none. */
-    static long lastSwitchAt;
 
     private final Listener listener;
     private final String tag = TAG + "-" + (instances++);
@@ -122,7 +119,6 @@ final class CanBox {
             log("stop-start switch not sent, bit=" + bit + ", rc=" + rc);
             return -1;
         }
-        lastSwitchAt = SystemClock.elapsedRealtime();
         log("sent stop-start switch, bit=" + bit + ", rc=" + rc);
         handler.postDelayed(new Runnable() {
             @Override

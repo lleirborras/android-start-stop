@@ -57,8 +57,11 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private int link = LINK_WAITING;
     private long lastFrameAt;
     // A tap first waits for a fresh status frame to pick the bit, then for the echo of the command.
-    private static final int IDLE = 0, AWAIT_FRAME = 1, AWAIT_ECHO = 2;
+    // After any send the button stays busy for HOLD_MS, so a bounce or double tap cannot flip stop-start back.
+    private static final int IDLE = 0, AWAIT_FRAME = 1, AWAIT_ECHO = 2, HOLD = 3;
+    private static final long HOLD_MS = 2000;
     private int phase = IDLE;
+    private long sentAt;
     private String result = "";    // outcome of the last switch command
     private int resultColor = MUTED;
     private String note;           // replaces the result line for a few seconds
@@ -94,6 +97,14 @@ public class MainActivity extends Activity implements CanBox.Listener {
         public void run() {
             phase = IDLE;
             showResult("No answer from the car. Nothing sent.", WARN);
+        }
+    };
+
+    private final Runnable settle = new Runnable() {
+        @Override
+        public void run() {
+            phase = IDLE;
+            showSent();
         }
     };
 
@@ -182,6 +193,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         handler.removeCallbacks(requery);
         handler.removeCallbacks(noFrame);
         handler.removeCallbacks(noAnswer);
+        handler.removeCallbacks(settle);
         BootService.onRunningChanged = null;
         phase = IDLE;
         box.close();
@@ -198,9 +210,8 @@ public class MainActivity extends Activity implements CanBox.Listener {
             phase = IDLE;
             send();
         } else if (phase == AWAIT_ECHO && echo) {
-            phase = IDLE;
             handler.removeCallbacks(noAnswer);
-            showSent();
+            hold();
         } else {
             render();
         }
@@ -218,13 +229,20 @@ public class MainActivity extends Activity implements CanBox.Listener {
             return;
         }
         Prefs.recordSwitch(this, false);
+        sentAt = SystemClock.elapsedRealtime();
         if (bit == 0) {
             // A cleared echo looks the same as no answer, so it cannot confirm this command.
-            showSent();
+            hold();
             return;
         }
         phase = AWAIT_ECHO;
         handler.postDelayed(noAnswer, ANSWER_MS);
+        render();
+    }
+
+    private void hold() {
+        phase = HOLD;
+        handler.postDelayed(settle, Math.max(0, sentAt + HOLD_MS - SystemClock.elapsedRealtime()));
         render();
     }
 
@@ -469,9 +487,14 @@ public class MainActivity extends Activity implements CanBox.Listener {
         } else if (bootBusy) {
             feedback.setText("Switching at boot…");
             feedback.setTextColor(MUTED);
+        } else if (result.isEmpty() && phase != IDLE) {
+            feedback.setText("");
         } else if (result.isEmpty() && link == LINK_DOWN) {
             feedback.setText("This head unit did not let the app reach the car.");
             feedback.setTextColor(MUTED);
+        } else if (result.isEmpty() && Prefs.bootSwitchFailed(this)) {
+            feedback.setText("Switch at boot failed. Tap to switch.");
+            feedback.setTextColor(WARN);
         } else if (result.isEmpty() && last != 0) {
             feedback.setText("Last switch: " + clock(last) + (Prefs.lastSwitchAtBoot(this) ? ", at boot" : ""));
             feedback.setTextColor(MUTED);

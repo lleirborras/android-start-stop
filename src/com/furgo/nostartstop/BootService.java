@@ -56,19 +56,14 @@ public class BootService extends Service implements CanBox.Listener {
             if (sent) return;
             sent = true;
             handler.removeCallbacks(this);
-            if (CanBox.lastSwitchAt > startedAt) {
-                onLog("a switch was sent from the screen since boot, nothing sent");
-                finish();
-                return;
-            }
-            if (Prefs.bootSwitchDone(BootService.this)) {
-                onLog("already switched during this boot, nothing sent");
+            if (alreadySwitched()) {
                 finish();
                 return;
             }
             Prefs.markBootSwitch(BootService.this);
             sentBit = canBox.toggle();
             if (sentBit < 0) {
+                Prefs.setBootSwitchFailed(BootService.this);
                 onLog("switch failed, nothing sent");
                 finish();
                 return;
@@ -98,8 +93,7 @@ public class BootService extends Service implements CanBox.Listener {
         startForeground(1, buildNotification());
         canBox = new CanBox(this);
         onLog("service started");
-        if (Prefs.bootSwitchDone(this)) {
-            onLog("already switched during this boot, nothing sent");
+        if (alreadySwitched()) {
             finish();
             return START_NOT_STICKY;
         }
@@ -136,6 +130,20 @@ public class BootService extends Service implements CanBox.Listener {
     @Override
     public void onLog(String line) {
         LogFile.append(this, "boot: " + line);
+    }
+
+    /** A second switch in the same boot would turn stop-start back on, whoever sent the first. */
+    private boolean alreadySwitched() {
+        if (Prefs.bootSwitchDone(this)) {
+            onLog("already switched during this boot, nothing sent");
+            return true;
+        }
+        if (Prefs.lastSwitchAt(this) != 0) {
+            Prefs.markBootSwitch(this);
+            onLog("already switched from the screen during this boot, nothing sent");
+            return true;
+        }
+        return false;
     }
 
     private static void setRunning(boolean on) {

@@ -21,8 +21,8 @@ The screenshots are from an emulator at 1920x720 with a simulated CAN box. On a 
   - "No answer from the car." when the command was sent but not echoed within 3 seconds. Check the instrument cluster before tapping again: the switch may have worked.
   - "No answer from the car. Nothing sent." when no status frame came within 3 seconds, and "Could not send to the car. Nothing sent." when the head unit refused the command.
 
-  Taps while a command is pending, or while **Switch off at boot** is sending ("Switching at boot…"), are ignored, so a double tap does not switch it straight back. When idle, the card shows the last switch sent since the head unit started, for example "Last switch: 08:41, at boot".
-- **Switch off at boot**: off by default. When on, the app sends one switch command after the head unit boots, then stops. It sends at most once per boot, even if Android starts it twice. The car turns stop-start on at every engine start, so one switch turns it off. See [the limits](#switch-off-at-boot-limits).
+  Taps are ignored while a command is pending, for 2 seconds after each command is sent, and while **Switch off at boot** is sending ("Switching at boot…"), so a double tap does not switch it straight back. When idle, the card shows the last switch sent since the head unit started, for example "Last switch: 08:41, at boot".
+- **Switch off at boot**: off by default. When on, the app sends one switch command after the head unit boots, then stops. It sends at most one switch per boot, and none if you already switched from the screen during this boot. The car turns stop-start on at every engine start, so one switch turns it off. See [the limits](#switch-off-at-boot-limits).
 - **Record car data**: off by default. When on, the log also records the raw frames the CAN box passes on from the car, to help find where the car reports the real stop-start state. These frames may include vehicle details (for example the VIN, speed or position), so leave it off unless you are helping with that.
 - **Log**: the commands sent, the CAN box status frames and any errors.
 - **Check for updates**: downloads and installs the latest release when you ask for it.
@@ -33,8 +33,9 @@ There is no "keep it off" or lock option: the vendor app's "permanently closed" 
 ### Switch off at boot: limits
 
 - It only acts when the head unit really boots. A head unit that only sleeps on ignition-off and wakes up on the next start does not send anything, and stop-start stays on.
-- It sends exactly one switch per boot. If the head unit boots twice during the same engine run (for example after a crash), the second switch turns stop-start back on.
+- It sends at most one switch per boot, and none if you already switched from the screen during this boot. If the head unit boots twice during the same engine run (for example after a crash), the second switch turns stop-start back on.
 - If the link to the car does not come up within 30 seconds of boot, nothing is sent.
+- If the head unit refuses the command at boot, nothing is sent and it is not retried during that boot. The main screen then says "Switch at boot failed. Tap to switch." until you switch from the screen.
 
 ## Install from a USB pendrive
 
