@@ -75,6 +75,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private boolean askingAboutDiagnostics;
     private Toggle telemetrySwitch;   // null when the build has no PostHog key
     private Toggle captureSwitch;
+    private Toggle autoUpdateSwitch;
     private TextView logView;
     private ScrollView logScroll;
     private TextView feedback;
@@ -138,6 +139,16 @@ public class MainActivity extends Activity implements CanBox.Listener {
         }
     };
 
+    private final Runnable jobDone = new Runnable() {
+        @Override
+        public void run() {
+            log.clear();
+            log.addAll(LogFile.tail(MainActivity.this, MAX_LOG));
+            renderLog();
+            showStoredUpdate();
+        }
+    };
+
     private static final class Toggle {
         FrameLayout track;
         View knob;
@@ -188,6 +199,9 @@ public class MainActivity extends Activity implements CanBox.Listener {
         if (opened) box.query();
         handler.postDelayed(requery, REQUERY_MS);
         askAboutDiagnostics();
+        UpdateJob.onResult = jobDone;
+        showStoredUpdate();
+        UpdateJob.schedule(this, true);
     }
 
     @Override
@@ -197,6 +211,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         handler.removeCallbacks(noAnswer);
         handler.removeCallbacks(settle);
         BootService.onRunningChanged = null;
+        UpdateJob.onResult = null;
         phase = IDLE;
         box.close();
         opened = false;
@@ -318,7 +333,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
             @Override
             public void run() {
                 try {
-                    if (found == null) {
+                    if (found == null || found.apkUrl == null) {
                         final Updater.Release latest = Updater.latest();
                         handler.post(new Runnable() {
                             @Override
@@ -341,10 +356,13 @@ public class MainActivity extends Activity implements CanBox.Listener {
 
     private void onLatest(Updater.Release latest) {
         updateBusy = false;
+        UpdateJob.remember(this, latest.tag);
         if (Version.isNewer(latest.tag, versionName())) {
+            boolean installNow = available != null && available.tag.equals(latest.tag);
             available = latest;
             onLog("update available: " + latest.tag);
             showIdleUpdate();
+            if (installNow) onUpdateClick();
         } else {
             onLog("no update: latest release is " + latest.tag + ", installed is " + versionName());
             showUpdate("Up to date", TEXT, false);
@@ -364,6 +382,19 @@ public class MainActivity extends Activity implements CanBox.Listener {
                 handler.postDelayed(revertUpdate, REVERT_MS);
             }
         });
+    }
+
+    /** Offers the release found by the background check, if it is still newer than the installed version. */
+    private void showStoredUpdate() {
+        if (updateBusy) return;
+        String installed = versionName();
+        if (available != null && !Version.isNewer(available.tag, installed)) available = null;
+        String tag = UpdateCheck.offerable(Prefs.latestTag(this), installed);
+        // Its APK URL is not stored: tapping Install fetches the release again.
+        if (tag != null && (available == null || Version.isNewer(tag, available.tag))) {
+            available = new Updater.Release(tag, null);
+        }
+        showIdleUpdate();
     }
 
     private void showIdleUpdate() {
@@ -393,6 +424,14 @@ public class MainActivity extends Activity implements CanBox.Listener {
         Prefs.setCaptureFrames(this, on);
         box.setCaptureFrames(on);
         onLog(on ? "recording car data on" : "recording car data off");
+        renderBoot();
+    }
+
+    private void toggleAutoUpdate() {
+        boolean on = !Prefs.autoUpdate(this);
+        Prefs.setAutoUpdate(this, on);
+        onLog(on ? "automatic update check on" : "automatic update check off");
+        UpdateJob.schedule(this, true);
         renderBoot();
     }
 
@@ -437,6 +476,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
             onLog("diagnostics sharing off");
             Telemetry.clear(this);
         }
+        UpdateJob.schedule(this, false);
         renderBoot();
     }
 
@@ -518,6 +558,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         renderSwitch(bootSwitch, Prefs.applyAtBoot(this));
         renderSwitch(captureSwitch, Prefs.captureFrames(this));
         if (telemetrySwitch != null) renderSwitch(telemetrySwitch, Prefs.telemetry(this));
+        renderSwitch(autoUpdateSwitch, Prefs.autoUpdate(this));
     }
 
     private void renderSwitch(Toggle t, boolean on) {
@@ -578,7 +619,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         LinearLayout settings = new LinearLayout(this);
         settings.setOrientation(LinearLayout.HORIZONTAL);
         bootSwitch = addSetting(settings, "Switch off at boot",
-                "Sends one switch when the radio boots: each engine start turns it on.",
+                "Sends one switch at each radio boot.",
                 new View.OnClickListener() {
                     @Override
                     public void onClick(View v) {
@@ -601,11 +642,19 @@ public class MainActivity extends Activity implements CanBox.Listener {
 
         LinearLayout capture = new LinearLayout(this);
         captureSwitch = addSetting(capture, "Record car data",
-                "Logs raw car data to find the stop-start state. May include vehicle details.",
+                "May include vehicle details.",
                 new View.OnClickListener() {
                     @Override
                     public void onClick(View v) {
                         toggleCapture();
+                    }
+                });
+        autoUpdateSwitch = addSetting(capture, "Check for updates automatically",
+                "Once a day. Never installs by itself.",
+                new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        toggleAutoUpdate();
                     }
                 });
         LinearLayout.LayoutParams captureLp = new LinearLayout.LayoutParams(-1, -2);

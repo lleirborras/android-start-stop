@@ -21,6 +21,8 @@ import java.util.ArrayDeque;
 import java.util.Date;
 import java.util.Locale;
 import java.util.TimeZone;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -77,18 +79,37 @@ final class Telemetry {
         });
     }
 
-    private static void sendQueued(Context app) {
+    /** Returns the number of lines sent, or -1 if sending failed and they stay queued. */
+    private static int sendQueued(Context app) {
         try {
             if (!Prefs.telemetry(app)) {
                 queueFile(app).delete();
-                return;
+                return 0;
             }
             ArrayDeque<String> queued = read(app);
-            if (queued.isEmpty() || !send(queued)) return;
+            if (queued.isEmpty()) return 0;
+            if (!send(queued)) return -1;
             queueFile(app).delete();
+            return queued.size();
         } catch (Exception e) {
             Log.w(TAG, "telemetry: " + e);
+            return -1;
         }
+    }
+
+    /**
+     * Sends whatever is queued, on the worker so it cannot race log(). Blocks until done; call it off the main thread.
+     * Returns the number of lines sent, or -1 if sending failed.
+     */
+    static int flush(Context context) throws InterruptedException, ExecutionException {
+        if (!configured()) return 0;
+        final Context app = context.getApplicationContext();
+        return WORKER.submit(new Callable<Integer>() {
+            @Override
+            public Integer call() {
+                return sendQueued(app);
+            }
+        }).get();
     }
 
     /** Drops anything not sent yet and forgets the install id; called when the user switches diagnostics off. */

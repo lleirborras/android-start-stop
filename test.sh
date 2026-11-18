@@ -7,10 +7,11 @@ out=build/test
 rm -rf "$out" && mkdir -p "$out"
 find test -name '*.java' -exec javac -Xlint:all -Werror -d "$out" \
     src/com/furgo/nostartstop/Protocol.java src/com/furgo/nostartstop/Version.java \
-    src/com/furgo/nostartstop/BootId.java {} +
+    src/com/furgo/nostartstop/BootId.java src/com/furgo/nostartstop/UpdateCheck.java {} +
 java -cp "$out" com.furgo.nostartstop.ProtocolTest
 java -cp "$out" com.furgo.nostartstop.BootIdTest
 java -cp "$out" com.furgo.nostartstop.VersionTest
+java -cp "$out" com.furgo.nostartstop.UpdateCheckTest
 
 # next-version.sh: <branch> <latest tag> -> <expected tag, empty for no release>
 expect() {

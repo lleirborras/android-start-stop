@@ -8,7 +8,7 @@
 
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
-    <!-- Both are only used by the manual "Check for updates" button. -->
+    <!-- INTERNET: update checks and diagnostics. REQUEST_INSTALL_PACKAGES: only after the user taps Install. -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
 
@@ -25,6 +25,9 @@
             android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
 
         <service android:name=".BootService" android:exported="false"/>
+
+        <service android:name=".UpdateJob" android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE"/>
 
         <receiver android:name=".BootReceiver" android:exported="true">
             <intent-filter>
