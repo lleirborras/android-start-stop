@@ -142,6 +142,7 @@ jobs:
         run: |
           bt="$ANDROID_HOME/build-tools/34.0.0"
           "$bt/aapt2" dump badging build/nostartstop.apk | grep -q "launchable-activity: name='com.furgo.nostartstop.MainActivity'"
+          "$bt/aapt2" dump badging build/nostartstop.apk | grep -q "^application: .*icon='res/mipmap-"
           "$bt/dexdump" build/nostartstop.apk | grep 'Class descriptor' > classes.txt
           grep -q "Lcom/furgo/nostartstop/BootService;" classes.txt
           grep -q "Lcom/furgo/nostartstop/BootReceiver;" classes.txt
