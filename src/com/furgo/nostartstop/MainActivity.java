@@ -17,10 +17,11 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.SystemClock;
+import android.text.Layout;
 import android.text.SpannableStringBuilder;
-import android.text.style.AbsoluteSizeSpan;
+import android.text.TextPaint;
 import android.text.style.ForegroundColorSpan;
-import android.text.style.StyleSpan;
+import android.text.style.RelativeSizeSpan;
 import android.util.DisplayMetrics;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -94,6 +95,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private TextView switchButton;
     private TextView assumedWord;
     private TextView assumedHint;
+    private static final float WORD_SP = 44;
     private StateBadge badge;
     private LinearLayout stateCard;
     private TextView wrongButton;
@@ -182,12 +184,22 @@ public class MainActivity extends Activity implements CanBox.Listener {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Path path = new Path();
         private int state = AssumedState.UNKNOWN;
+        private final RectF arc = new RectF();
+        private DashPathEffect dash;
+
+        @Override
+        protected void onSizeChanged(int w, int h, int ow, int oh) {
+            float u = Math.min(w, h), r = u * 0.42f;
+            arc.set(w / 2f - r, h / 2f - r, w / 2f + r, h / 2f + r);
+            dash = new DashPathEffect(new float[]{u * 0.14f, u * 0.1f}, 0);
+        }
 
         StateBadge(Context c) {
             super(c);
         }
 
         void setState(int s) {
+            if (s == state) return;
             state = s;
             invalidate();
         }
@@ -204,7 +216,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
                 paint.setStyle(Paint.Style.STROKE);
                 paint.setStrokeWidth(sw);
                 paint.setColor(color);
-                c.drawArc(new RectF(cx - r, cy - r, cx + r, cy + r), 300, 285, false, paint);
+                c.drawArc(arc, 300, 285, false, paint);
                 double end = Math.toRadians(225);
                 float px = cx + r * (float) Math.cos(end), py = cy + r * (float) Math.sin(end);
                 float tx = -(float) Math.sin(end), ty = (float) Math.cos(end), nx = ty, ny = -tx;
@@ -223,7 +235,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
                 paint.setTextSize(u * 0.56f);
                 c.drawText("A", cx, cy + u * 0.2f, paint);
                 if (state == AssumedState.OFF) {
-                    float d = u * 0.46f;
+                    float d = u * 0.43f;
                     paint.setStyle(Paint.Style.STROKE);
                     paint.setStrokeWidth(sw * 1.6f);
                     paint.setColor(CARD);
@@ -238,7 +250,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
                 paint.setStrokeWidth(sw);
                 paint.setColor(MUTED);
                 paint.setStrokeCap(Paint.Cap.BUTT);
-                paint.setPathEffect(new DashPathEffect(new float[]{u * 0.14f, u * 0.1f}, 0));
+                paint.setPathEffect(dash);
                 c.drawCircle(cx, cy, u / 2 - sw, paint);
                 paint.setPathEffect(null);
                 paint.setStyle(Paint.Style.FILL);
@@ -691,15 +703,16 @@ public class MainActivity extends Activity implements CanBox.Listener {
         if (assumed != AssumedState.UNKNOWN) {
             int from = sb.length();
             sb.append("  assumed");
-            sb.setSpan(new AbsoluteSizeSpan(20, true), from, sb.length(), 0);
+            sb.setSpan(new RelativeSizeSpan(20f / WORD_SP), from, sb.length(), 0);
             sb.setSpan(new ForegroundColorSpan(MUTED), from, sb.length(), 0);
-            sb.setSpan(new StyleSpan(Typeface.NORMAL), from, sb.length(), 0);
         }
         assumedWord.setText(sb);
+        fitWord();
         assumedWord.setTextColor(stateColor);
-        assumedHint.setText(assumed == AssumedState.OFF ? "Not read from the car. Check the instrument cluster."
-                : assumed == AssumedState.ON ? "Not read from the car. Tap Switch to turn it off."
-                : "The app has not seen this drive start. Check the instrument cluster.");
+        assumedHint.setText(assumed == AssumedState.ON && usable ? "Not read from the car. Tap Switch to turn it off."
+                : assumed != AssumedState.UNKNOWN ? "Not read from the car. Check the instrument cluster."
+                : !Prefs.applyAtBoot(this) ? "Only followed while Switch off at engine start is on. Check the instrument cluster."
+                : "Not followed since the last ignition off. Check the instrument cluster.");
         boolean canReport = assumed != AssumedState.UNKNOWN && !pending && !bootBusy
                 && SystemClock.elapsedRealtime() >= reportedAt + HOLD_MS;
         wrongButton.setEnabled(canReport);
@@ -721,6 +734,21 @@ public class MainActivity extends Activity implements CanBox.Listener {
         handler.postDelayed(rerender, HOLD_MS);
         flash(result == Prefs.REPORT_LOGGED ? "Noted in the log. Nothing sent to the car."
                 : "Changed, but not logged: too many reports today. Nothing sent to the car.");
+    }
+
+    /** Shrinks the state word to one line when the column is narrow or the font scale is large. */
+    private void fitWord() {
+        int avail = assumedWord.getWidth() - assumedWord.getPaddingLeft() - assumedWord.getPaddingRight();
+        if (avail <= 0) return;
+        float size = WORD_SP * getResources().getDisplayMetrics().scaledDensity;
+        TextPaint tp = new TextPaint(assumedWord.getPaint());
+        tp.setTextSize(size);
+        CharSequence t = assumedWord.getText();
+        while (size > 12 * density && Layout.getDesiredWidth(t, tp) > avail) {
+            size -= density;
+            tp.setTextSize(size);
+        }
+        if (assumedWord.getTextSize() != size) assumedWord.setTextSize(TypedValue.COMPLEX_UNIT_PX, size);
     }
 
     private void renderBoot() {
@@ -876,8 +904,15 @@ public class MainActivity extends Activity implements CanBox.Listener {
         TextView t = text("STOP-START", 14, MUTED, true);
         t.setLetterSpacing(0.14f);
         stack.addView(t);
-        assumedWord = text("", 44, TEXT, true);
+        assumedWord = text("", WORD_SP, TEXT, true);
         assumedWord.setIncludeFontPadding(false);
+        assumedWord.setSingleLine(true);
+        assumedWord.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+            @Override
+            public void onLayoutChange(View v, int l, int t, int r, int b, int ol, int ot, int or, int ob) {
+                fitWord();
+            }
+        });
         stack.addView(assumedWord);
         LinearLayout.LayoutParams stackLp = new LinearLayout.LayoutParams(0, -2, 1f);
         stackLp.leftMargin = dp(16);
