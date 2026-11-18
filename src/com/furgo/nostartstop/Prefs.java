@@ -98,7 +98,8 @@ final class Prefs {
         prefs(c).edit()
                 .putLong(LAST_SWITCH_AT, System.currentTimeMillis())
                 .putLong(LAST_SWITCH_ELAPSED, SystemClock.elapsedRealtime())
-                .putBoolean(IGNITION_OFF, WakeRules.ignitionOffAfter(ignitionOff(c), WakeRules.FIRED))
+                .putBoolean(IGNITION_OFF,
+                        WakeRules.ignitionOffAfter(ignitionOff(c), WakeRules.FIRED, WatchService.ignitionOffNow))
                 .putBoolean(LAST_SWITCH_AT_BOOT, atBoot)
                 .putString(LAST_SWITCH_BOOT, cycle)
                 .remove(BOOT_SWITCH_FAILED)

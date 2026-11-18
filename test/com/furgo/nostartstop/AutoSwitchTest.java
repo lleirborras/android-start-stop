@@ -151,6 +151,40 @@ public class AutoSwitchTest {
         a.arm(100_000, true);
         check("a new arm forgets the wait", !a.deferring());
 
+        // A busy fire that is no longer due (the voltage dropped) gives a later busy fire its full 30 s.
+        a = new AutoSwitch();
+        a.arm(0, false);
+        same("fires", a.onBattery(1340, SETTLE), F);
+        check("busy", a.defer(SETTLE));
+        same("voltage dropped: no longer due", a.onBattery(1200, SETTLE + 20_000), W);
+        check("the wait is forgotten", !a.deferring());
+        same("due again", a.onBattery(1340, SETTLE + 25_000), F);
+        check("busy again", a.defer(SETTLE + 25_000));
+        check("still pending 29 s into the new wait", a.defer(SETTLE + 25_000 + AutoSwitch.BUSY_MS - 1_000));
+
+        // A 9 never followed by 6 or 1 holds the switch only for the crank time limit.
+        long max = PowerWatch.MAX_CRANK_MS;
+        a = new AutoSwitch();
+        a.arm(0, false);
+        a.onCrankStart(10_000);
+        same("13.4 V during the crank: hold", a.onBattery(1340, 20_000), W);
+        same("still within the limit", a.onTick(10_000 + max), W);
+        same("past the limit the hold is dropped", a.onTick(10_000 + max + 1), F);
+        // A 9 after the limit is a new crank start, and the crank end counts from it.
+        a = new AutoSwitch();
+        a.onCrankStart(0);
+        a.onBattery(1340, 5_000);
+        a.onCrankStart(max + 10_000);
+        a.onCrank(max + 15_000, NONE);
+        same("reading before the second 9 does not count", a.onTick(max + 15_000 + SETTLE), W);
+        same("reading after the second 9 counts", a.onBattery(1340, max + 15_000 + SETTLE + 1), F);
+        a = new AutoSwitch();
+        a.onCrankStart(0);
+        a.onCrankStart(max);
+        a.onBattery(1340, 2_000);
+        a.onCrank(max + 5_000, NONE);
+        same("a repeated 9 within the limit keeps the first 9 as the start", a.onTick(max + 5_000 + SETTLE), F);
+
         System.out.println("AutoSwitchTest passed");
     }
 

@@ -41,11 +41,18 @@ final class AutoSwitch {
         deferredSince = -1;
     }
 
-    /** State 9: the engine is cranking. Nothing fires until the crank ends. */
+    /**
+     * State 9: the engine is cranking. Nothing fires until the crank ends, or until it is older than
+     * {@link PowerWatch#MAX_CRANK_MS}; a 9 after that is a new crank.
+     */
     void onCrankStart(long now) {
-        if (cranking) return;
+        if (cranking && !crankTimedOut(now)) return;
         cranking = true;
         crankStartAt = now;
+    }
+
+    private boolean crankTimedOut(long now) {
+        return now - crankStartAt > PowerWatch.MAX_CRANK_MS;
     }
 
     /** A 6 or 1 that does not end the crank as an engine start: only lifts the hold. */
@@ -118,7 +125,12 @@ final class AutoSwitch {
             armed = false;
             return GIVE_UP;
         }
-        if (cranking || newest < RUNNING_CENTIVOLTS || newestAt < countFrom || now - armedAt < SETTLE_MS) return WAIT;
+        if (cranking && crankTimedOut(now)) cranking = false;
+        if (cranking || newest < RUNNING_CENTIVOLTS || newestAt < countFrom || now - armedAt < SETTLE_MS) {
+            // A busy fire that is no longer due starts its 30 s afresh the next time.
+            deferredSince = -1;
+            return WAIT;
+        }
         armed = false;
         return FIRE;
     }

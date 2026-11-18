@@ -22,6 +22,8 @@ import android.os.SystemClock;
  */
 public class WatchService extends Service implements CanBox.Listener, CanBox.PowerListener {
     private static final String EXTRA_HOW = "how";
+    /** The last power state this process saw was ignition off. Main thread only. */
+    static boolean ignitionOffNow;
     private static final int NOTIFICATION_ID = 3;
     private static final long[] OPEN_BACKOFF_MS = {1_000, 2_000, 4_000, 8_000, 15_000};
     private static final long SILENT_MS = 60_000;
@@ -161,8 +163,10 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
             if (POWER_LINES.take(lastMessageAt)) LogFile.append(this, "power state " + state);
         }
         int event = power.onState(state, lastMessageAt);
+        if (state == PowerWatch.STATE_AWAKE || state == PowerWatch.STATE_CRANK) ignitionOffNow = false;
         if (event == PowerWatch.IGNITION_OFF) {
             offSeenHere = true;
+            ignitionOffNow = true;
             Prefs.ignitionEvent(this, WakeRules.OFF_SEEN);
             handler.removeCallbacks(tick);
             if (auto.disarm()) autoLog("ignition off, nothing sent");

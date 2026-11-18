@@ -10,6 +10,10 @@ public class WakeRulesTest {
         check("a crank cycle clears it", !WakeRules.ignitionOffAfter(true, WakeRules.CRANK_CYCLE));
         check("a fired switch clears it", !WakeRules.ignitionOffAfter(true, WakeRules.FIRED));
         check("clear stays clear", !WakeRules.ignitionOffAfter(false, WakeRules.IGNITION_ON_CYCLE));
+        check("a switch sent after ignition off keeps it", WakeRules.ignitionOffAfter(true, WakeRules.FIRED, true));
+        check("a switch with the ignition on clears it", !WakeRules.ignitionOffAfter(true, WakeRules.FIRED, false));
+        check("ignition off now does not keep it for a crank cycle",
+                !WakeRules.ignitionOffAfter(true, WakeRules.CRANK_CYCLE, true));
 
         same("first wake number", WakeRules.nextWake(false, 7), 1);
         same("next wake number", WakeRules.nextWake(true, 7), 8);

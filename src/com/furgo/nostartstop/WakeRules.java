@@ -18,7 +18,13 @@ final class WakeRules {
      * while the head unit was still off, and a later start must still count.
      */
     static boolean ignitionOffAfter(boolean flag, int event) {
+        return ignitionOffAfter(flag, event, false);
+    }
+
+    /** offNow: the last power state seen was ignition off; a switch sent then keeps the flag for the next ignition on. */
+    static boolean ignitionOffAfter(boolean flag, int event, boolean offNow) {
         if (event == OFF_SEEN) return true;
+        if (event == FIRED && offNow) return flag;
         if (event == CRANK_CYCLE || event == FIRED) return false;
         return flag;
     }
