@@ -33,7 +33,8 @@ The screenshots are from an emulator at 1920x720 with a simulated CAN box. On a 
 ## What it does
 
 - **Switch stop-start**: one button that sends one switch command to the car. The command is a toggle: each tap turns stop-start off if it was on, and on if it was off.
-- **No on/off display**: the car does not report whether stop-start is on or off, so the app does not show it. The instrument cluster shows a message when stop-start is switched off or on; look there after a tap.
+- **Assumed state**: the car does not report whether stop-start is on or off, so the card shows the state the app assumes, for example "Stop-start: off (assumed)", or "Stop-start: unknown". The instrument cluster shows a message when stop-start is switched off or on; look there to be sure. See [the assumed state](#the-assumed-stop-start-state).
+- **Status is wrong**: tap it when the instrument cluster disagrees with the assumed state. It writes one line to the log with what led to the assumed state and flips the shown state. It sends nothing to the car. It is greyed out while the state is unknown, while a tap's command is being sent, while **Switch off at engine start** is sending ("Switching…"), and for 2 seconds after each report. The card then says "Noted in the log. Nothing sent to the car.", or, past the daily limit of report lines, "Changed, but not logged: too many reports today. Nothing sent to the car."
 - **Feedback**: a tap first asks the CAN box for a fresh status frame and picks the command from it, then sends. The button shows "Sending…" meanwhile. The card then says:
   - "Sent at HH:mm. Check the instrument cluster." once the CAN box echoes the command. When the command's bit is 0 the echo cannot confirm it, so this shows as soon as it is sent.
   - "No answer from the car." when the command was sent but not echoed within 3 seconds. Check the instrument cluster before tapping again: the switch may have worked.
@@ -67,6 +68,19 @@ After that the app waits until a battery reading of 13.0 V or more arrives, at l
 - Broadcasts such as `ACC_ON` are only logged. Any app can send them, so they never start a cycle or cause a switch.
 - If the link to the car does not come up within 30 seconds, nothing is sent.
 - If the head unit refuses the command, nothing is sent and it is not retried until the next wake. The main screen then says "Automatic switch failed. Tap to switch." until you switch from the screen.
+
+### The assumed stop-start state
+
+The car turns stop-start on at every engine start, and each switch command flips it. So the app assumes stop-start is on when a cycle starts (an ignition on or an engine start it noticed), and flips the assumed state for each switch it actually sent in that cycle, by a tap or automatically, and for each **Status is wrong** tap. A switch sent during an engine crank counts for that engine start. The assumed state survives the app being stopped in the middle of a drive. It is only shown and logged; it does not decide whether anything is sent.
+
+It needs **Switch off at engine start** on: only then does the app follow the ignition. It is unknown:
+
+- until the app has seen a cycle start, for example after a reboot;
+- from ignition off until the next cycle;
+- while **Switch off at engine start** is off, and after it is turned off until the next cycle;
+- when the background service could not start or gets no power messages from the head unit, until the next cycle.
+
+It is a model, not a reading from the car. It is wrong after a switch the car ignored (for example one sent with the engine off), after an engine start the app missed, or after a stop-start change made from the car's own menu. That is what **Status is wrong** is for: the log line it writes shows what led to the mistake.
 
 ## Install from a USB pendrive
 
@@ -139,6 +153,8 @@ Each line has a date and time. Lines to look for:
 - `engine rpm=… speed=…` and `battery 12.34 V`: only while **Record car data** is on, except that `watch: battery …` is logged whenever **Switch off at engine start** is on. Logged when they change noticeably, at most one of each every 10 seconds and 100 of each each time the app connects. `rpm=?` means the head unit reported it as invalid.
 - `unit id …` / `unit config …`: the head unit's identity text and configuration block, once each time the app starts, only while **Record car data** is on.
 - `sent stop-start switch, bit=…, rc=…`: a switch command sent to the CAN box. With **Record car data** on and the engine speed known, it ends with `, rpm=…`.
+- `assumed: on (ignition on)`, `assumed: on (engine start)`, `assumed: on (engine start, same cycle)`, `assumed: off (switch sent, automatic)`, `assumed: on (switch sent, tap)`, `assumed: on (reported wrong)`, `assumed: unknown (ignition off)`, `assumed: unknown (automatic switch off)`, `assumed: unknown (no power messages)`, `assumed: unknown (link silent)`, `assumed: unknown (watch service not started)`: each event that sets the assumed state and why, with the state after it. An event that leaves the state as it was, such as an engine start right after an ignition on, still gets its line (at most 60 lines per 24 hours).
+- `report: car shows ON, app assumed OFF, wake 5 (ignition on), 1 switch sent, 0 reports, cycle 312 s old, last switch 300 s ago (automatic), battery 14.85 V, power state 6`: a **Status is wrong** tap, written before the shown state flips. `cycle N s old` counts from the ignition on; after an engine start it reads `engine start N s ago` instead. A battery or power state value older than 10 seconds gets its age, for example `battery 14.85 V 312 s ago`. Fields the app does not know are left out (at most 50 lines per 24 hours).
 - `auto: …`: what the automatic switch did, including why it sent or did not send and whether the CAN box echoed the command. `watch: …` lines come from the background service that waits for the engine.
 - `process started, pid …`, `wake <n> (<source>)`, `power state <n>` and `broadcast <action> (manifest|runtime), up … s`: what the app sees across ignition cycles, to learn how the head unit sleeps and wakes. `watch: service started (…)` says how the service was started (by the app, at boot, after update, by a broadcast or restarted by the system). Capped at 30 `wake`, 60 `power state`, 30 `broadcast` and 60 `auto: battery` lines per 24 hours; the other `auto:` and `watch:` lines are capped too.
 - `screen off, up … s` / `screen on, up … s`, `network up (…)` / `network down`: while the app is open, at most 50 network lines each time the app starts.
@@ -199,7 +215,7 @@ To sign with a stable key instead, set `KEYSTORE` (a PKCS12 file), `KS_PASS` and
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on every push to `master` and on pull requests:
 
-- **test**: `shellcheck` on the scripts and the unit tests (`sh test.sh`). The tests cover the CAN box frame encoding, the echo bit, the switch value and the parsing of the logged diagnostic data in `Protocol.java`, the boot id and the boot facts in `BootId.java`, the ignition cycle rules in `WakeRules.java`, the reading of the power state (ignition off, engine crank) in `PowerWatch.java`, when the automatic switch fires in `AutoSwitch.java`, the log caps in `LogBudget.java`, the diagnostics storage (per-day files, compression, upload order and size limits) in `TelemetryStore.java`, and the version bump rules; they need only a JDK.
+- **test**: `shellcheck` on the scripts and the unit tests (`sh test.sh`). The tests cover the CAN box frame encoding, the echo bit, the switch value and the parsing of the logged diagnostic data in `Protocol.java`, the boot id and the boot facts in `BootId.java`, the ignition cycle rules in `WakeRules.java`, the reading of the power state (ignition off, engine crank) in `PowerWatch.java`, when the automatic switch fires in `AutoSwitch.java`, the assumed stop-start state and its log lines in `AssumedState.java`, the log caps in `LogBudget.java`, the diagnostics storage (per-day files, compression, upload order and size limits) in `TelemetryStore.java`, and the version bump rules; they need only a JDK.
 - **security**: `gitleaks` scans the commits for leaked secrets and `zizmor` audits the workflow file. Actions are pinned to commit SHAs.
 - **build**: compiles with javac warnings as errors, builds the APK, checks its contents (launcher activity, boot components, and that the `TWUtil` stub is not packaged) and keeps it as a workflow artifact.
 

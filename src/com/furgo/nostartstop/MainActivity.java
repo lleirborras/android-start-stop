@@ -82,6 +82,9 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private ScrollView logScroll;
     private TextView feedback;
     private TextView switchButton;
+    private TextView assumedView;
+    private TextView wrongButton;
+    private long reportedAt = -HOLD_MS;
 
     private final Runnable requery = new Runnable() {
         @Override
@@ -122,6 +125,16 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private final Runnable rerender = new Runnable() {
         @Override
         public void run() {
+            render();
+        }
+    };
+
+    private final Runnable assumedChanged = new Runnable() {
+        @Override
+        public void run() {
+            log.clear();
+            log.addAll(LogFile.tail(MainActivity.this, MAX_LOG));
+            renderLog();
             render();
         }
     };
@@ -200,6 +213,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         renderLog();
         result = "";
         BootService.onRunningChanged = rerender;
+        Prefs.onAssumedChanged = assumedChanged;
         WatchService.start(this, PowerWatch.BY_APP);
         box.setCaptureFrames(Prefs.captureFrames(this));
         opened = box.open();
@@ -222,6 +236,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         handler.removeCallbacks(noAnswer);
         handler.removeCallbacks(settle);
         BootService.onRunningChanged = null;
+        Prefs.onAssumedChanged = null;
         UpdateJob.onResult = null;
         phase = IDLE;
         box.close();
@@ -431,9 +446,13 @@ public class MainActivity extends Activity implements CanBox.Listener {
         boolean on = !Prefs.applyAtBoot(this);
         Prefs.setApplyAtBoot(this, on);
         onLog(on ? "automatic switch on" : "automatic switch off");
-        if (on) WatchService.start(this, PowerWatch.BY_APP);
-        else stopService(new Intent(this, WatchService.class));
-        renderBoot();
+        if (on) {
+            WatchService.start(this, PowerWatch.BY_APP);
+        } else {
+            stopService(new Intent(this, WatchService.class));
+            Prefs.assumedEnd(this, "automatic switch off");
+        }
+        render();
     }
 
     private void toggleCapture() {
@@ -568,7 +587,31 @@ public class MainActivity extends Activity implements CanBox.Listener {
         switchButton.setTextColor(usable ? TEXT : MUTED);
         switchButton.setBackgroundDrawable(usable ? pressable(PRIMARY, PRIMARY_PRESSED, 0)
                 : pressable(NEUTRAL, NEUTRAL_PRESSED, 2));
+
+        int assumed = Prefs.assumedState(this);
+        assumedView.setText(assumed == AssumedState.UNKNOWN ? "Stop-start: unknown"
+                : "Stop-start: " + AssumedState.name(assumed) + " (assumed)");
+        assumedView.setTextColor(assumed == AssumedState.UNKNOWN ? MUTED : TEXT);
+        boolean canReport = assumed != AssumedState.UNKNOWN && !pending && !bootBusy
+                && SystemClock.elapsedRealtime() >= reportedAt + HOLD_MS;
+        wrongButton.setEnabled(canReport);
+        wrongButton.setTextColor(canReport ? TEXT : MUTED);
+        wrongButton.setBackgroundDrawable(canReport ? pressable(NEUTRAL, NEUTRAL_PRESSED, 1) : pressable(0, 0, 1));
         renderBoot();
+    }
+
+    /** Logs what led to the shown state and flips it. Sends nothing to the car. */
+    private void onWrongTap() {
+        long now = SystemClock.elapsedRealtime();
+        // A double tap would flip it straight back.
+        if (now < reportedAt + HOLD_MS || phase != IDLE || BootService.running) return;
+        int result = Prefs.reportAssumedWrong(this, WatchService.seenCentivolts, WatchService.seenCentivoltsAt,
+                WatchService.seenPowerState, WatchService.seenPowerStateAt);
+        if (result == Prefs.REPORT_REFUSED) return;
+        reportedAt = now;
+        handler.postDelayed(rerender, HOLD_MS);
+        flash(result == Prefs.REPORT_LOGGED ? "Noted in the log. Nothing sent to the car."
+                : "Changed, but not logged: too many reports today. Nothing sent to the car.");
     }
 
     private void renderBoot() {
@@ -727,6 +770,26 @@ public class MainActivity extends Activity implements CanBox.Listener {
         LinearLayout.LayoutParams feedbackLp = new LinearLayout.LayoutParams(-1, 0, 1f);
         feedbackLp.topMargin = dp(8);
         words.addView(feedback, feedbackLp);
+
+        LinearLayout stateRow = new LinearLayout(this);
+        stateRow.setGravity(Gravity.CENTER_VERTICAL);
+        assumedView = text("", 18, TEXT, true);
+        stateRow.addView(assumedView, new LinearLayout.LayoutParams(0, -2, 1f));
+        wrongButton = text("Status is wrong", 14, MUTED, true);
+        wrongButton.setGravity(Gravity.CENTER);
+        wrongButton.setPadding(dp(20), 0, dp(20), 0);
+        wrongButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                onWrongTap();
+            }
+        });
+        LinearLayout.LayoutParams wrongLp = new LinearLayout.LayoutParams(-2, dp(44));
+        wrongLp.leftMargin = dp(12);
+        stateRow.addView(wrongButton, wrongLp);
+        LinearLayout.LayoutParams stateLp = new LinearLayout.LayoutParams(-1, -2);
+        stateLp.topMargin = dp(8);
+        words.addView(stateRow, stateLp);
 
         switchButton = text("", 24, TEXT, true);
         switchButton.setGravity(Gravity.CENTER);
