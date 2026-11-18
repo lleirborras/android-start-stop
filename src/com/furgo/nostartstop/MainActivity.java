@@ -5,6 +5,11 @@ import android.app.AlertDialog;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.graphics.Canvas;
+import android.graphics.DashPathEffect;
+import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.StateListDrawable;
@@ -12,6 +17,11 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.SystemClock;
+import android.text.Layout;
+import android.text.SpannableStringBuilder;
+import android.text.TextPaint;
+import android.text.style.ForegroundColorSpan;
+import android.text.style.RelativeSizeSpan;
 import android.util.DisplayMetrics;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -83,7 +93,11 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private ScrollView logScroll;
     private TextView feedback;
     private TextView switchButton;
-    private TextView assumedView;
+    private TextView assumedWord;
+    private TextView assumedHint;
+    private static final float WORD_SP = 44;
+    private StateBadge badge;
+    private LinearLayout stateCard;
     private TextView wrongButton;
     private long reportedAt = -HOLD_MS;
 
@@ -164,6 +178,89 @@ public class MainActivity extends Activity implements CanBox.Listener {
             showStoredUpdate();
         }
     };
+
+    /** The stop-start symbol: the "A" in a circular arrow, struck through when off; a dashed ring with "?" when unknown. */
+    private final class StateBadge extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Path path = new Path();
+        private int state = AssumedState.UNKNOWN;
+        private final RectF arc = new RectF();
+        private DashPathEffect dash;
+
+        @Override
+        protected void onSizeChanged(int w, int h, int ow, int oh) {
+            float u = Math.min(w, h), r = u * 0.42f;
+            arc.set(w / 2f - r, h / 2f - r, w / 2f + r, h / 2f + r);
+            dash = new DashPathEffect(new float[]{u * 0.14f, u * 0.1f}, 0);
+        }
+
+        StateBadge(Context c) {
+            super(c);
+        }
+
+        void setState(int s) {
+            if (s == state) return;
+            state = s;
+            invalidate();
+        }
+
+        @Override
+        protected void onDraw(Canvas c) {
+            float w = getWidth(), h = getHeight(), u = Math.min(w, h), cx = w / 2, cy = h / 2;
+            paint.setStrokeCap(Paint.Cap.ROUND);
+            paint.setStrokeJoin(Paint.Join.ROUND);
+            paint.setPathEffect(null);
+            if (state != AssumedState.UNKNOWN) {
+                int color = state == AssumedState.ON ? ACCENT : TEXT;
+                float r = u * 0.42f, sw = u * 0.07f;
+                paint.setStyle(Paint.Style.STROKE);
+                paint.setStrokeWidth(sw);
+                paint.setColor(color);
+                c.drawArc(arc, 300, 285, false, paint);
+                double end = Math.toRadians(225);
+                float px = cx + r * (float) Math.cos(end), py = cy + r * (float) Math.sin(end);
+                float tx = -(float) Math.sin(end), ty = (float) Math.cos(end), nx = ty, ny = -tx;
+                float len = u * 0.22f, half = u * 0.15f;
+                path.reset();
+                path.moveTo(px + tx * len, py + ty * len);
+                path.lineTo(px + nx * half, py + ny * half);
+                path.lineTo(px - nx * half, py - ny * half);
+                path.close();
+                paint.setStyle(Paint.Style.FILL_AND_STROKE);
+                paint.setStrokeWidth(sw * 0.4f);
+                c.drawPath(path, paint);
+                paint.setStyle(Paint.Style.FILL);
+                paint.setTextAlign(Paint.Align.CENTER);
+                paint.setTypeface(Typeface.DEFAULT_BOLD);
+                paint.setTextSize(u * 0.56f);
+                c.drawText("A", cx, cy + u * 0.2f, paint);
+                if (state == AssumedState.OFF) {
+                    float d = u * 0.43f;
+                    paint.setStyle(Paint.Style.STROKE);
+                    paint.setStrokeWidth(sw * 1.6f);
+                    paint.setColor(CARD);
+                    c.drawLine(cx - d, cy + d * 0.55f, cx + d, cy - d * 0.55f, paint);
+                    paint.setStrokeWidth(sw * 0.9f);
+                    paint.setColor(color);
+                    c.drawLine(cx - d, cy + d * 0.55f, cx + d, cy - d * 0.55f, paint);
+                }
+            } else {
+                float sw = u * 0.07f;
+                paint.setStyle(Paint.Style.STROKE);
+                paint.setStrokeWidth(sw);
+                paint.setColor(MUTED);
+                paint.setStrokeCap(Paint.Cap.BUTT);
+                paint.setPathEffect(dash);
+                c.drawCircle(cx, cy, u / 2 - sw, paint);
+                paint.setPathEffect(null);
+                paint.setStyle(Paint.Style.FILL);
+                paint.setTextAlign(Paint.Align.CENTER);
+                paint.setTypeface(Typeface.DEFAULT_BOLD);
+                paint.setTextSize(u * 0.5f);
+                c.drawText("?", cx, cy + u * 0.18f, paint);
+            }
+        }
+    }
 
     private static final class Toggle {
         FrameLayout track;
@@ -598,14 +695,30 @@ public class MainActivity extends Activity implements CanBox.Listener {
                 : pressable(NEUTRAL, NEUTRAL_PRESSED, 2));
 
         int assumed = Prefs.assumedState(this);
-        assumedView.setText(assumed == AssumedState.UNKNOWN ? "Stop-start: unknown"
-                : "Stop-start: " + AssumedState.name(assumed) + " (assumed)");
-        assumedView.setTextColor(assumed == AssumedState.UNKNOWN ? MUTED : TEXT);
+        int stateColor = assumed == AssumedState.OFF ? TEXT : assumed == AssumedState.ON ? ACCENT : MUTED;
+        badge.setState(assumed);
+        stateCard.setBackgroundDrawable(shape(CARD, 20, 2, assumed == AssumedState.UNKNOWN ? CARD_EDGE : assumed == AssumedState.OFF ? 0xFF5B6678 : ACCENT));
+        String word = assumed == AssumedState.UNKNOWN ? "UNKNOWN" : AssumedState.name(assumed).toUpperCase(Locale.ROOT);
+        SpannableStringBuilder sb = new SpannableStringBuilder(word);
+        if (assumed != AssumedState.UNKNOWN) {
+            int from = sb.length();
+            sb.append("  assumed");
+            sb.setSpan(new RelativeSizeSpan(20f / WORD_SP), from, sb.length(), 0);
+            sb.setSpan(new ForegroundColorSpan(MUTED), from, sb.length(), 0);
+        }
+        assumedWord.setText(sb);
+        fitWord();
+        assumedWord.setTextColor(stateColor);
+        assumedHint.setText(assumed == AssumedState.ON && usable ? "Not read from the car. Tap Switch to turn it off."
+                : assumed != AssumedState.UNKNOWN ? "Not read from the car. Check the instrument cluster."
+                : !Prefs.applyAtBoot(this) ? "Only followed while Switch off at engine start is on. Check the instrument cluster."
+                : "Not followed since the last ignition off. Check the instrument cluster.");
         boolean canReport = assumed != AssumedState.UNKNOWN && !pending && !bootBusy
                 && SystemClock.elapsedRealtime() >= reportedAt + HOLD_MS;
         wrongButton.setEnabled(canReport);
-        wrongButton.setTextColor(canReport ? TEXT : MUTED);
-        wrongButton.setBackgroundDrawable(canReport ? pressable(NEUTRAL, NEUTRAL_PRESSED, 1) : pressable(0, 0, 1));
+        wrongButton.setTextColor(canReport ? TEXT : 0xFF5C6676);
+        wrongButton.setBackgroundDrawable(canReport ? outlined()
+                : dashed());
         renderBoot();
     }
 
@@ -621,6 +734,21 @@ public class MainActivity extends Activity implements CanBox.Listener {
         handler.postDelayed(rerender, HOLD_MS);
         flash(result == Prefs.REPORT_LOGGED ? "Noted in the log. Nothing sent to the car."
                 : "Changed, but not logged: too many reports today. Nothing sent to the car.");
+    }
+
+    /** Shrinks the state word to one line when the column is narrow or the font scale is large. */
+    private void fitWord() {
+        int avail = assumedWord.getWidth() - assumedWord.getPaddingLeft() - assumedWord.getPaddingRight();
+        if (avail <= 0) return;
+        float size = WORD_SP * getResources().getDisplayMetrics().scaledDensity;
+        TextPaint tp = new TextPaint(assumedWord.getPaint());
+        tp.setTextSize(size);
+        CharSequence t = assumedWord.getText();
+        while (size > 12 * density && Layout.getDesiredWidth(t, tp) > avail) {
+            size -= density;
+            tp.setTextSize(size);
+        }
+        if (assumedWord.getTextSize() != size) assumedWord.setTextSize(TypedValue.COMPLEX_UNIT_PX, size);
     }
 
     private void renderBoot() {
@@ -759,36 +887,49 @@ public class MainActivity extends Activity implements CanBox.Listener {
 
     private View switchCard() {
         LinearLayout box = new LinearLayout(this);
+        stateCard = box;
         box.setOrientation(LinearLayout.HORIZONTAL);
         box.setPadding(dp(24), dp(12), dp(20), dp(12));
-        box.setBackgroundDrawable(shape(CARD, 20, 1, CARD_EDGE));
 
         LinearLayout words = new LinearLayout(this);
         words.setOrientation(LinearLayout.VERTICAL);
         box.addView(words, new LinearLayout.LayoutParams(0, -1, 1.4f));
 
+        LinearLayout head = new LinearLayout(this);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        badge = new StateBadge(this);
+        head.addView(badge, new LinearLayout.LayoutParams(dp(60), dp(60)));
+        LinearLayout stack = new LinearLayout(this);
+        stack.setOrientation(LinearLayout.VERTICAL);
         TextView t = text("STOP-START", 14, MUTED, true);
         t.setLetterSpacing(0.14f);
-        words.addView(t);
+        stack.addView(t);
+        assumedWord = text("", WORD_SP, TEXT, true);
+        assumedWord.setIncludeFontPadding(false);
+        assumedWord.setSingleLine(true);
+        assumedWord.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+            @Override
+            public void onLayoutChange(View v, int l, int t, int r, int b, int ol, int ot, int or, int ob) {
+                fitWord();
+            }
+        });
+        stack.addView(assumedWord);
+        LinearLayout.LayoutParams stackLp = new LinearLayout.LayoutParams(0, -2, 1f);
+        stackLp.leftMargin = dp(16);
+        head.addView(stack, stackLp);
+        words.addView(head, new LinearLayout.LayoutParams(-1, -2));
 
-        TextView about = text("The car does not tell the app whether stop-start is on or off. "
-                + "Each tap switches it. "
-                + "The instrument cluster shows a message when stop-start is switched off or on.", 18, TEXT, false);
-        about.setLineSpacing(0, 1.15f);
-        LinearLayout.LayoutParams aboutLp = new LinearLayout.LayoutParams(-1, -2);
-        aboutLp.topMargin = dp(4);
-        words.addView(about, aboutLp);
+        assumedHint = text("", 18, TEXT, false);
+        assumedHint.setLineSpacing(0, 1.1f);
+        LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(-1, -2);
+        hintLp.topMargin = dp(8);
+        words.addView(assumedHint, hintLp);
 
         feedback = text("", 18, MUTED, true);
         feedback.setGravity(Gravity.BOTTOM);
         LinearLayout.LayoutParams feedbackLp = new LinearLayout.LayoutParams(-1, 0, 1f);
         feedbackLp.topMargin = dp(4);
         words.addView(feedback, feedbackLp);
-
-        assumedView = text("", 18, TEXT, true);
-        LinearLayout.LayoutParams assumedLp = new LinearLayout.LayoutParams(-1, -2);
-        assumedLp.topMargin = dp(4);
-        words.addView(assumedView, assumedLp);
 
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.VERTICAL);
@@ -803,7 +944,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
             }
         });
         actions.addView(switchButton, new LinearLayout.LayoutParams(-1, 0, 1f));
-        wrongButton = text("Status is wrong", 14, MUTED, true);
+        wrongButton = text("Car shows the opposite", 16, MUTED, true);
         wrongButton.setGravity(Gravity.CENTER);
         wrongButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -841,6 +982,21 @@ public class MainActivity extends Activity implements CanBox.Listener {
         StateListDrawable s = new StateListDrawable();
         s.addState(new int[]{android.R.attr.state_pressed}, shape(pressed, 16, strokeDp, CARD_EDGE));
         s.addState(new int[]{}, shape(normal, 16, strokeDp, CARD_EDGE));
+        return s;
+    }
+
+    private StateListDrawable outlined() {
+        StateListDrawable s = new StateListDrawable();
+        s.addState(new int[]{android.R.attr.state_pressed}, shape(NEUTRAL_PRESSED, 16, 2, 0xFF5B6678));
+        s.addState(new int[]{}, shape(NEUTRAL, 16, 2, 0xFF4A5568));
+        return s;
+    }
+
+    private StateListDrawable dashed() {
+        GradientDrawable d = shape(0, 16, 0, 0);
+        d.setStroke(dp(2), 0xFF39414F, dp(6), dp(5));
+        StateListDrawable s = new StateListDrawable();
+        s.addState(new int[]{}, d);
         return s;
     }
 

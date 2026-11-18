@@ -2,7 +2,7 @@ package com.furgo.nostartstop;
 
 /**
  * The stop-start state the app assumes. The car does not report it, so it is a model: the car turns stop-start on at
- * every engine start, each switch sent flips it, and so does each "status is wrong" report. It is unknown before the
+ * every engine start, each switch sent flips it, and so does each "Car shows the opposite" report. It is unknown before the
  * app has seen a cycle start, from ignition off until the next one, and while the automatic switch is off (then
  * nothing watches the ignition). Plain fields, so Prefs can store and reload them; times are elapsedRealtime.
  */
@@ -59,7 +59,7 @@ final class AssumedState {
         return true;
     }
 
-    /** A "status is wrong" report. Refused (false) while the state is unknown. */
+    /** A "Car shows the opposite" report. Refused (false) while the state is unknown. */
     boolean report(String current, boolean enabled) {
         if (state(current, enabled) == UNKNOWN) return false;
         reports++;

@@ -24,7 +24,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
     private static final String EXTRA_HOW = "how";
     /** The last power state this process saw was ignition off. Main thread only. */
     static boolean ignitionOffNow;
-    /** The last power state and battery reading this process saw, or -1, for the "status is wrong" report. */
+    /** The last power state and battery reading this process saw, or -1, for the "Car shows the opposite" report. */
     static int seenPowerState = -1, seenCentivolts = -1;
     static long seenPowerStateAt, seenCentivoltsAt;
     private static final int NOTIFICATION_ID = 3;
