@@ -9,7 +9,7 @@ find test -name '*.java' -exec javac -Xlint:all -Werror -d "$out" \
     src/com/furgo/nostartstop/Protocol.java src/com/furgo/nostartstop/Version.java \
     src/com/furgo/nostartstop/BootId.java src/com/furgo/nostartstop/UpdateCheck.java \
     src/com/furgo/nostartstop/WakeRules.java src/com/furgo/nostartstop/AutoSwitch.java \
-    src/com/furgo/nostartstop/LogBudget.java {} +
+    src/com/furgo/nostartstop/LogBudget.java src/com/furgo/nostartstop/TelemetryStore.java {} +
 java -cp "$out" com.furgo.nostartstop.ProtocolTest
 java -cp "$out" com.furgo.nostartstop.BootIdTest
 java -cp "$out" com.furgo.nostartstop.WakeRulesTest
@@ -17,6 +17,7 @@ java -cp "$out" com.furgo.nostartstop.AutoSwitchTest
 java -cp "$out" com.furgo.nostartstop.LogBudgetTest
 java -cp "$out" com.furgo.nostartstop.VersionTest
 java -cp "$out" com.furgo.nostartstop.UpdateCheckTest
+java -cp "$out" com.furgo.nostartstop.TelemetryStoreTest
 
 # next-version.sh: <branch> <latest tag> -> <expected tag, empty for no release>
 expect() {
