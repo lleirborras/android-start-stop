@@ -77,7 +77,7 @@ What is sent with each line:
 - the app version, the Android SDK level and the head unit's model name;
 - a random id created for this install, so lines from one head unit can be told apart. It is not tied to you or to the vehicle.
 
-Always logged: the commands sent, the status (`status …`) and function (`function …`) frames from the CAN box, boot count and uptime, screen on/off, shutdown and network up/down. These hold no vehicle details. Only logged while **Record car data** is on: `frame …`, `engine …`, `battery …`, `unit id …` and `unit config …`, and the engine speed on `sent stop-start switch` lines. Those lines are only sent if **Share diagnostics** is on too. Switching **Record car data** off stops new lines; lines already in the log file stay there.
+Always logged: the commands sent, the status (`status …`) and function (`function …`) frames from the CAN box, boot count and uptime, screen on/off, shutdown and network up/down. The function frame is expected to hold only the car's feature flags, but that is not verified. Only logged while **Record car data** is on: `frame …`, `engine …`, `battery …`, `unit id …` and `unit config …`, and the engine speed on `sent stop-start switch` lines. Those lines are only sent if **Share diagnostics** is on too. Switching **Record car data** off stops new lines; lines already in the log file stay there.
 
 Nothing is sent while the switch is off. Lines logged while the head unit is offline are kept (up to 500) and sent the next time a line is logged with a connection, or by the background job that Android runs once there is a network after a boot, when the app is opened and about once a day (logged as `diagnostics: sent N queued lines`). That job runs for this alone when **Check for updates automatically** is off. Switching it off discards anything not sent yet and forgets the random id, so switching it on again starts with a new one.
 
@@ -102,15 +102,15 @@ To copy it without adb:
 Each line has a date and time. Lines to look for:
 
 - `app opened, version …, android …, boot count 7, up 42 s, network up (wifi)`: app and Android version, how many times the head unit has booted, seconds since it booted, and the network state. `boot count unknown` before Android 7.
-- `TWUtil open` / `TWUtil unavailable: …`: whether the head unit's MCU link works. `TWUtil open, CAN box only` when the head unit refused the engine and unit messages, after a `TWUtil.open with engine and unit ids failed …` line; the switch works the same.
+- `TWUtil open` / `TWUtil unavailable: …`: whether the head unit's MCU link works. With **Record car data** on, `TWUtil open, CAN box only (engine and unit ids refused: …)` means the head unit refused the engine and unit messages; the switch works the same.
 - `status 00 4A …`: the raw settings frame (id 56) from the CAN box, logged whenever it changes.
-- `function 05 12 02 01 (stop-start field=2)`: the CAN box function frame (id 57), asked for when the link opens and 1.5 and 5 seconds after each switch, logged when it changes (at most 40 lines each time the app connects). The field is a candidate for the real stop-start state (1 on, 2 off, 0 not reported); it is not verified and the app does not use it.
+- `function 05 12 02 01 (stop-start field=2)`: the CAN box function frame (id 57), asked for after the first status frame when the link opens and 1.5 and 5 seconds after each switch, logged when it changes since the app started (at most 40 lines each time the app connects). The field is a candidate for the real stop-start state (1 on, 2 off, 0 not reported); it is not verified and the app does not use it.
 - `frame <id> …`: any other CAN box frame, only while **Record car data** is on. Logged when it changes, at most 20 lines per frame id, 64 frame ids and 400 lines in total each time the app connects. The trip computer frame (51) is asked for when the link opens and after each switch. The boot service never records them.
 - `engine rpm=… speed=…` and `battery 12.34 V`: only while **Record car data** is on. Logged when they change noticeably, at most one of each every 10 seconds and 100 of each each time the app connects. `rpm=?` means the head unit reported it as invalid.
-- `unit id …` / `unit config …`: the head unit's identity text and configuration block, once each time the app connects, only while **Record car data** is on.
+- `unit id …` / `unit config …`: the head unit's identity text and configuration block, once each time the app starts, only while **Record car data** is on.
 - `sent stop-start switch, bit=…, rc=…`: a switch command sent to the CAN box. With **Record car data** on and the engine speed known, it ends with `, rpm=…`.
 - `boot: …`: what the boot service did, including whether the CAN box echoed the command. Its first line, `boot: service started, …`, has the same boot count, uptime and network facts as `app opened`.
-- `screen off, up … s` / `screen on, up … s`, `network up (…)` / `network down`: while the app is open.
+- `screen off, up … s` / `screen on, up … s`, `network up (…)` / `network down`: while the app is open, at most 50 network lines each time the app starts.
 - `shutdown, up … s`: the head unit shut down cleanly. Android 9 and later only tell the app while it is running (open or in the background), so on those a missing line does not prove a power cut.
 
 With adb the same file is at `adb pull /sdcard/Android/data/com.furgo.nostartstop/files/nostartstop.log`.
@@ -219,7 +219,7 @@ The app also logs these, which come from the vendor code and are **not verified*
 | Battery | message `what = 1292`, `arg1 = 0`: `((b[0] & 0x7F) << 8 \| b[1]) * 0.01` V when `b[0]` bit 7 is clear |
 | Head unit identity | `write(266, 255, 0)` answered by `what = 266` with a text; `write(267, 255, 0)` by `what = 267` with a block of bytes |
 
-The engine, battery and identity messages are opened together with the CAN box. If the head unit refuses them, the app opens the CAN box alone, as before.
+The engine, battery and identity messages are only opened, together with the CAN box, while **Record car data** is on. Turning it on takes effect for them the next time the app's screen is shown. If the head unit refuses them, the app opens the CAN box alone, as before. The boot service always opens the CAN box alone.
 
 ## Status
 

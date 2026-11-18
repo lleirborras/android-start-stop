@@ -37,7 +37,7 @@
             </intent-filter>
         </receiver>
 
-        <receiver android:name=".ShutdownReceiver" android:exported="true">
+        <receiver android:name=".ShutdownReceiver" android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.ACTION_SHUTDOWN"/>
             </intent-filter>

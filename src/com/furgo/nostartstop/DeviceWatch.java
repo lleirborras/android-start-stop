@@ -20,6 +20,8 @@ final class DeviceWatch {
     private final CanBox.Listener out;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private static final long NETWORK_SETTLE_MS = 1000;
+    private static final int MAX_NETWORK_LINES = 50;
+    private static int networkLines;   // per process, so a flapping link cannot flood the log
     private String lastNetwork;
     private boolean started;
 
@@ -63,7 +65,6 @@ final class DeviceWatch {
     }
 
     private static String type(NetworkInfo info) {
-        if (info == null) return "other";
         switch (info.getType()) {
             case ConnectivityManager.TYPE_WIFI: return "wifi";
             case ConnectivityManager.TYPE_MOBILE: return "cellular";
@@ -118,7 +119,10 @@ final class DeviceWatch {
         handler.removeCallbacks(report);
     }
 
-    /** Called on a binder thread. Registering replays the networks already up, so only the settled active network is logged. */
+    /**
+     * Called on ConnectivityManager's callback thread. Registering replays the networks already up, so only the
+     * settled active network is logged.
+     */
     private void changed() {
         handler.removeCallbacks(report);
         handler.postDelayed(report, NETWORK_SETTLE_MS);
@@ -129,8 +133,9 @@ final class DeviceWatch {
         public void run() {
             if (!started) return;
             String now = networkNow(context);
-            if (now.equals(lastNetwork)) return;
+            if (now.equals(lastNetwork) || networkLines >= MAX_NETWORK_LINES) return;
             lastNetwork = now;
+            networkLines++;
             out.onLog(now);
         }
     };

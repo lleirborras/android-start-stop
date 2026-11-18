@@ -162,6 +162,7 @@ public class BootService extends Service implements CanBox.Listener {
     private void finish() {
         done = true;
         setRunning(false);
+        stopForeground(true);
         handler.removeCallbacksAndMessages(null);
         long left = sentAt == 0 ? 0 : sentAt + FUNCTION_WAIT_MS - SystemClock.elapsedRealtime();
         if (left <= 0) {

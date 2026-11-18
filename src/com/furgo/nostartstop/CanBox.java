@@ -46,12 +46,15 @@ final class CanBox {
     private int frameLines;
     private final Map<Integer, byte[]> otherFrames = new HashMap<Integer, byte[]>();
     private final Map<Integer, Integer> otherFrameLines = new HashMap<Integer, Integer>();
-    // Frame 57 is a candidate for the real stop-start state; logged always, it holds no vehicle details.
-    private byte[] lastFunction;
+    // Frame 57 is a candidate for the real stop-start state, logged always. Kept per process: the screen reconnects on
+    // every resume and must not log the same frame again.
+    private static byte[] lastFunction;
+    private static boolean unitIdLogged, unitConfigLogged;
     private int functionLines;
-    // Unit and engine messages, only opened when the head unit accepts the extra ids, only logged with captureFrames.
+    private boolean firstFunctionPending;
+    // Unit and engine messages: their ids are unverified, so they are only opened while the user records car data.
     private boolean extraIds;
-    private boolean unitIdLogged, unitConfigLogged;
+    private String extraIdsRefused;
     private int lastRpm = -1;
     private boolean engineLogged;
     private int loggedRpm, loggedSpeed, engineLines;
@@ -78,10 +81,11 @@ final class CanBox {
         this.listener = listener;
     }
 
+    /** With captureFrames set, also opens the engine and unit ids, falling back to the CAN box alone if they are refused. */
     boolean open() {
         if (tw != null) return true;
-        // The extra ids are unverified; if the head unit refuses them, open the CAN box alone as before.
-        TWUtil t = connect(ALL_IDS, true);
+        extraIdsRefused = null;
+        TWUtil t = captureFrames ? connect(ALL_IDS, true) : null;
         extraIds = t != null;
         if (t == null) t = connect(CANBOX_IDS, false);
         if (t == null) return false;
@@ -89,10 +93,7 @@ final class CanBox {
         otherFrames.clear();
         otherFrameLines.clear();
         frameLines = 0;
-        lastFunction = null;
         functionLines = 0;
-        unitIdLogged = false;
-        unitConfigLogged = false;
         resetEngine();
         engineLines = 0;
         batteryLines = 0;
@@ -105,25 +106,40 @@ final class CanBox {
             return false;
         }
         tw = t;
-        log(extraIds ? "TWUtil open" : "TWUtil open, CAN box only");
-        write(Protocol.CMD_QUERY, Protocol.query(Protocol.STATUS_FUNCTION));
-        if (captureFrames) requestCarData();
+        log(extraIdsRefused == null ? "TWUtil open"
+                : "TWUtil open, CAN box only (engine and unit ids refused: " + extraIdsRefused + ")");
+        // The caller asks for the settings frame first; frame 57 and the car data follow its answer.
+        firstFunctionPending = true;
+        handler.postDelayed(firstFunction, 500);
         return true;
     }
 
+    private final Runnable firstFunction = new Runnable() {
+        @Override
+        public void run() {
+            if (!firstFunctionPending) return;
+            firstFunctionPending = false;
+            handler.removeCallbacks(this);
+            write(Protocol.CMD_QUERY, Protocol.query(Protocol.STATUS_FUNCTION));
+            if (captureFrames) requestCarData();
+        }
+    };
+
+    /** Logs only the failure that ends the attempt, so a failed open still writes one line. */
     private TWUtil connect(short[] ids, boolean extra) {
         TWUtil t = null;
+        String failure;
         try {
             t = new TWUtil();
             int rc = t.open(ids);
             if (rc == 0) return t;
-            log(extra ? "TWUtil.open with engine and unit ids failed, rc=" + rc + ", trying the CAN box only"
-                    : "TWUtil.open failed, rc=" + rc);
+            failure = extra ? "rc=" + rc : "TWUtil.open failed, rc=" + rc;
         } catch (Throwable e) {
-            log(extra ? "TWUtil.open with engine and unit ids failed: " + e + ", trying the CAN box only"
-                    : "TWUtil unavailable: " + e);
+            failure = extra ? String.valueOf(e) : "TWUtil unavailable: " + e;
         }
         release(t);
+        if (extra) extraIdsRefused = failure;
+        else log(failure);
         return null;
     }
 
@@ -160,7 +176,7 @@ final class CanBox {
     /** Trip computer frame and head unit identity, only asked for while the user records car data. */
     private void requestCarData() {
         write(Protocol.CMD_QUERY, Protocol.query(Protocol.STATUS_TRIP));
-        if (!extraIds) return;
+        if (!extraIds || (unitIdLogged && unitConfigLogged)) return;
         try {
             tw.write(Protocol.MSG_UNIT_ID, 255, 0);
             tw.write(Protocol.MSG_UNIT_CONFIG, 255, 0);
@@ -231,6 +247,7 @@ final class CanBox {
             log("status " + hex(b));
         }
         listener.onEcho(Protocol.echo(b));
+        if (tw != null) firstFunction.run();
     }
 
     private void onFunction(byte[] b) {
