@@ -11,39 +11,60 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.SystemClock;
 
-/** Applies start-stop off (enabled=false, permanently closed) once after boot, then stops. */
+/**
+ * Sends exactly one stop-start switch after boot, then stops. The car turns stop-start on at every
+ * engine start, so one switch turns it off; a second one would turn it back on.
+ */
 public class BootService extends Service implements CanBox.Listener {
-    private static final long TICK_MS = 2_000;
-    private static final long BLIND_SEND_MS = 5_000;
-    private static final long TIMEOUT_MS = 30_000;
+    private static final long OPEN_RETRY_MS = 2_000;
+    private static final long OPEN_TIMEOUT_MS = 30_000;
+    private static final long STATUS_WAIT_MS = 5_000;
+    private static final long ECHO_WAIT_MS = 3_000;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private CanBox canBox;
     private long startedAt;
-    private long lastSendAt;
-    private boolean statusSeen;
-    private boolean blindSent;
+    private boolean sent;
+    private int sentBit = -1;
 
-    private final Runnable tick = new Runnable() {
+    private final Runnable openTick = new Runnable() {
         @Override
         public void run() {
-            long elapsed = SystemClock.elapsedRealtime() - startedAt;
-            if (elapsed >= TIMEOUT_MS) {
-                onLog("gave up after " + TIMEOUT_MS / 1000 + " s");
+            // The MCU link may not be up yet this early in boot.
+            if (canBox.open()) {
+                canBox.query();
+                handler.postDelayed(sendOnce, STATUS_WAIT_MS);
+                return;
+            }
+            if (SystemClock.elapsedRealtime() - startedAt >= OPEN_TIMEOUT_MS) {
+                onLog("no link to the car after " + OPEN_TIMEOUT_MS / 1000 + " s, nothing sent");
                 finish();
                 return;
             }
-            // The MCU link may not be up yet this early in boot.
-            if (!canBox.open()) {
-                handler.postDelayed(this, TICK_MS);
+            handler.postDelayed(this, OPEN_RETRY_MS);
+        }
+    };
+
+    private final Runnable sendOnce = new Runnable() {
+        @Override
+        public void run() {
+            if (sent) return;
+            sent = true;
+            handler.removeCallbacks(this);
+            sentBit = canBox.toggle();
+            if (sentBit < 0) {
+                finish();
                 return;
             }
-            if (!statusSeen && !blindSent && elapsed >= BLIND_SEND_MS) {
-                blindSent = true;
-                send();
-            }
-            canBox.query();
-            handler.postDelayed(this, TICK_MS);
+            handler.postDelayed(noEcho, ECHO_WAIT_MS);
+        }
+    };
+
+    private final Runnable noEcho = new Runnable() {
+        @Override
+        public void run() {
+            onLog("echo bit did not change within " + ECHO_WAIT_MS / 1000 + " s, done");
+            finish();
         }
     };
 
@@ -54,7 +75,7 @@ public class BootService extends Service implements CanBox.Listener {
         canBox = new CanBox(this);
         onLog("service started");
         startedAt = SystemClock.elapsedRealtime();
-        handler.post(tick);
+        handler.post(openTick);
         return START_NOT_STICKY;
     }
 
@@ -71,26 +92,19 @@ public class BootService extends Service implements CanBox.Listener {
     }
 
     @Override
-    public void onState(boolean startStopEnabled, boolean permanentlyClosed) {
-        statusSeen = true;
-        if (!startStopEnabled && permanentlyClosed) {
-            onLog("confirmed off and closed");
+    public void onEcho(boolean echo) {
+        if (!sent) {
+            onLog("status received, echo bit " + (echo ? 1 : 0));
+            sendOnce.run();
+        } else if (sentBit >= 0 && echo == (sentBit == 1)) {
+            onLog("echo bit changed to " + sentBit + ", done");
             finish();
-        } else {
-            send();
         }
     }
 
     @Override
     public void onLog(String line) {
         LogFile.append(this, "boot: " + line);
-    }
-
-    private void send() {
-        long now = SystemClock.elapsedRealtime();
-        if (lastSendAt != 0 && now - lastSendAt < TICK_MS) return;
-        lastSendAt = now;
-        canBox.set(false, true);
     }
 
     private void finish() {
@@ -110,7 +124,7 @@ public class BootService extends Service implements CanBox.Listener {
         }
         return b.setSmallIcon(android.R.drawable.ic_lock_idle_lock)
                 .setContentTitle("No Start-Stop")
-                .setContentText("Turning stop-start off")
+                .setContentText("Switching stop-start off")
                 .build();
     }
 }

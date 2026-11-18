@@ -7,18 +7,21 @@ import android.tw.john.TWUtil;
 import android.util.Log;
 
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.Locale;
+import java.util.Map;
 
 /** One connection to the CAN box through TWUtil. Main-thread only. */
 final class CanBox {
     interface Listener {
-        /** Called on the main thread for every settings status frame (id 56). */
-        void onState(boolean startStopEnabled, boolean permanentlyClosed);
+        /** Called on the main thread for every settings status frame (id 56) with its echo bit, see {@link Protocol#echo}. */
+        void onEcho(boolean echo);
         /** Called on the main thread with a short human-readable line (errors and sent commands). */
         void onLog(String line);
     }
 
     private static final String TAG = "NoStartStop";
+    private static final int MAX_OTHER_FRAME_LINES = 20;
     private static int instances;
 
     private final Listener listener;
@@ -26,14 +29,16 @@ final class CanBox {
     private TWUtil tw;
     private boolean shortFrameLogged;
     private byte[] lastFrame;
+    // Other frames are logged so the real stop-start state can be found in them later.
+    private final Map<Integer, byte[]> otherFrames = new HashMap<Integer, byte[]>();
+    private final Map<Integer, Integer> otherFrameLines = new HashMap<Integer, Integer>();
 
     private final Handler handler = new Handler(Looper.getMainLooper()) {
         @Override
         public void handleMessage(Message msg) {
-            if (tw != null && msg.what == Protocol.MSG_CANBOX && msg.arg1 == Protocol.STATUS_SETTINGS
-                    && msg.obj instanceof byte[]) {
-                onFrame((byte[]) msg.obj);
-            }
+            if (tw == null || msg.what != Protocol.MSG_CANBOX || !(msg.obj instanceof byte[])) return;
+            if (msg.arg1 == Protocol.STATUS_SETTINGS) onFrame((byte[]) msg.obj);
+            else onOtherFrame(msg.arg1, (byte[]) msg.obj);
         }
     };
 
@@ -48,6 +53,9 @@ final class CanBox {
             t = new TWUtil();
             int rc = t.open(new short[]{(short) Protocol.MSG_CANBOX});
             if (rc == 0) {
+                lastFrame = null;
+                otherFrames.clear();
+                otherFrameLines.clear();
                 t.addHandler(tag, handler);
                 t.start();
                 tw = t;
@@ -86,20 +94,25 @@ final class CanBox {
         write(Protocol.CMD_QUERY, Protocol.query());
     }
 
-    void set(boolean startStopEnabled, boolean permanentlyClosed) {
+    /**
+     * Sends one stop-start switch command, which flips stop-start on the car. Returns the bit sent,
+     * which the echo of the next frames should show, or -1 when nothing was sent.
+     */
+    int toggle() {
         if (tw == null) {
             log("not open, nothing sent");
-            return;
+            return -1;
         }
-        int rc = write(Protocol.CMD_SET, Protocol.set(startStopEnabled, permanentlyClosed));
-        log("sent start-stop enabled=" + startStopEnabled + " permClosed=" + permanentlyClosed
-                + ", rc=" + rc);
+        int bit = Protocol.toggleValue(lastFrame);
+        int rc = write(Protocol.CMD_SET, Protocol.set(bit));
+        log("sent stop-start switch, bit=" + bit + ", rc=" + rc);
         handler.postDelayed(new Runnable() {
             @Override
             public void run() {
                 query();
             }
         }, 1000);
+        return bit;
     }
 
     private void onFrame(byte[] b) {
@@ -114,7 +127,17 @@ final class CanBox {
             lastFrame = b.clone();
             log("status " + hex(b));
         }
-        listener.onState(Protocol.startStopEnabled(b), Protocol.permanentlyClosed(b));
+        listener.onEcho(Protocol.echo(b));
+    }
+
+    private void onOtherFrame(int id, byte[] b) {
+        if (Arrays.equals(b, otherFrames.get(id))) return;
+        otherFrames.put(id, b.clone());
+        Integer lines = otherFrameLines.get(id);
+        int n = lines == null ? 0 : lines;
+        if (n >= MAX_OTHER_FRAME_LINES) return;
+        otherFrameLines.put(id, n + 1);
+        log("frame " + id + " " + hex(b));
     }
 
     private int write(int cmd, byte[] data) {

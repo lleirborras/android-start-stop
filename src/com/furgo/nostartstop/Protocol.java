@@ -14,16 +14,19 @@ final class Protocol {
         return new byte[]{(byte) STATUS_SETTINGS, 0};
     }
 
-    static byte[] set(boolean startStopEnabled, boolean permanentlyClosed) {
-        int value = (permanentlyClosed ? 0x80 : 0) | (startStopEnabled ? 1 : 0);
-        return new byte[]{(byte) SET_START_STOP, (byte) value};
+    /** Any change of bit 0 flips stop-start on the car. Bit 7 ("permanently closed") has no effect, so it is always 0. */
+    static byte[] set(int bit0) {
+        return new byte[]{(byte) SET_START_STOP, (byte) (bit0 & 1)};
     }
 
-    static boolean startStopEnabled(byte[] status) {
+    /** byte[5] bit 6: repeats bit 0 of the last command and clears by itself. It is not the car's stop-start state. */
+    static boolean echo(byte[] status) {
         return (status[5] & 0x40) != 0;
     }
 
-    static boolean permanentlyClosed(byte[] status) {
-        return (status[8] & 0x40) != 0;
+    /** The bit 0 to send so the command differs from the last one: the opposite of the echo, or 1 without a valid frame. */
+    static int toggleValue(byte[] lastStatus) {
+        if (lastStatus == null || lastStatus.length < MIN_STATUS_LENGTH) return 1;
+        return echo(lastStatus) ? 0 : 1;
     }
 }
