@@ -43,23 +43,18 @@ public class AutoSwitchTest {
         same("nothing after that", a.onBattery(1200, 2_000), W);
         same("nothing after that, tick", a.onTick(AutoSwitch.GIVE_UP_MS, true), W);
 
-        // Wake: readings between 13.0 and 13.2 V are neither low nor high; highs before a low do not count.
+        // Wake: the first reading must be low; 13.0 V or more first means the engine was already running.
         a.arm(0, WAKE);
-        same("13.10 V first", a.onBattery(1310, 1_000), W);
-        same("high before low", a.onBattery(1400, 2_000), W);
-        same("high before low", a.onBattery(1400, 3_000), W);
-        same("high before low", a.onBattery(1400, 4_000), W);
-        same("12.99 V is low", a.onBattery(1299, 5_000), W);
-        same("high", a.onBattery(1400, 6_000), W);
-        same("high", a.onBattery(1400, 7_000), W);
-        same("3rd high after low fires", a.onBattery(1400, 8_000), F);
-
-        // Wake: 13.00 V is not low.
+        same("13.10 V first", a.onBattery(1310, 1_000), R);
+        same("nothing after that", a.onBattery(1200, 2_000), W);
         a.arm(0, WAKE);
-        same("13.00 V", a.onBattery(1300, 1_000), W);
-        same("high", a.onBattery(1400, 2_000), W);
+        same("13.00 V first is not low", a.onBattery(1300, 1_000), R);
+        a.arm(0, WAKE);
+        same("12.99 V first is low", a.onBattery(1299, 1_000), W);
+        same("13.10 V after low is not high", a.onBattery(1310, 2_000), W);
         same("high", a.onBattery(1400, 3_000), W);
-        same("high, still no low", a.onBattery(1400, 4_000), W);
+        same("high", a.onBattery(1400, 4_000), W);
+        same("3rd high after low fires", a.onBattery(1400, 5_000), F);
 
         // Give up 3 minutes after arming, with readings or without.
         a.arm(0, BOOT);
@@ -79,8 +74,15 @@ public class AutoSwitchTest {
         same("boot, refused, at 15 s", a.onTick(1_000 + AutoSwitch.FALLBACK_MS, true), FB);
         same("fallback fires once", a.onTick(1_000 + AutoSwitch.FALLBACK_MS + 1, true), W);
         a.arm(0, BOOT);
+        same("boot, still trying to open", a.onTick(AutoSwitch.FALLBACK_MS, false), W);
+        same("refused after the retries, past 15 s", a.onTick(40_000, true), FB);
+        a.arm(0, BOOT);
+        a.linkOpened();
         same("boot, link open but no readings", a.onTick(AutoSwitch.FALLBACK_MS, false), W);
-        same("refused later, past 15 s", a.onTick(40_000, true), FB);
+        same("opened once, then failed to reopen: no fallback", a.onTick(40_000, true), W);
+        same("opened once: gives up", a.onTick(AutoSwitch.GIVE_UP_MS, true), G);
+        a.arm(0, BOOT);
+        same("re-arm forgets the earlier open", a.onTick(AutoSwitch.FALLBACK_MS, true), FB);
         a.arm(0, WAKE);
         same("wake, refused: no fallback", a.onTick(AutoSwitch.FALLBACK_MS, true), W);
         same("wake, refused: gives up", a.onTick(AutoSwitch.GIVE_UP_MS, true), G);

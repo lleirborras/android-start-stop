@@ -24,10 +24,12 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
     private static final int NOTIFICATION_ID = 3;
     private static final long[] OPEN_BACKOFF_MS = {1_000, 2_000, 4_000, 8_000, 15_000};
     private static final long SILENT_MS = 60_000;
+    private static final long MAX_REOPEN_MS = 10 * 60_000;
     private static final LogBudget POWER_LINES = new LogBudget(60);
     private static final LogBudget AUTO_LINES = new LogBudget(50);
     private static final LogBudget WATCH_LINES = new LogBudget(50);
     private static final LogBudget BATTERY_LINES = new LogBudget(100);
+    private static final LogBudget SILENT_LINES = new LogBudget(5);
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final AutoSwitch auto = new AutoSwitch();
@@ -36,7 +38,9 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
     private boolean linkOpen;
     private boolean powerRefused;   // the last open series failed
     private long lastMessageAt;
-    private long lastReopenAt = -SILENT_MS;
+    private long lastReopenAt = -MAX_REOPEN_MS;
+    private long reopenEvery = SILENT_MS;
+    private boolean quietReopen;
     private int lastPowerState = -1;
     private boolean sawSleep;
 
@@ -66,7 +70,9 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
             if (canBox.open()) {
                 openAttempt = -1;
                 linkOpen = true;
+                quietReopen = false;
                 lastMessageAt = SystemClock.elapsedRealtime();
+                auto.linkOpened();
                 return;
             }
             if (openAttempt >= OPEN_BACKOFF_MS.length) {
@@ -84,11 +90,13 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
         @Override
         public void run() {
             long now = SystemClock.elapsedRealtime();
-            if (linkOpen && now - lastMessageAt >= SILENT_MS && now - lastReopenAt >= SILENT_MS) {
+            if (linkOpen && now - lastMessageAt >= SILENT_MS && now - lastReopenAt >= reopenEvery) {
                 lastReopenAt = now;
+                reopenEvery = Math.min(reopenEvery * 2, MAX_REOPEN_MS);
                 canBox.close();
                 linkOpen = false;
-                watchLog("link silent, reopened");
+                quietReopen = !SILENT_LINES.take(now);
+                if (!quietReopen) LogFile.append(WatchService.this, "watch: link silent, reopened");
                 ensureOpen();
             }
             handler.postDelayed(this, SILENT_MS);
@@ -141,7 +149,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
 
     @Override
     public void onPowerState(int state) {
-        lastMessageAt = SystemClock.elapsedRealtime();
+        heard();
         if (state != lastPowerState) {
             lastPowerState = state;
             if (POWER_LINES.take(lastMessageAt)) LogFile.append(this, "power state " + state);
@@ -158,7 +166,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
 
     @Override
     public void onBattery(int centivolts) {
-        lastMessageAt = SystemClock.elapsedRealtime();
+        heard();
         act(auto.onBattery(centivolts, lastMessageAt), centivolts);
     }
 
@@ -168,8 +176,14 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
 
     @Override
     public void onLog(String line) {
+        if (quietReopen && line.startsWith("TWUtil open")) return;
         LogBudget budget = line.startsWith("battery ") ? BATTERY_LINES : WATCH_LINES;
         if (budget.take(SystemClock.elapsedRealtime())) LogFile.append(this, "watch: " + line);
+    }
+
+    private void heard() {
+        lastMessageAt = SystemClock.elapsedRealtime();
+        reopenEvery = SILENT_MS;
     }
 
     private void watchLog(String line) {
@@ -192,6 +206,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
         handler.removeCallbacks(tick);
         handler.postDelayed(tick, AutoSwitch.FALLBACK_MS);
         handler.postDelayed(tick, AutoSwitch.GIVE_UP_MS);
+        if (linkOpen) auto.linkOpened();
         autoLog(afterBoot ? "boot, waiting for the engine to run" : "wake, waiting for the engine to start");
         if (afterBoot) ensureOpen();
     }

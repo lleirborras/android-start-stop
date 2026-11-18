@@ -5,10 +5,10 @@ package com.furgo.nostartstop;
  * <ul>
  * <li>After a boot: three battery readings in a row at or above 13.2 V. The head unit boots slowly, so the engine
  * normally runs already.</li>
- * <li>After a wake from sleep: the engine must be seen starting, a reading below 13.0 V first and then three at or
- * above 13.2 V. If the first reading is already high the engine ran before the wake, and nothing is sent.</li>
- * <li>Without readings nothing is sent, except after a boot when the head unit refused the power messages: then the
- * switch goes 15 s after the boot, as before there was a watch.</li>
+ * <li>After a wake from sleep: the engine must be seen starting, the first reading below 13.0 V and then three at
+ * or above 13.2 V. A first reading of 13.0 V or more means the engine ran before the wake, and nothing is sent.</li>
+ * <li>Without readings nothing is sent, except after a boot when the head unit refused the power messages and they
+ * never opened since: then the switch goes 15 s after the boot, as before there was a watch.</li>
  * </ul>
  */
 final class AutoSwitch {
@@ -25,6 +25,7 @@ final class AutoSwitch {
     private long armedAt;
     private boolean sawReading;
     private boolean sawLow;
+    private boolean linkOpened;
     private int high;
 
     void arm(long now, boolean afterBoot) {
@@ -33,7 +34,13 @@ final class AutoSwitch {
         armedAt = now;
         sawReading = false;
         sawLow = false;
+        linkOpened = false;
         high = 0;
+    }
+
+    /** The power messages opened while armed, so a later failure to reopen them is no reason for the fallback. */
+    void linkOpened() {
+        linkOpened = true;
     }
 
     /** Returns true if a switch was pending. */
@@ -50,16 +57,14 @@ final class AutoSwitch {
             armed = false;
             return GIVE_UP;
         }
-        boolean first = !sawReading;
         sawReading = true;
         if (!bootCycle && !sawLow) {
             if (centivolts < STOPPED_CENTIVOLTS) {
                 sawLow = true;
-            } else if (first && centivolts >= RUNNING_CENTIVOLTS) {
-                armed = false;
-                return ALREADY_RUNNING;
+                return WAIT;
             }
-            return WAIT;
+            armed = false;
+            return ALREADY_RUNNING;
         }
         high = centivolts >= RUNNING_CENTIVOLTS ? high + 1 : 0;
         if (high < RUNNING_READINGS) return WAIT;
@@ -74,7 +79,7 @@ final class AutoSwitch {
             armed = false;
             return GIVE_UP;
         }
-        if (!bootCycle || !powerRefused || sawReading || now - armedAt < FALLBACK_MS) return WAIT;
+        if (!bootCycle || !powerRefused || linkOpened || sawReading || now - armedAt < FALLBACK_MS) return WAIT;
         armed = false;
         return FIRE_FALLBACK;
     }

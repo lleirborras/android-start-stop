@@ -64,6 +64,11 @@ public class BootService extends Service implements CanBox.Listener {
             if (sent) return;
             sent = true;
             handler.removeCallbacks(this);
+            if (!cycle.equals(Prefs.currentCycle(BootService.this))) {
+                onLog("cycle changed, nothing sent");
+                finish();
+                return;
+            }
             if (alreadySwitched()) {
                 finish();
                 return;
@@ -99,7 +104,10 @@ public class BootService extends Service implements CanBox.Listener {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         startForeground(1, buildNotification());
-        if (canBox != null) return START_NOT_STICKY;
+        if (canBox != null) {
+            onLog("already running, start request dropped");
+            return START_NOT_STICKY;
+        }
         // The cycle this switch belongs to, even if a new one starts while it is being sent.
         cycle = Prefs.currentCycle(this);
         canBox = new CanBox(this);
