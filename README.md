@@ -39,7 +39,7 @@ The screenshots are from an emulator at 1920x720 with a simulated CAN box: the m
   - "Sent at HH:mm. Check the instrument cluster." once the CAN box echoes the command. When the command's bit is 0 the echo cannot confirm it, so this shows as soon as it is sent.
   - "No answer from the car." when the command was sent but not echoed within 3 seconds. Check the instrument cluster before tapping again: the switch may have worked.
   - "No answer from the car. Nothing sent." when no status frame came within 3 seconds, and "Could not send to the car. Nothing sent." when the head unit refused the command.
-  - "Not connected to the car. Nothing sent." for a tap while the top right says "NO LINK TO CAR".
+  - "Not connected to the car. Nothing sent." for a tap while the indicator next to the title says "NO LINK TO CAR".
 
   Taps are ignored while a command is pending, for 2 seconds after each command is sent, and while **Switch off at engine start** is sending ("Switching…"), so a double tap does not switch it straight back. When idle, the card shows the last switch sent in the current ignition cycle, for example "Last switch: 08:41, automatic".
 - **Switch off at engine start**: off by default. When on, the app sends one switch command each time the car starts. The car turns stop-start on at every engine start, so one switch turns it off. See [how it works and its limits](#switch-off-at-engine-start-how-and-limits).
@@ -47,7 +47,7 @@ The screenshots are from an emulator at 1920x720 with a simulated CAN box: the m
 - **Log**: the commands sent, the CAN box status frames, the CAN box function frame, what the automatic switch saw and did (ignition, engine starts, battery voltage), the assumed state, boot, screen, shutdown and network events, and any errors. See [Getting the log off the head unit](#getting-the-log-off-the-head-unit).
 - **Check for updates**: downloads and installs the latest release when you ask for it.
 - **Check for updates automatically**: on by default. About once a day, and after a boot once there is a connection, the app checks for a new release and shows a notification. It never installs by itself. See [Updating from the app](#updating-from-the-app).
-- **Share diagnostics**: asked on first launch, with a switch to change it later. Sends the app's log lines to the developer. Only in release builds. See [Diagnostics](#diagnostics).
+- **Share diagnostics**: asked on first launch, with a switch to change it later. Sends the app's log lines to the developer. Only in builds made with a PostHog key, such as releases. See [Diagnostics](#diagnostics).
 
 There is no "keep it off" or lock option: the vendor app's "permanently closed" setting has no effect on this van, and stop-start is on again after every engine start whatever it is set to.
 
@@ -123,7 +123,7 @@ It is not verified on the van yet. It is a model, not a reading from the car. It
 - **Stop-start ends up on after a tap**: each tap flips it, so it was off before. Tap once more and check the instrument cluster message.
 - **Switch off at engine start does nothing**: open the app once after installing, and leave it on screen when you switch the ignition off. Then check the log for `wake` and `auto:` lines after an engine start; without a `wake` line the app did not notice the ignition on or the engine start. `auto: battery …` lines show the voltages it saw while waiting.
 - **Stop-start is on after an engine start with Switch off at engine start on**: the app probably was not running at that engine start, or the car ignored the switch. If the screen says "off (assumed)", tap **Status is wrong** first so the log records it. Then tap **Switch stop-start** once and share the log.
-- **"Stop-start: unknown"**: the app has not seen the ignition come on or an engine start since it started, or the automatic switch is off. See [the assumed state](#the-assumed-stop-start-state).
+- **"Stop-start: unknown"**: the app has not seen the ignition come on or an engine start since the last ignition off or head unit reboot, the automatic switch is off, or the background service lost the head unit. See [the assumed state](#the-assumed-stop-start-state).
 
 ## Status
 
@@ -143,7 +143,7 @@ What is sent with each line:
 - the app version, the Android SDK level and the head unit's model name;
 - a random id created for this install, so lines from one head unit can be told apart. It is not tied to you or to the vehicle.
 
-Always logged: the commands sent, the status (`status …`) and function (`function …`) frames from the CAN box, boot count and uptime, screen on/off, shutdown and network up/down, and the assumed state. While **Switch off at engine start** is on, also the head unit's power state, wakes, battery voltage (`watch: battery …`) and what the automatic switch did. The function frame is expected to hold only the car's feature flags, but that is not verified. Only logged while **Record car data** is on: `frame …`, `engine …`, `battery …` (from the screen), `unit id …` and `unit config …`, and the engine speed on `sent stop-start switch` lines. Those lines are only sent if **Share diagnostics** is on too. Switching **Record car data** off stops new lines; lines already in the log file stay there.
+Always logged: the commands sent, the status (`status …`) and function (`function …`) frames from the CAN box, boot count and uptime, screen on/off, shutdown and network up/down. While **Switch off at engine start** is on, also the head unit's power state, wakes, battery voltage (`watch: battery …`), what the automatic switch did and the assumed state. The function frame is expected to hold only the car's feature flags, but that is not verified. Only logged while **Record car data** is on: `frame …`, `engine …`, `battery …` (from the screen), `unit id …` and `unit config …`, and the engine speed on `sent stop-start switch` lines. Those lines are only sent if **Share diagnostics** is on too. Switching **Record car data** off stops new lines; lines already in the log file stay there.
 
 Nothing is sent while the switch is off. With it on, lines are kept in the app's private storage until they are sent, one file per day (UTC). Once a day is over its file is compressed. Together they are kept up to 5 MB or 30 files; past that the oldest days are deleted first. The current day may use at most 1 MB of that, so a burst of lines drops its own oldest lines instead of older days. They are sent the next time a line is logged with a connection, or by the background job that Android runs once there is a network after a boot, when the app is opened and about once a day (logged as `diagnostics: sent N queued lines`). The current day goes first, then the older days from oldest to newest, up to 500 lines per request and 20 requests at a time; the rest waits for the next send. After a failed upload, new lines wait 1 minute before the next try, doubling up to 15 minutes; the background job always tries. That job runs for this alone when **Check for updates automatically** is off. Switching it off discards anything not sent yet and forgets the random id, so switching it on again starts with a new one.
 
