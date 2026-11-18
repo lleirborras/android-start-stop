@@ -106,6 +106,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
                 power.linkClosed();
                 quietReopen = !SILENT_LINES.take(now);
                 if (!quietReopen) LogFile.append(WatchService.this, "watch: link silent, reopened");
+                Prefs.assumedEnd(WatchService.this, "link silent");
                 ensureOpen();
             }
             handler.postDelayed(this, SILENT_MS);
