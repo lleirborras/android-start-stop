@@ -58,11 +58,11 @@ A new ignition cycle starts when:
 - the service starts after the head unit last reported ignition off (the app remembers this across the restart), or
 - the engine is started: the head unit reports a crank (power state 9) and then 6 a few seconds later.
 
-After that the app waits until a battery reading of 13.0 V or more arrives, and at least 5 seconds have passed, and then sends one switch. If the engine is not seen running within 3 minutes, or the ignition goes off first, nothing is sent. Without battery readings nothing is sent. Each engine start gets its own switch, because the car turns stop-start back on every time; two engine starts less than 10 seconds apart count as one.
+After that the app waits until a battery reading of 13.0 V or more arrives, and at least 5 seconds have passed, and then sends one switch. After an engine start, if the engine is not seen running within 3 minutes, nothing is sent. After an ignition on there is no time limit, since the app may be restarted while the head unit is still off; it waits until the engine runs or the ignition is reported off again. Without battery readings nothing is sent. Each engine start gets its own switch, because the car turns stop-start back on every time; two engine starts less than 10 seconds apart count as one.
 
 - The app must be running at engine start. Today that is only known to happen when it was the last app on screen at ignition off, because the head unit then reopens it. Otherwise nothing is sent and stop-start stays on.
-- It sends at most one switch per cycle, and none if you already switched from the screen in that cycle.
-- A boot, a restart or an update of the app is not an engine start, so it never sends in the middle of a drive because of that. A boot or restart counts as ignition on only if the ignition was reported off before it.
+- It sends at most one switch per cycle, and none if you already switched from the screen in that cycle. An engine start after a switch, by tap or automatic, always starts a new cycle, because the engine start turned stop-start back on.
+- A boot, a restart or an update of the app is not an engine start, so it never sends in the middle of a drive because of that. A boot or restart counts as ignition on only if the ignition was reported off before it and no switch was sent since.
 - Broadcasts such as `ACC_ON` are only logged. Any app can send them, so they never start a cycle or cause a switch.
 - If the link to the car does not come up within 30 seconds, nothing is sent.
 - If the head unit refuses the command, nothing is sent and it is not retried until the next wake. The main screen then says "Automatic switch failed. Tap to switch." until you switch from the screen.

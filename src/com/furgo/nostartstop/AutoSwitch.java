@@ -13,22 +13,29 @@ final class AutoSwitch {
     static final int WAIT = 0, FIRE = 1, GIVE_UP = 2;
 
     private boolean armed;
+    private boolean timed;
     private long armedAt;
     private int newest;
 
-    void arm(long now) {
+    /**
+     * Arms the switch. Without timed it never gives up: after an ignition on noticed by a service start, which may
+     * come while the head unit is still off and hours before the engine starts.
+     */
+    void arm(long now, boolean timed) {
         armed = true;
+        this.timed = timed;
         armedAt = now;
         newest = -1;
     }
 
     /**
-     * An engine start: restarts a pending switch, or arms a new one. Returns true when nothing was pending (it fired,
-     * gave up or was never armed), so the crank starts a new cycle.
+     * An engine start: arms the switch with the 3-minute limit. Returns true when the crank starts a new cycle: nothing
+     * was pending (it fired, gave up or was never armed), or a switch was already sent in the current cycle, which the
+     * engine start undid.
      */
-    boolean onCrank(long now) {
-        boolean fresh = !armed;
-        arm(now);
+    boolean onCrank(long now, boolean switchSentInCycle) {
+        boolean fresh = !armed || switchSentInCycle;
+        arm(now, true);
         return fresh;
     }
 
@@ -60,7 +67,7 @@ final class AutoSwitch {
     }
 
     private int check(long now) {
-        if (now - armedAt >= GIVE_UP_MS) {
+        if (timed && now - armedAt >= GIVE_UP_MS) {
             armed = false;
             return GIVE_UP;
         }

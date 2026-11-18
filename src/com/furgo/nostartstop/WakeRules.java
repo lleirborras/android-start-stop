@@ -8,13 +8,18 @@ final class WakeRules {
     private WakeRules() {
     }
 
+    static final int OFF_SEEN = 0, IGNITION_ON_CYCLE = 1, CRANK_CYCLE = 2, FIRED = 3;
+
     /**
-     * The persisted "ignition off seen" flag after an event. Any new cycle clears it, so a short ignition off and on
-     * that did not stop the app cannot turn a later restart of the app in the middle of a drive into an ignition on.
+     * The persisted "ignition off seen" flag after an event. A crank cycle or a sent switch clears it, so a short
+     * ignition off and on that did not stop the app cannot turn a later restart of the app in the middle of a drive
+     * into an ignition on. A cycle started by the flag keeps it until it fires: the service may have been restarted
+     * while the head unit was still off, and a later start must still count.
      */
-    static boolean ignitionOffAfter(boolean flag, boolean ignitionOff, boolean cycleStarted) {
-        if (ignitionOff) return true;
-        return !cycleStarted && flag;
+    static boolean ignitionOffAfter(boolean flag, int event) {
+        if (event == OFF_SEEN) return true;
+        if (event == CRANK_CYCLE || event == FIRED) return false;
+        return flag;
     }
 
     static int nextWake(boolean sameBoot, int count) {

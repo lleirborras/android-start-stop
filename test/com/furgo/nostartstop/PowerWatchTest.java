@@ -45,10 +45,11 @@ public class PowerWatchTest {
         same("6 answering the reopen", p.onState(6, 11_000), N);
 
         // Service start: an ignition on only after ignition off was seen, and not when a broadcast started it.
-        check("start after ignition off", PowerWatch.startIsIgnitionOn(true, false));
-        check("start without ignition off", !PowerWatch.startIsIgnitionOn(false, false));
-        check("broadcast start after ignition off", !PowerWatch.startIsIgnitionOn(true, true));
-        check("broadcast start without ignition off", !PowerWatch.startIsIgnitionOn(false, true));
+        check("start after ignition off", PowerWatch.startIsIgnitionOn(true, false, false));
+        check("start without ignition off", !PowerWatch.startIsIgnitionOn(false, false, false));
+        check("broadcast start after ignition off", !PowerWatch.startIsIgnitionOn(true, true, false));
+        check("broadcast start without ignition off", !PowerWatch.startIsIgnitionOn(false, true, false));
+        check("start while a switch is pending", !PowerWatch.startIsIgnitionOn(true, false, true));
 
         System.out.println("PowerWatchTest passed");
     }

@@ -53,22 +53,22 @@ final class Prefs {
         return WakeRules.cycle(boot, boot.equals(p.getString(WAKE_BOOT, null)) ? p.getInt(WAKE_COUNT, 0) : 0);
     }
 
-    /** Starts a new ignition cycle. */
-    static synchronized void newWake(Context c, String source) {
+    /** Starts a new ignition cycle; event is {@link WakeRules#IGNITION_ON_CYCLE} or {@link WakeRules#CRANK_CYCLE}. */
+    static synchronized void newWake(Context c, String source, int event) {
         String boot = currentBoot(c);
         SharedPreferences p = prefs(c);
         boolean sameBoot = boot.equals(p.getString(WAKE_BOOT, null));
         long now = SystemClock.elapsedRealtime();
         int n = WakeRules.nextWake(sameBoot, p.getInt(WAKE_COUNT, 0));
         p.edit().putString(WAKE_BOOT, boot).putInt(WAKE_COUNT, n)
-                .putBoolean(IGNITION_OFF, WakeRules.ignitionOffAfter(ignitionOff(c), false, true))
+                .putBoolean(IGNITION_OFF, WakeRules.ignitionOffAfter(ignitionOff(c), event))
                 .commit();
         if (WAKE_LINES.take(now)) LogFile.append(c, "wake " + n + " (" + source + ")");
     }
 
     /** Written at once: the head unit kills the app a few seconds after ignition off. */
-    static void setIgnitionOff(Context c) {
-        prefs(c).edit().putBoolean(IGNITION_OFF, WakeRules.ignitionOffAfter(ignitionOff(c), true, false)).commit();
+    static void ignitionEvent(Context c, int event) {
+        prefs(c).edit().putBoolean(IGNITION_OFF, WakeRules.ignitionOffAfter(ignitionOff(c), event)).commit();
     }
 
     static boolean ignitionOff(Context c) {

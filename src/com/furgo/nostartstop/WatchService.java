@@ -128,9 +128,9 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
             registerReceiver(receiver, f);
             handler.postDelayed(health, SILENT_MS);
         }
-        if (PowerWatch.startIsIgnitionOn(Prefs.ignitionOff(this), BY_BROADCAST.equals(how))) {
-            Prefs.newWake(this, "ignition on");
-            auto.arm(SystemClock.elapsedRealtime());
+        if (PowerWatch.startIsIgnitionOn(Prefs.ignitionOff(this), BY_BROADCAST.equals(how), auto.armed())) {
+            Prefs.newWake(this, "ignition on", WakeRules.IGNITION_ON_CYCLE);
+            auto.arm(SystemClock.elapsedRealtime(), false);
             armed("ignition on");
         }
         ensureOpen();
@@ -162,13 +162,14 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
         }
         int event = power.onState(state, lastMessageAt);
         if (event == PowerWatch.IGNITION_OFF) {
-            Prefs.setIgnitionOff(this);
+            Prefs.ignitionEvent(this, WakeRules.OFF_SEEN);
             handler.removeCallbacks(tick);
             if (auto.disarm()) autoLog("ignition off, nothing sent");
         } else if (event == PowerWatch.CRANK_END) {
             autoLog("crank seen");
-            boolean fresh = auto.onCrank(lastMessageAt);
-            if (fresh) Prefs.newWake(this, "engine start");
+            boolean fresh = auto.onCrank(lastMessageAt, Prefs.lastSwitchAt(this) != 0);
+            if (fresh) Prefs.newWake(this, "engine start", WakeRules.CRANK_CYCLE);
+            else Prefs.ignitionEvent(this, WakeRules.CRANK_CYCLE);
             armed(fresh ? "engine start" : "engine start, same cycle");
         }
     }
@@ -234,6 +235,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
             return;
         }
         autoLog("engine running (" + Protocol.volts(auto.newest()) + " V), switching");
+        Prefs.ignitionEvent(this, WakeRules.FIRED);
         Intent i = new Intent(this, BootService.class);
         try {
             if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);

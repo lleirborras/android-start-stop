@@ -3,12 +3,13 @@ package com.furgo.nostartstop;
 /** Plain-Java test, no test framework: run by test.sh, exits non-zero on the first failure. */
 public class WakeRulesTest {
     public static void main(String[] args) {
-        check("ignition off sets the flag", WakeRules.ignitionOffAfter(false, true, false));
-        check("ignition off keeps it set", WakeRules.ignitionOffAfter(true, true, false));
-        check("a new cycle clears it", !WakeRules.ignitionOffAfter(true, false, true));
-        check("a new cycle without the flag leaves it clear", !WakeRules.ignitionOffAfter(false, false, true));
-        check("nothing else changes it: set", WakeRules.ignitionOffAfter(true, false, false));
-        check("nothing else changes it: clear", !WakeRules.ignitionOffAfter(false, false, false));
+        check("ignition off sets the flag", WakeRules.ignitionOffAfter(false, WakeRules.OFF_SEEN));
+        check("ignition off keeps it set", WakeRules.ignitionOffAfter(true, WakeRules.OFF_SEEN));
+        check("an ignition on cycle keeps it until it fires",
+                WakeRules.ignitionOffAfter(true, WakeRules.IGNITION_ON_CYCLE));
+        check("a crank cycle clears it", !WakeRules.ignitionOffAfter(true, WakeRules.CRANK_CYCLE));
+        check("a fired switch clears it", !WakeRules.ignitionOffAfter(true, WakeRules.FIRED));
+        check("clear stays clear", !WakeRules.ignitionOffAfter(false, WakeRules.IGNITION_ON_CYCLE));
 
         same("first wake number", WakeRules.nextWake(false, 7), 1);
         same("next wake number", WakeRules.nextWake(true, 7), 8);

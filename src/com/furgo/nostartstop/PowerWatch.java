@@ -45,9 +45,9 @@ final class PowerWatch {
     /**
      * Whether a start of the watch service is an ignition on: the last state seen was ignition off. The head unit kills
      * the app soon after ignition off and starts it again at ignition on. A start by a broadcast does not count, since
-     * any app can send one.
+     * any app can send one, and neither does a start while a switch is already pending.
      */
-    static boolean startIsIgnitionOn(boolean ignitionOffSeen, boolean byBroadcast) {
-        return ignitionOffSeen && !byBroadcast;
+    static boolean startIsIgnitionOn(boolean ignitionOffSeen, boolean byBroadcast, boolean pending) {
+        return ignitionOffSeen && !byBroadcast && !pending;
     }
 }
