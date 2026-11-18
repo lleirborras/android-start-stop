@@ -40,6 +40,14 @@ final class Updater {
         }
     }
 
+    static final class NoApkException extends IOException {
+        private static final long serialVersionUID = 1L;
+
+        NoApkException(String message) {
+            super(message);
+        }
+    }
+
     static Release latest() throws IOException, JSONException {
         HttpURLConnection c = open(LATEST_URL);
         try {
@@ -52,7 +60,7 @@ final class Updater {
                 String url = assets.getJSONObject(i).getString("browser_download_url");
                 if (url.startsWith(DOWNLOAD_PREFIX) && url.endsWith(".apk")) return new Release(tag, url);
             }
-            throw new IOException("release " + tag + " has no APK");
+            throw new NoApkException("release " + tag + " has no APK");
         } finally {
             c.disconnect();
         }

@@ -149,6 +149,11 @@ final class Prefs {
         prefs(c).edit().putString(LATEST_TAG, tag).putLong(UPDATE_CHECKED_AT, at).remove(UPDATE_FAILURE).apply();
     }
 
+    /** Keeps the stored failure, so the same reason is still logged only once. */
+    static void setUpdateCheckedAt(Context c, long at) {
+        prefs(c).edit().putLong(UPDATE_CHECKED_AT, at).apply();
+    }
+
     static String notifiedTag(Context c) {
         return prefs(c).getString(NOTIFIED_TAG, null);
     }

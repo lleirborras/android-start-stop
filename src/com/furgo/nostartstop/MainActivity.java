@@ -328,7 +328,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         updateBusy = true;
         final Updater.Release found = available;
         handler.removeCallbacks(revertUpdate);
-        showUpdate(found == null ? "Checking…" : "Downloading " + found.tag + "…", MUTED, false);
+        showUpdate(found == null || found.apkUrl == null ? "Checking…" : "Downloading " + found.tag + "…", MUTED, false);
         new Thread(new Runnable() {
             @Override
             public void run() {
@@ -364,6 +364,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
             showIdleUpdate();
             if (installNow) onUpdateClick();
         } else {
+            available = null;
             onLog("no update: latest release is " + latest.tag + ", installed is " + versionName());
             showUpdate("Up to date", TEXT, false);
             handler.postDelayed(revertUpdate, REVERT_MS);
@@ -390,6 +391,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         String installed = versionName();
         if (available != null && !Version.isNewer(available.tag, installed)) available = null;
         String tag = UpdateCheck.offerable(Prefs.latestTag(this), installed);
+        if (tag == null) UpdateJob.cancelNotification(this);
         // Its APK URL is not stored: tapping Install fetches the release again.
         if (tag != null && (available == null || Version.isNewer(tag, available.tag))) {
             available = new Updater.Release(tag, null);
@@ -619,7 +621,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         LinearLayout settings = new LinearLayout(this);
         settings.setOrientation(LinearLayout.HORIZONTAL);
         bootSwitch = addSetting(settings, "Switch off at boot",
-                "Sends one switch at each radio boot.",
+                "At most one switch per radio boot.",
                 new View.OnClickListener() {
                     @Override
                     public void onClick(View v) {
@@ -642,7 +644,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
 
         LinearLayout capture = new LinearLayout(this);
         captureSwitch = addSetting(capture, "Record car data",
-                "May include vehicle details.",
+                "Logs raw car data. May include vehicle details.",
                 new View.OnClickListener() {
                     @Override
                     public void onClick(View v) {

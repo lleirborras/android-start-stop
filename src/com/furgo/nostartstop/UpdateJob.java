@@ -28,7 +28,7 @@ public class UpdateJob extends JobService {
     private static final long PERIOD_MS = 24 * 60 * 60 * 1000L;
     private static final long BACKOFF_MS = 15 * 60 * 1000L;
     private static final String CHANNEL = "updates";
-    private static final int NOTIFICATION_ID = 1;
+    private static final int NOTIFICATION_ID = 2;   // 1 is BootService's foreground notification
     private static final Object LOCK = new Object();
 
     /** Set by MainActivity while it is shown; run on the main thread after each job run. */
@@ -84,6 +84,8 @@ public class UpdateJob extends JobService {
                     retry = !work(app);
                 } catch (InterruptedException e) {
                     // Stopped by onStopJob, which already asked JobScheduler to run the job again.
+                } catch (RuntimeException e) {
+                    LogFile.append(app, "update job failed: " + UpdateCheck.reason(e));
                 } finally {
                     finish(params, retry);
                 }
@@ -98,8 +100,9 @@ public class UpdateJob extends JobService {
 
     private void finish(JobParameters params, boolean retry) {
         synchronized (running) {
-            // Gone when onStopJob came first: JobScheduler then no longer expects jobFinished.
-            if (running.remove(params.getJobId()) != Thread.currentThread()) return;
+            // Gone or replaced when onStopJob came first: JobScheduler then no longer expects jobFinished from this thread.
+            if (running.get(params.getJobId()) != Thread.currentThread()) return;
+            running.remove(params.getJobId());
         }
         jobFinished(params, retry);
         Runnable r = onResult;
@@ -144,16 +147,16 @@ public class UpdateJob extends JobService {
         Updater.Release latest;
         try {
             latest = Updater.latest();
+        } catch (Updater.NoApkException e) {
+            // A release without an APK is an answer, not a failure: wait for the next check.
+            completedWithout(app, "release has no APK");
+            return true;
         } catch (Exception e) {
-            String reason = UpdateCheck.reason(e);
-            if (!reason.equals(Prefs.updateFailure(app))) {
-                Prefs.setUpdateFailure(app, reason);
-                LogFile.append(app, "update check failed: " + reason);
-            }
+            logFailure(app, UpdateCheck.reason(e));
             return false;
         }
         if (!UpdateCheck.validTag(latest.tag)) {
-            LogFile.append(app, "update check failed: unexpected tag");
+            completedWithout(app, "unexpected tag");
             return true;
         }
         remember(app, latest.tag);
@@ -167,6 +170,23 @@ public class UpdateJob extends JobService {
             Prefs.setNotifiedTag(app, latest.tag);
         }
         return true;
+    }
+
+    private static void logFailure(Context app, String reason) {
+        if (reason.equals(Prefs.updateFailure(app))) return;
+        Prefs.setUpdateFailure(app, reason);
+        LogFile.append(app, "update check failed: " + reason);
+    }
+
+    /** Counts the check as done, keeping the stored tag, so it is not repeated before the next one is due. */
+    private static void completedWithout(Context app, String reason) {
+        logFailure(app, reason);
+        Prefs.setUpdateCheckedAt(app, System.currentTimeMillis());
+    }
+
+    static void cancelNotification(Context context) {
+        NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm != null) nm.cancel(NOTIFICATION_ID);
     }
 
     private static void notifyUpdate(Context app, String tag) {
