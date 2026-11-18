@@ -1,5 +1,7 @@
 # No Start-Stop
 
+<img src="res/mipmap-xxxhdpi/ic_launcher.png" alt="App icon" width="96" align="right">
+
 Android app for Topway head units (TS18 and similar) that switches the PSA engine stop-start feature off through the Raise CAN box, the same way the built-in "Original Car" settings app does.
 
 Built for a Peugeot/Citroën Jumpy (2015–23) with CAN box setting `02: Raise` / `96: PSA Peugeot Citroen`, and tested on a real Jumpy head unit (Android 10). See [Status](#status).
