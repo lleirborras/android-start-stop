@@ -41,7 +41,7 @@ The screenshots are from an emulator at 1920x720 with a simulated CAN box. On a 
 
   Taps are ignored while a command is pending, for 2 seconds after each command is sent, and while **Switch off at engine start** is sending ("Switching…"), so a double tap does not switch it straight back. When idle, the card shows the last switch sent since the head unit last woke up, for example "Last switch: 08:41, automatic".
 - **Switch off at engine start**: off by default. When on, the app sends one switch command each time the car starts. The car turns stop-start on at every engine start, so one switch turns it off. See [how it works and its limits](#switch-off-at-engine-start-how-and-limits).
-- **Record car data**: off by default. When on, the log also records the raw frames the CAN box passes on from the car, the trip computer frame, engine speed (rpm) and vehicle speed, battery voltage and the head unit's identity and configuration, to help find where the car reports the real stop-start state. This data may include vehicle details (for example the VIN, speed or position), so leave it off unless you are helping with that.
+- **Record car data**: off by default. When on, the log also records the raw frames the CAN box passes on from the car, engine speed (rpm) and vehicle speed, battery voltage and the head unit's identity and configuration, to help find where the car reports the real stop-start state. This data may include vehicle details (for example the VIN, speed or position), so leave it off unless you are helping with that.
 - **Log**: the commands sent, the CAN box status frames, the CAN box function frame, boot, screen, shutdown and network events, and any errors.
 - **Check for updates**: downloads and installs the latest release when you ask for it.
 - **Check for updates automatically**: on by default. About once a day, and after a boot once there is a connection, the app checks for a new release and shows a notification. It never installs by itself. See [Updating from the app](#updating-from-the-app).
@@ -135,7 +135,7 @@ Each line has a date and time. Lines to look for:
 - `TWUtil open` / `TWUtil unavailable: …`: whether the head unit's MCU link works. With **Record car data** on, `TWUtil open, CAN box only (engine and unit ids refused: …)` means the head unit refused the engine and unit messages; the switch works the same.
 - `status 00 4A …`: the raw settings frame (id 56) from the CAN box, logged whenever it changes.
 - `function 05 12 02 01 (stop-start field=2)`: the CAN box function frame (id 57), asked for after the first status frame when the link opens and 1.5 and 5 seconds after each switch, logged when it changes since the app started (at most 40 lines each time the app connects). The field is a candidate for the real stop-start state (1 on, 2 off, 0 not reported); it is not verified and the app does not use it.
-- `frame <id> …`: any other CAN box frame, only while **Record car data** is on. Logged when it changes, at most 20 lines per frame id, 64 frame ids and 400 lines in total each time the app connects. The trip computer frame (51) is asked for when the link opens and after each switch. The automatic switch never records them.
+- `frame <id> …`: any other CAN box frame, only while **Record car data** is on. Logged when it changes, at most 20 lines per frame id, 64 frame ids and 400 lines in total each time the app connects. Frames 51 (trip computer), 81 and 125 are left out: they change every second while driving. The automatic switch never records them.
 - `engine rpm=… speed=…` and `battery 12.34 V`: only while **Record car data** is on, except that `watch: battery …` is logged whenever **Switch off at engine start** is on. Logged when they change noticeably, at most one of each every 10 seconds and 100 of each each time the app connects. `rpm=?` means the head unit reported it as invalid.
 - `unit id …` / `unit config …`: the head unit's identity text and configuration block, once each time the app starts, only while **Record car data** is on.
 - `sent stop-start switch, bit=…, rc=…`: a switch command sent to the CAN box. With **Record car data** on and the engine speed known, it ends with `, rpm=…`.
@@ -245,7 +245,6 @@ The app also logs these, which come from the vendor code and are **not verified*
 | Data | Call |
 |---|---|
 | Function frame (candidate stop-start state) | query `write(1281, 143, 2, {57, 0})`, answered as frame 57. `byte[2]` bits 1-0 may be the state (1 on, 2 off, 0 not reported); the box may instead answer with a text list, so the raw bytes are logged |
-| Trip computer | query `write(1281, 143, 2, {51, 0})`, answered as frame 51 |
 | Engine | message `what = 1291`: `arg1` speed, `arg2` rpm (65535 invalid) |
 | Battery | message `what = 1292`, `arg1 = 0`: `((b[0] & 0x7F) << 8 \| b[1]) * 0.01` V when `b[0]` bit 7 is clear |
 | Head unit identity | `write(266, 255, 0)` answered by `what = 266` with a text; `write(267, 255, 0)` by `what = 267` with a block of bytes |
