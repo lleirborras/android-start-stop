@@ -119,4 +119,55 @@ final class Prefs {
         }
         return id;
     }
+
+    private static final String AUTO_UPDATE = "auto_update";
+    private static final String LATEST_TAG = "latest_tag";
+    private static final String UPDATE_CHECKED_AT = "update_checked_at";
+    private static final String NOTIFIED_TAG = "notified_tag";
+    private static final String UPDATE_FAILURE = "update_failure";
+
+    /** On by default: the check only asks GitHub for the latest release and never installs anything by itself. */
+    static boolean autoUpdate(Context c) {
+        return prefs(c).getBoolean(AUTO_UPDATE, true);
+    }
+
+    static void setAutoUpdate(Context c, boolean on) {
+        prefs(c).edit().putBoolean(AUTO_UPDATE, on).apply();
+    }
+
+    /** The newest release tag seen by any check. Untrusted text: validate before use. */
+    static String latestTag(Context c) {
+        return prefs(c).getString(LATEST_TAG, null);
+    }
+
+    /** Wall-clock time of the last successful check, or 0. */
+    static long updateCheckedAt(Context c) {
+        return prefs(c).getLong(UPDATE_CHECKED_AT, 0);
+    }
+
+    static void setUpdateChecked(Context c, String tag, long at) {
+        prefs(c).edit().putString(LATEST_TAG, tag).putLong(UPDATE_CHECKED_AT, at).remove(UPDATE_FAILURE).apply();
+    }
+
+    /** Keeps the stored failure, so the same reason is still logged only once. */
+    static void setUpdateCheckedAt(Context c, long at) {
+        prefs(c).edit().putLong(UPDATE_CHECKED_AT, at).apply();
+    }
+
+    static String notifiedTag(Context c) {
+        return prefs(c).getString(NOTIFIED_TAG, null);
+    }
+
+    static void setNotifiedTag(Context c, String tag) {
+        prefs(c).edit().putString(NOTIFIED_TAG, tag).apply();
+    }
+
+    /** Reason of the last failed background check, so the same failure is logged once until a check succeeds. */
+    static String updateFailure(Context c) {
+        return prefs(c).getString(UPDATE_FAILURE, null);
+    }
+
+    static void setUpdateFailure(Context c, String reason) {
+        prefs(c).edit().putString(UPDATE_FAILURE, reason).apply();
+    }
 }

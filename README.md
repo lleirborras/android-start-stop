@@ -26,6 +26,7 @@ The screenshots are from an emulator at 1920x720 with a simulated CAN box. On a 
 - **Record car data**: off by default. When on, the log also records the raw frames the CAN box passes on from the car, the trip computer frame, engine speed (rpm) and vehicle speed, battery voltage and the head unit's identity and configuration, to help find where the car reports the real stop-start state. This data may include vehicle details (for example the VIN, speed or position), so leave it off unless you are helping with that.
 - **Log**: the commands sent, the CAN box status frames, the CAN box function frame, boot, screen, shutdown and network events, and any errors.
 - **Check for updates**: downloads and installs the latest release when you ask for it.
+- **Check for updates automatically**: on by default. About once a day, and after a boot once there is a connection, the app checks for a new release and shows a notification. It never installs by itself. See [Updating from the app](#updating-from-the-app).
 - **Share diagnostics**: asked on first launch, with a switch to change it later. Sends the app's log lines to the developer.
 
 There is no "keep it off" or lock option: the vendor app's "permanently closed" setting has no effect on this van, and stop-start is on again after every engine start whatever it is set to.
@@ -53,12 +54,18 @@ To update, install the new APK over the old one the same way. Release APKs all s
 
 With the head unit online (phone hotspot or Wi-Fi):
 
-1. Tap **Check for updates** at the top of the screen. The button changes to **Install vX.Y.Z** if a newer release exists, or **Up to date**.
+1. Tap **Check for updates** at the top of the screen. The button changes to **Install vX.Y.Z** if a newer release exists, or **Up to date**. If the automatic check already found one, the button shows **Install vX.Y.Z** as soon as you open the app.
 2. Tap **Install vX.Y.Z**. The app downloads the APK and Android asks you to confirm the update.
 3. The first time, Android says the app is not allowed to install unknown apps. Tap **Settings**, allow it for No Start-Stop, go back and tap **Install** again.
 4. The app closes when the update finishes. Open it again; the new version is shown next to the title. Settings and the log are kept.
 
-The app only uses the network when you tap that button. It asks `api.github.com` for this repository's latest release and downloads the APK from `github.com`; it sends nothing else. Android refuses any APK that is not signed with the same key as the installed app, so a locally built (debug-signed) install cannot be updated this way.
+### Automatic check
+
+With **Check for updates automatically** on (the default), Android runs a background check about once a day, after each boot and when you open the app, but only while there is a network connection, and at most once every 6 hours. It asks `api.github.com` for this repository's latest release; it sends nothing else. If a newer release exists, a silent notification says "Update vX.Y.Z available" (once per release), and tapping it opens the app. The check never downloads or installs anything: installing still needs your tap on **Install vX.Y.Z** and Android's confirmation. Each check writes one line to the log, for example `update check: up to date (v0.9.1)`, `update check: v0.9.2 available` or `update check failed: no internet` (a repeated failure is logged once). Failed checks are retried later by Android, not in a loop.
+
+Turn the switch off to stop all background update checks. The **Check for updates** button keeps working.
+
+Apart from that check and **Share diagnostics**, the app only uses the network when you tap the button: it asks `api.github.com` for the latest release and downloads the APK from `github.com`. Android refuses any APK that is not signed with the same key as the installed app, so a locally built (debug-signed) install cannot be updated this way.
 
 ## Diagnostics
 
@@ -72,7 +79,7 @@ What is sent with each line:
 
 Always logged: the commands sent, the status (`status …`) and function (`function …`) frames from the CAN box, boot count and uptime, screen on/off, shutdown and network up/down. These hold no vehicle details. Only logged while **Record car data** is on: `frame …`, `engine …`, `battery …`, `unit id …` and `unit config …`, and the engine speed on `sent stop-start switch` lines. Those lines are only sent if **Share diagnostics** is on too. Switching **Record car data** off stops new lines; lines already in the log file stay there.
 
-Nothing is sent while the switch is off. Lines logged while the head unit is offline are kept (up to 500) and sent the next time a line is logged with a connection. Switching it off discards anything not sent yet and forgets the random id, so switching it on again starts with a new one.
+Nothing is sent while the switch is off. Lines logged while the head unit is offline are kept (up to 500) and sent the next time a line is logged with a connection, or by the background job that Android runs once there is a network after a boot, when the app is opened and about once a day (logged as `diagnostics: sent N queued lines`). That job runs for this alone when **Check for updates automatically** is off. Switching it off discards anything not sent yet and forgets the random id, so switching it on again starts with a new one.
 
 The switch only appears in builds made with a PostHog key. Release builds get it from the repository variables `POSTHOG_KEY` and `POSTHOG_HOST`; a local build has no key unless you set those environment variables for `build.sh`. The key is a public, write-only project key.
 
@@ -230,3 +237,7 @@ The engine, battery and identity messages are opened together with the CAN box. 
 - **Stop-start ends up on after a tap**: each tap flips it, so it was off before. Tap once more and check the instrument cluster message.
 - **Switch off at boot does nothing**: open the app once after installing. Many head units sleep on ignition-off instead of rebooting, and the app only acts on a real boot. The log shows `boot:` lines for every boot it acted on.
 - **Stop-start is on after a boot with Switch off at boot on**: the head unit probably booted twice in the same engine run, so the second switch turned it back on. Tap the button once.
+
+## License
+
+[MIT](LICENSE).
