@@ -23,8 +23,8 @@ The screenshots are from an emulator at 1920x720 with a simulated CAN box. On a 
 
   Taps are ignored while a command is pending, for 2 seconds after each command is sent, and while **Switch off at boot** is sending ("Switching at boot…"), so a double tap does not switch it straight back. When idle, the card shows the last switch sent since the head unit started, for example "Last switch: 08:41, at boot".
 - **Switch off at boot**: off by default. When on, the app sends one switch command after the head unit boots, then stops. It sends at most one switch per boot, and none if you already switched from the screen during this boot. The car turns stop-start on at every engine start, so one switch turns it off. See [the limits](#switch-off-at-boot-limits).
-- **Record car data**: off by default. When on, the log also records the raw frames the CAN box passes on from the car, to help find where the car reports the real stop-start state. These frames may include vehicle details (for example the VIN, speed or position), so leave it off unless you are helping with that.
-- **Log**: the commands sent, the CAN box status frames and any errors.
+- **Record car data**: off by default. When on, the log also records the raw frames the CAN box passes on from the car, the trip computer frame, engine speed (rpm) and vehicle speed, battery voltage and the head unit's identity and configuration, to help find where the car reports the real stop-start state. This data may include vehicle details (for example the VIN, speed or position), so leave it off unless you are helping with that.
+- **Log**: the commands sent, the CAN box status frames, the CAN box function frame, boot, screen, shutdown and network events, and any errors.
 - **Check for updates**: downloads and installs the latest release when you ask for it.
 - **Share diagnostics**: asked on first launch, with a switch to change it later. Sends the app's log lines to the developer.
 
@@ -70,7 +70,7 @@ What is sent with each line:
 - the app version, the Android SDK level and the head unit's model name;
 - a random id created for this install, so lines from one head unit can be told apart. It is not tied to you or to the vehicle.
 
-The `frame …` lines with raw car data are only written to the log while **Record car data** is on, and only sent if **Share diagnostics** is on too. Switching **Record car data** off stops new lines; lines already in the log file stay there.
+Always logged: the commands sent, the status (`status …`) and function (`function …`) frames from the CAN box, boot count and uptime, screen on/off, shutdown and network up/down. These hold no vehicle details. Only logged while **Record car data** is on: `frame …`, `engine …`, `battery …`, `unit id …` and `unit config …`, and the engine speed on `sent stop-start switch` lines. Those lines are only sent if **Share diagnostics** is on too. Switching **Record car data** off stops new lines; lines already in the log file stay there.
 
 Nothing is sent while the switch is off. Lines logged while the head unit is offline are kept (up to 500) and sent the next time a line is logged with a connection. Switching it off discards anything not sent yet and forgets the random id, so switching it on again starts with a new one.
 
@@ -94,12 +94,17 @@ To copy it without adb:
 
 Each line has a date and time. Lines to look for:
 
-- `app opened, version …, android …`: app and Android version.
-- `TWUtil open` / `TWUtil unavailable: …`: whether the head unit's MCU link works.
+- `app opened, version …, android …, boot count 7, up 42 s, network up (wifi)`: app and Android version, how many times the head unit has booted, seconds since it booted, and the network state. `boot count unknown` before Android 7.
+- `TWUtil open` / `TWUtil unavailable: …`: whether the head unit's MCU link works. `TWUtil open, CAN box only` when the head unit refused the engine and unit messages, after a `TWUtil.open with engine and unit ids failed …` line; the switch works the same.
 - `status 00 4A …`: the raw settings frame (id 56) from the CAN box, logged whenever it changes.
-- `frame <id> …`: any other CAN box frame, only while **Record car data** is on. Logged when it changes, at most 20 lines per frame id, 64 frame ids and 400 lines in total each time the app connects. The boot service never records them.
-- `sent stop-start switch, bit=…, rc=…`: a switch command sent to the CAN box.
-- `boot: …`: what the boot service did, including whether the CAN box echoed the command.
+- `function 05 12 02 01 (stop-start field=2)`: the CAN box function frame (id 57), asked for when the link opens and 1.5 and 5 seconds after each switch, logged when it changes (at most 40 lines each time the app connects). The field is a candidate for the real stop-start state (1 on, 2 off, 0 not reported); it is not verified and the app does not use it.
+- `frame <id> …`: any other CAN box frame, only while **Record car data** is on. Logged when it changes, at most 20 lines per frame id, 64 frame ids and 400 lines in total each time the app connects. The trip computer frame (51) is asked for when the link opens and after each switch. The boot service never records them.
+- `engine rpm=… speed=…` and `battery 12.34 V`: only while **Record car data** is on. Logged when they change noticeably, at most one of each every 10 seconds and 100 of each each time the app connects. `rpm=?` means the head unit reported it as invalid.
+- `unit id …` / `unit config …`: the head unit's identity text and configuration block, once each time the app connects, only while **Record car data** is on.
+- `sent stop-start switch, bit=…, rc=…`: a switch command sent to the CAN box. With **Record car data** on and the engine speed known, it ends with `, rpm=…`.
+- `boot: …`: what the boot service did, including whether the CAN box echoed the command. Its first line, `boot: service started, …`, has the same boot count, uptime and network facts as `app opened`.
+- `screen off, up … s` / `screen on, up … s`, `network up (…)` / `network down`: while the app is open.
+- `shutdown, up … s`: the head unit shut down cleanly. Android 9 and later only tell the app while it is running (open or in the background), so on those a missing line does not prove a power cut.
 
 With adb the same file is at `adb pull /sdcard/Android/data/com.furgo.nostartstop/files/nostartstop.log`.
 
@@ -156,7 +161,7 @@ To sign with a stable key instead, set `KEYSTORE` (a PKCS12 file), `KS_PASS` and
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on every push to `master` and on pull requests:
 
-- **test**: `shellcheck` on the scripts and the unit tests (`sh test.sh`). The tests cover the CAN box frame encoding, the echo bit and the switch value in `Protocol.java`, the boot id used to switch once per boot in `BootId.java`, and the version bump rules; they need only a JDK.
+- **test**: `shellcheck` on the scripts and the unit tests (`sh test.sh`). The tests cover the CAN box frame encoding, the echo bit, the switch value and the parsing of the logged diagnostic data in `Protocol.java`, the boot id used to switch once per boot and the boot facts in `BootId.java`, and the version bump rules; they need only a JDK.
 - **security**: `gitleaks` scans the commits for leaked secrets and `zizmor` audits the workflow file. Actions are pinned to commit SHAs.
 - **build**: compiles with javac warnings as errors, builds the APK, checks its contents (launcher activity, boot components, and that the `TWUtil` stub is not packaged) and keeps it as a workflow artifact.
 
@@ -197,10 +202,22 @@ The head unit's MCU relays CAN box frames through the framework class `android.t
 
 These were read from the decompiled vendor app `com.tw.car` (`PsaRaiseSettingsActivity`) and checked on the van. The vendor app reads `byte[5]` bit 6 as the stop-start state, so it shows the same wrong value.
 
+The app also logs these, which come from the vendor code and are **not verified** on the van. Nothing depends on them:
+
+| Data | Call |
+|---|---|
+| Function frame (candidate stop-start state) | query `write(1281, 143, 2, {57, 0})`, answered as frame 57. `byte[2]` bits 1-0 may be the state (1 on, 2 off, 0 not reported); the box may instead answer with a text list, so the raw bytes are logged |
+| Trip computer | query `write(1281, 143, 2, {51, 0})`, answered as frame 51 |
+| Engine | message `what = 1291`: `arg1` speed, `arg2` rpm (65535 invalid) |
+| Battery | message `what = 1292`, `arg1 = 0`: `((b[0] & 0x7F) << 8 \| b[1]) * 0.01` V when `b[0]` bit 7 is clear |
+| Head unit identity | `write(266, 255, 0)` answered by `what = 266` with a text; `write(267, 255, 0)` by `what = 267` with a block of bytes |
+
+The engine, battery and identity messages are opened together with the CAN box. If the head unit refuses them, the app opens the CAN box alone, as before.
+
 ## Status
 
 - Tested on a real Jumpy head unit (Android 10). The switch command works: every command that changes bit 0 flips stop-start, and the instrument cluster shows a message each time.
-- The car's real stop-start state is not readable through the settings frame. With **Record car data** on, the app logs the other CAN box frames (`frame …` lines) so it can be looked for.
+- The car's real stop-start state is not readable through the settings frame. The app logs the function frame (`function …` lines), a candidate for it, and with **Record car data** on the other CAN box frames (`frame …` lines) so it can be looked for.
 - "Permanently closed" does nothing on this van.
 
 ## Troubleshooting

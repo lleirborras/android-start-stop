@@ -11,6 +11,8 @@
     <!-- Both are only used by the manual "Check for updates" button. -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+    <!-- Network up/down lines in the log. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
 
     <application android:label="No Start-Stop" android:icon="@mipmap/ic_launcher" android:allowBackup="false">
         <activity android:name=".MainActivity" android:exported="true"
@@ -29,6 +31,12 @@
         <receiver android:name=".BootReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED"/>
+            </intent-filter>
+        </receiver>
+
+        <receiver android:name=".ShutdownReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.ACTION_SHUTDOWN"/>
             </intent-filter>
         </receiver>
     </application>

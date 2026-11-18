@@ -53,6 +53,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private final ArrayDeque<String> log = new ArrayDeque<String>();
 
     private CanBox box;
+    private DeviceWatch watch;
     private boolean opened;
     private int link = LINK_WAITING;
     private long lastFrameAt;
@@ -152,8 +153,16 @@ public class MainActivity extends Activity implements CanBox.Listener {
         box = new CanBox(this);
         setContentView(buildUi());
         LogFile.append(this, "app opened, version " + versionName() + ", android " + Build.VERSION.RELEASE
-                + " (sdk " + Build.VERSION.SDK_INT + "), " + Build.MODEL);
+                + " (sdk " + Build.VERSION.SDK_INT + "), " + Build.MODEL + ", " + DeviceWatch.facts(this));
+        watch = new DeviceWatch(this, this);
+        watch.start();
         render();
+    }
+
+    @Override
+    protected void onDestroy() {
+        watch.stop();
+        super.onDestroy();
     }
 
     private String versionName() {
