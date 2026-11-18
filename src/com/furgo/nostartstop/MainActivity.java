@@ -199,7 +199,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
             paint.setStrokeJoin(Paint.Join.ROUND);
             paint.setPathEffect(null);
             if (state != AssumedState.UNKNOWN) {
-                int color = state == AssumedState.ON ? WARN : TEXT;
+                int color = state == AssumedState.ON ? ACCENT : TEXT;
                 float r = u * 0.42f, sw = u * 0.07f;
                 paint.setStyle(Paint.Style.STROKE);
                 paint.setStrokeWidth(sw);
@@ -683,9 +683,9 @@ public class MainActivity extends Activity implements CanBox.Listener {
                 : pressable(NEUTRAL, NEUTRAL_PRESSED, 2));
 
         int assumed = Prefs.assumedState(this);
-        int stateColor = assumed == AssumedState.OFF ? TEXT : assumed == AssumedState.ON ? WARN : MUTED;
+        int stateColor = assumed == AssumedState.OFF ? TEXT : assumed == AssumedState.ON ? ACCENT : MUTED;
         badge.setState(assumed);
-        stateCard.setBackgroundDrawable(shape(CARD, 20, 2, assumed == AssumedState.UNKNOWN ? CARD_EDGE : assumed == AssumedState.OFF ? 0xFF5B6678 : WARN));
+        stateCard.setBackgroundDrawable(shape(CARD, 20, 2, assumed == AssumedState.UNKNOWN ? CARD_EDGE : assumed == AssumedState.OFF ? 0xFF5B6678 : ACCENT));
         String word = assumed == AssumedState.UNKNOWN ? "UNKNOWN" : AssumedState.name(assumed).toUpperCase(Locale.ROOT);
         SpannableStringBuilder sb = new SpannableStringBuilder(word);
         if (assumed != AssumedState.UNKNOWN) {
