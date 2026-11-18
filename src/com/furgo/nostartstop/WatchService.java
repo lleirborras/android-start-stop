@@ -24,6 +24,8 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
     private static final String EXTRA_HOW = "how";
     /** The last power state this process saw was ignition off. Main thread only. */
     static boolean ignitionOffNow;
+    /** The last power state and battery reading this process saw, or -1, for the "status is wrong" report. */
+    static int seenPowerState = -1, seenCentivolts = -1;
     private static final int NOTIFICATION_ID = 3;
     private static final long[] OPEN_BACKOFF_MS = {1_000, 2_000, 4_000, 8_000, 15_000};
     private static final long SILENT_MS = 60_000;
@@ -158,6 +160,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
     @Override
     public void onPowerState(int state) {
         heard();
+        seenPowerState = state;
         if (state != lastPowerState) {
             lastPowerState = state;
             if (POWER_LINES.take(lastMessageAt)) LogFile.append(this, "power state " + state);
@@ -168,6 +171,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
             offSeenHere = true;
             ignitionOffNow = true;
             Prefs.ignitionEvent(this, WakeRules.OFF_SEEN);
+            Prefs.assumedIgnitionOff(this);
             handler.removeCallbacks(tick);
             if (auto.disarm()) autoLog("ignition off, nothing sent");
         } else if (state == PowerWatch.STATE_CRANK) {
@@ -176,7 +180,10 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
             autoLog("crank seen");
             boolean fresh = auto.onCrank(lastMessageAt, Prefs.lastSwitchElapsed(this));
             if (fresh) Prefs.newWake(this, "engine start", WakeRules.CRANK_CYCLE);
-            else Prefs.ignitionEvent(this, WakeRules.CRANK_CYCLE);
+            else {
+                Prefs.ignitionEvent(this, WakeRules.CRANK_CYCLE);
+                Prefs.assumedEngineStart(this);
+            }
             armed(fresh ? "engine start" : "engine start, same cycle");
         } else if (state == PowerWatch.STATE_AWAKE) {
             auto.crankOver();
@@ -187,6 +194,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
     @Override
     public void onBattery(int centivolts) {
         heard();
+        seenCentivolts = centivolts;
         if (auto.armed() && ARMED_BATTERY_LINES.take(lastMessageAt)) {
             long ms = lastMessageAt - armedAt;
             LogFile.append(this, "auto: battery " + Protocol.volts(centivolts) + " V, " + ms / 1000 + "." + ms % 1000 / 100
