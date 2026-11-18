@@ -2,6 +2,7 @@ package com.furgo.nostartstop;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
+import java.io.EOFException;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -25,33 +26,83 @@ import java.util.TimeZone;
 import java.util.TreeMap;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
+import java.util.zip.ZipException;
 
 /**
  * Diagnostics events kept on disk until sent: one file per UTC day of the event time, named yyyy-MM-dd, one JSON event
- * per line. Days other than the current one are gzip-compressed into yyyy-MM-dd.gz. Plain Java so it can be unit-tested;
- * not thread-safe, Telemetry uses it from its single worker thread.
+ * per line. Days other than the current one are gzip-compressed into yyyy-MM-dd.gz. Files are streamed chunk by chunk,
+ * never loaded whole. Plain Java so it can be unit-tested; not thread-safe, Telemetry uses it from its single worker.
  */
 final class TelemetryStore {
+    enum Outcome { SENT, REJECTED, FAILED }
+
+    /** Uploads one chunk of events. */
+    interface Sender {
+        /** False once the user switched diagnostics off; checked before every request. */
+        boolean enabled();
+
+        Outcome send(List<String> events);
+    }
+
+    interface Warnings {
+        void warn(String message);
+    }
+
+    static final class Limits {
+        int maxFiles = 30;
+        long maxBytes = 5L * 1024 * 1024;
+        long maxTodayBytes = 1024 * 1024;
+        long maxDayBytes = 8L * 1024 * 1024;   // uncompressed, for a compressed day
+        int maxPerRequest = 500;
+        int maxRequests = 20;
+        long tidyEveryBytes = 64 * 1024;
+    }
+
+    private enum Stop { CAP, FAILED, OPTED_OUT }
+
     static final String GZ = ".gz";
     private static final String TMP = ".tmp";
     private static final long LAST_MS = 253402300799999L;   // 9999-12-31T23:59:59.999Z
+    private static final long MIN_BACKOFF_MS = 60 * 1000;
+    private static final long MAX_BACKOFF_MS = 15 * 60 * 1000;
     private static final Charset UTF8 = Charset.forName("UTF-8");
 
     private final File dir;
-    private final int maxFiles;
-    private final long maxBytes;
+    private final Limits limits;
+    private final Warnings warnings;
+    private final SimpleDateFormat dayFormat = utc("yyyy-MM-dd");
+    private final SimpleDateFormat timeFormat = utc("yyyy-MM-dd'T'HH:mm:ss'Z'");
+    private String tidiedFor;
+    private long appendedSinceTidy;
+    private int requests;
+    private int sent;
+    private boolean truncated;
 
-    TelemetryStore(File dir, int maxFiles, long maxBytes) {
+    TelemetryStore(File dir, Limits limits, Warnings warnings) {
         this.dir = dir;
-        this.maxFiles = maxFiles;
-        this.maxBytes = maxBytes;
+        this.limits = limits;
+        this.warnings = warnings;
     }
 
-    /** UTC day of a time; a clock before 1970 or past year 9999 is clamped so names keep four-digit years and sort. */
-    static String day(long millis) {
-        SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+    private static SimpleDateFormat utc(String pattern) {
+        SimpleDateFormat f = new SimpleDateFormat(pattern, Locale.US);
         f.setTimeZone(TimeZone.getTimeZone("UTC"));
-        return f.format(new Date(Math.max(0, Math.min(millis, LAST_MS))));
+        return f;
+    }
+
+    /** A clock before 1970 or past year 9999 is clamped so day names keep four-digit years and sort. */
+    static long clamp(long millis) {
+        return Math.max(0, Math.min(millis, LAST_MS));
+    }
+
+    /** UTC day of a time. */
+    String day(long millis) {
+        return dayFormat.format(new Date(clamp(millis)));
+    }
+
+    /** Event timestamp of a time, clamped like day(). */
+    String timestamp(long millis) {
+        return timeFormat.format(new Date(clamp(millis)));
     }
 
     /** Day of an event's "timestamp" value, or fallback when it does not start with one. */
@@ -103,25 +154,16 @@ final class TelemetryStore {
         return drop;
     }
 
-    /** How many of the oldest lines to drop so the rest, newlines included, take at most maxBytes. */
-    static int dropCount(List<String> lines, long maxBytes) {
-        long total = 0;
-        for (String line : lines) total += bytes(line);
-        int n = 0;
-        while (total > maxBytes && n < lines.size()) total -= bytes(lines.get(n++));
-        return n;
+    /** 2xx is sent; 408, 429, 5xx and anything unexpected are worth a retry; other 4xx will never be accepted. */
+    static Outcome outcome(int status) {
+        if (status >= 200 && status < 300) return Outcome.SENT;
+        if (status >= 400 && status < 500 && status != 408 && status != 429) return Outcome.REJECTED;
+        return Outcome.FAILED;
     }
 
-    static <T> List<List<T>> chunks(List<T> items, int max) {
-        List<List<T>> chunks = new ArrayList<List<T>>();
-        for (int i = 0; i < items.size(); i += max) {
-            chunks.add(items.subList(i, Math.min(i + max, items.size())));
-        }
-        return chunks;
-    }
-
-    private static long bytes(String line) {
-        return line.getBytes(UTF8).length + 1;
+    /** Wait before the next automatic send after a network failure: 1 min, doubling up to 15 min. */
+    static long nextBackoff(long currentMs) {
+        return currentMs <= 0 ? MIN_BACKOFF_MS : Math.min(currentMs * 2, MAX_BACKOFF_MS);
     }
 
     /** Day file names, plain and compressed, in no particular order. */
@@ -135,17 +177,349 @@ final class TelemetryStore {
         return names;
     }
 
+    /** Appends an event; compresses finished days and applies the limits when the day changed or enough was written. */
     void append(String day, String line) throws IOException {
+        if (!day.equals(tidiedFor) || appendedSinceTidy >= limits.tidyEveryBytes) tidy(day);
+        add(day, line);
+    }
+
+    /** Appends without tidying. */
+    void add(String day, String line) throws IOException {
         makeDir();
         File f = new File(dir, day);
         // A line cut short by a power loss must not swallow the next one.
-        String text = (endsMidLine(f) ? "\n" : "") + line + "\n";
+        byte[] bytes = ((endsMidLine(f) ? "\n" : "") + line + "\n").getBytes(UTF8);
         OutputStream out = new FileOutputStream(f, true);
         try {
-            out.write(text.getBytes(UTF8));
+            out.write(bytes);
         } finally {
             out.close();
         }
+        appendedSinceTidy += bytes.length;
+    }
+
+    /**
+     * Sends today's file, then older days from oldest to newest, in chunks of at most maxPerRequest lines and at most
+     * maxRequests requests. Lines go once the request carrying them was sent or rejected. Returns the number of lines
+     * sent, or -1 when a request failed; it and everything after it stay for the next attempt. Deletes everything and
+     * returns 0 when the sender is no longer enabled.
+     */
+    int send(Sender sender, String today) throws IOException {
+        tidy(today);
+        requests = 0;
+        sent = 0;
+        for (String name : uploadOrder(names(), today)) {
+            if (requests >= limits.maxRequests) break;
+            Stop stop;
+            try {
+                stop = sendFile(name, sender);
+            } catch (OutOfMemoryError e) {
+                warnings.warn("deleted " + name + ": too big to read");
+                drop(new File(dir, name));
+                continue;
+            }
+            if (stop == Stop.OPTED_OUT) {
+                deleteAll();
+                return 0;
+            }
+            if (stop == Stop.FAILED) {
+                if (sent > 0) warnings.warn("sent " + sent + " lines before a request failed");
+                return -1;
+            }
+            if (stop == Stop.CAP) break;
+        }
+        return sent;
+    }
+
+    /** Returns why it stopped before the end of the file, or null when all of it went. */
+    private Stop sendFile(String name, Sender sender) throws IOException {
+        File f = new File(dir, name);
+        truncated = false;
+        BufferedReader in = open(f);
+        if (in == null) return null;
+        boolean consumed = false;
+        Stop stop = null;
+        List<String> chunk;
+        try {
+            try {
+                while (true) {
+                    chunk = nextChunk(in, name);
+                    if (chunk.isEmpty()) break;
+                    if (requests >= limits.maxRequests) {
+                        stop = Stop.CAP;
+                    } else if (!sender.enabled()) {
+                        stop = Stop.OPTED_OUT;
+                    } else {
+                        requests++;
+                        Outcome outcome = sender.send(chunk);
+                        if (outcome == Outcome.FAILED) {
+                            stop = Stop.FAILED;
+                        } else {
+                            if (outcome == Outcome.REJECTED) warnings.warn("dropped " + chunk.size() + " rejected lines");
+                            else sent += chunk.size();
+                            consumed = true;
+                            continue;
+                        }
+                    }
+                    break;
+                }
+            } catch (IOException e) {
+                // Lines already sent must not go again.
+                if (consumed) drop(f);
+                throw e;
+            }
+            if (stop == Stop.OPTED_OUT) return stop;
+            if (stop == null) {
+                in.close();
+                drop(f);
+            } else if (consumed || truncated) {
+                keepRest(f, chunk, in);
+            }
+            return stop;
+        } finally {
+            in.close();
+        }
+    }
+
+    /** Next lines of a file; a damaged end counts as the end of the file. */
+    private List<String> nextChunk(BufferedReader in, String name) throws IOException {
+        List<String> chunk = new ArrayList<String>();
+        if (truncated) return chunk;
+        try {
+            String line;
+            while (chunk.size() < limits.maxPerRequest && (line = in.readLine()) != null) {
+                if (!line.isEmpty()) chunk.add(line);
+            }
+        } catch (ZipException | EOFException e) {
+            warnings.warn(name + " is damaged after its first readable lines: " + e);
+            truncated = true;
+        }
+        return chunk;
+    }
+
+    /** Replaces a file with the unsent chunk and the lines after it; if that fails the file goes, so nothing is sent twice. */
+    private void keepRest(File f, List<String> chunk, BufferedReader in) {
+        File tmp = new File(dir, f.getName() + TMP);
+        try {
+            Writer w = openWriter(tmp, f.getName().endsWith(GZ));
+            try {
+                for (String line : chunk) writeLine(w, line);
+                String line;
+                while (!truncated && (line = readLine(in)) != null) {
+                    if (!line.isEmpty()) writeLine(w, line);
+                }
+            } finally {
+                closeWriter(w, tmp);
+            }
+            replace(tmp, f);
+        } catch (IOException e) {
+            warnings.warn("deleted " + f.getName() + ": cannot keep the unsent lines: " + e);
+            tmp.delete();
+            drop(f);
+        }
+    }
+
+    private String readLine(BufferedReader in) throws IOException {
+        try {
+            return in.readLine();
+        } catch (ZipException | EOFException e) {
+            truncated = true;
+            return null;
+        }
+    }
+
+    /** Compresses finished days and applies the limits; a failure is only reported, so logging and sending go on. */
+    private void tidy(String today) {
+        tidiedFor = today;
+        appendedSinceTidy = 0;
+        try {
+            rotate(today);
+            enforceLimits(today);
+        } catch (IOException e) {
+            warnings.warn("" + e);
+        }
+    }
+
+    /** Compresses every plain day file except today's, behind the lines of an existing compressed file for that day. */
+    void rotate(String today) throws IOException {
+        for (String name : names()) {
+            if (name.endsWith(GZ) || name.equals(today)) continue;
+            File plain = new File(dir, name);
+            File gz = new File(dir, name + GZ);
+            File merged = new File(dir, name + ".merge" + TMP);
+            try {
+                Writer w = openWriter(merged, false);
+                try {
+                    if (gz.exists()) copyLines(gz, w);
+                    copyLines(plain, w);
+                } finally {
+                    closeWriter(w, merged);
+                }
+                trimHead(merged, limits.maxDayBytes);
+                File tmp = new File(dir, name + GZ + TMP);
+                compress(merged, tmp);
+                replace(tmp, gz);
+            } catch (OutOfMemoryError e) {
+                warnings.warn("deleted " + name + ": too big to compress");
+                drop(gz);
+            } finally {
+                merged.delete();
+            }
+            drop(plain);
+        }
+    }
+
+    private void copyLines(File src, Writer w) throws IOException {
+        truncated = false;
+        BufferedReader in = open(src);
+        if (in == null) return;
+        try {
+            String line;
+            while ((line = readLine(in)) != null) {
+                if (!line.isEmpty()) writeLine(w, line);
+            }
+            if (truncated) warnings.warn(src.getName() + " is damaged after its first readable lines");
+        } finally {
+            in.close();
+        }
+    }
+
+    /** Deletes the oldest day files while over the limits, and drops today's oldest lines when its file is too big. */
+    void enforceLimits(String today) throws IOException {
+        String[] all = dir.list();
+        if (all != null) {
+            // Left over when the power was cut during a write.
+            for (String name : all) {
+                if (name.endsWith(TMP)) new File(dir, name).delete();
+            }
+        }
+        File current = new File(dir, today);
+        // Trim below the cap so the next lines do not rewrite the whole file again.
+        if (current.length() > limits.maxTodayBytes) trimHead(current, limits.maxTodayBytes * 3 / 4);
+        Map<String, Long> sizes = new TreeMap<String, Long>();
+        for (String name : names()) sizes.put(name, new File(dir, name).length());
+        for (String name : prune(sizes, today, limits.maxFiles, limits.maxBytes)) new File(dir, name).delete();
+    }
+
+    /** Drops whole lines from the start of a plain file until at most target bytes are left. */
+    private void trimHead(File f, long target) throws IOException {
+        long length = f.length();
+        if (length <= target) return;
+        File tmp = new File(dir, f.getName() + ".trim" + TMP);
+        RandomAccessFile in = new RandomAccessFile(f, "r");
+        try {
+            in.seek(length - target - 1);
+            int b;
+            do {
+                b = in.read();
+            } while (b != -1 && b != '\n');
+            FileOutputStream out = new FileOutputStream(tmp);
+            try {
+                byte[] buffer = new byte[8192];
+                int n;
+                while ((n = in.read(buffer)) > 0) out.write(buffer, 0, n);
+                out.getFD().sync();
+            } finally {
+                out.close();
+            }
+        } finally {
+            in.close();
+        }
+        replace(tmp, f);
+    }
+
+    private static void compress(File src, File dest) throws IOException {
+        InputStream in = new FileInputStream(src);
+        try {
+            FileOutputStream file = new FileOutputStream(dest);
+            GZIPOutputStream out = new GZIPOutputStream(file);
+            try {
+                byte[] buffer = new byte[8192];
+                int n;
+                while ((n = in.read(buffer)) > 0) out.write(buffer, 0, n);
+                out.finish();
+                file.getFD().sync();
+            } finally {
+                out.close();
+            }
+        } finally {
+            in.close();
+        }
+    }
+
+    /** Reader for a day file, or null when it is not a readable file; such a file is deleted. Other errors are thrown. */
+    private BufferedReader open(File f) throws IOException {
+        InputStream in = new FileInputStream(f);
+        try {
+            if (f.getName().endsWith(GZ)) in = new GZIPInputStream(in);
+        } catch (ZipException | EOFException e) {
+            in.close();
+            warnings.warn("deleted unreadable " + f.getName() + ": " + e);
+            drop(f);
+            return null;
+        } catch (IOException e) {
+            in.close();
+            throw e;
+        }
+        return new BufferedReader(new InputStreamReader(in, UTF8));
+    }
+
+    private static Writer openWriter(File f, boolean gzip) throws IOException {
+        FileOutputStream file = new FileOutputStream(f);
+        OutputStream out = file;
+        if (gzip) {
+            try {
+                out = new GZIPOutputStream(file);
+            } catch (IOException e) {
+                file.close();
+                throw e;
+            }
+        }
+        return new BufferedWriter(new OutputStreamWriter(out, UTF8));
+    }
+
+    private static void writeLine(Writer w, String line) throws IOException {
+        w.write(line);
+        w.write('\n');
+    }
+
+    /** Closes a writer from openWriter; the data is on disk once it returns. */
+    private static void closeWriter(Writer w, File f) throws IOException {
+        w.close();
+        RandomAccessFile sync = new RandomAccessFile(f, "rw");
+        try {
+            sync.getFD().sync();
+        } finally {
+            sync.close();
+        }
+    }
+
+    private static void replace(File tmp, File f) throws IOException {
+        if (!tmp.renameTo(f)) {
+            tmp.delete();
+            throw new IOException("cannot replace " + f.getName());
+        }
+    }
+
+    /** Deletes a file, or empties it when it cannot be deleted, so its lines cannot be sent or merged again. */
+    private static void drop(File f) {
+        if (f.delete() || !f.exists()) return;
+        try {
+            new FileOutputStream(f).close();
+        } catch (IOException e) {
+            // Nothing more can be done; the next attempt tries again.
+        }
+    }
+
+    /** Deletes every stored file and the directory. */
+    void deleteAll() {
+        String[] all = dir.list();
+        if (all != null) {
+            for (String name : all) new File(dir, name).delete();
+        }
+        dir.delete();
+        tidiedFor = null;
+        appendedSinceTidy = 0;
     }
 
     private void makeDir() throws IOException {
@@ -161,113 +535,5 @@ final class TelemetryStore {
         } finally {
             r.close();
         }
-    }
-
-    /**
-     * Compresses every plain day file except today's, merged after the lines of an existing compressed file for that day.
-     * Returns the names of files dropped because they could not be read.
-     */
-    List<String> rotate(String today) throws IOException {
-        List<String> dropped = new ArrayList<String>();
-        for (String name : names()) {
-            if (name.endsWith(GZ) || name.equals(today)) continue;
-            List<String> plain = read(name);
-            if (plain == null) {
-                dropped.add(name);
-                continue;
-            }
-            List<String> lines = new ArrayList<String>();
-            if (new File(dir, name + GZ).exists()) {
-                List<String> old = read(name + GZ);
-                if (old == null) dropped.add(name + GZ);
-                else lines.addAll(old);
-            }
-            lines.addAll(plain);
-            write(name + GZ, lines);
-            if (!new File(dir, name).delete()) throw new IOException("cannot delete " + name);
-        }
-        return dropped;
-    }
-
-    /** Deletes the oldest day files while over the limits; if today's file alone is too big, drops its oldest lines. */
-    void enforceLimits(String today) throws IOException {
-        String[] all = dir.list();
-        if (all != null) {
-            // Left over when the power was cut during a write.
-            for (String name : all) {
-                if (name.endsWith(TMP)) new File(dir, name).delete();
-            }
-        }
-        Map<String, Long> sizes = new TreeMap<String, Long>();
-        for (String name : names()) sizes.put(name, new File(dir, name).length());
-        for (String name : prune(sizes, today, maxFiles, maxBytes)) new File(dir, name).delete();
-        if (new File(dir, today).length() > maxBytes) {
-            List<String> lines = read(today);
-            // Trim well below the limit so the next lines do not rewrite the whole file each time.
-            if (lines != null) write(today, lines.subList(dropCount(lines, maxBytes * 3 / 4), lines.size()));
-        }
-    }
-
-    /** Non-empty lines of a day file, or null when it cannot be read; such a file is deleted so it cannot block the queue. */
-    List<String> read(String name) {
-        File f = new File(dir, name);
-        List<String> lines = new ArrayList<String>();
-        try {
-            InputStream in = new FileInputStream(f);
-            try {
-                if (name.endsWith(GZ)) in = new GZIPInputStream(in);
-                BufferedReader r = new BufferedReader(new InputStreamReader(in, UTF8));
-                String line;
-                while ((line = r.readLine()) != null) {
-                    if (!line.isEmpty()) lines.add(line);
-                }
-            } finally {
-                in.close();
-            }
-        } catch (IOException e) {
-            f.delete();
-            return null;
-        }
-        return lines;
-    }
-
-    /** Replaces a day file through a temporary file and a rename; no lines deletes it. */
-    void write(String name, List<String> lines) throws IOException {
-        File f = new File(dir, name);
-        if (lines.isEmpty()) {
-            if (f.exists() && !f.delete()) throw new IOException("cannot delete " + name);
-            return;
-        }
-        makeDir();
-        File tmp = new File(dir, name + TMP);
-        try {
-            FileOutputStream file = new FileOutputStream(tmp);
-            try {
-                OutputStream out = name.endsWith(GZ) ? new GZIPOutputStream(file) : file;
-                Writer w = new BufferedWriter(new OutputStreamWriter(out, UTF8));
-                for (String line : lines) {
-                    w.write(line);
-                    w.write('\n');
-                }
-                w.flush();
-                if (out instanceof GZIPOutputStream) ((GZIPOutputStream) out).finish();
-                file.getFD().sync();
-            } finally {
-                file.close();
-            }
-            if (!tmp.renameTo(f)) throw new IOException("cannot replace " + name);
-        } catch (IOException e) {
-            tmp.delete();
-            throw e;
-        }
-    }
-
-    /** Deletes every stored file and the directory. */
-    void deleteAll() {
-        String[] all = dir.list();
-        if (all != null) {
-            for (String name : all) new File(dir, name).delete();
-        }
-        dir.delete();
     }
 }

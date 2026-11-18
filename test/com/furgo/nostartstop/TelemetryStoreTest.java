@@ -1,8 +1,13 @@
 package com.furgo.nostartstop;
 
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -10,24 +15,37 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
 
 /** Plain-Java test, no test framework: run by test.sh, exits non-zero on the first failure. */
 public class TelemetryStoreTest {
     private static final long DAY_MS = 24L * 60 * 60 * 1000;
+    private static final String TODAY = "2026-11-18";
+    private static final List<String> WARNINGS = new ArrayList<String>();
+    private static File root;
 
     public static void main(String[] args) throws IOException {
-        days();
-        order();
-        pruning();
-        trimming();
-        chunking();
-
-        File root = Files.createTempDirectory("telemetry-test").toFile();
+        root = Files.createTempDirectory("telemetry-test").toFile();
         try {
-            rotation(new File(root, "rotation"));
-            partialSend(new File(root, "partial"));
-            corrupt(new File(root, "corrupt"));
-            limits(new File(root, "limits"));
+            days();
+            order();
+            pruning();
+            outcomes();
+            backoff();
+            rotation();
+            tidyOnlyWhenNeeded();
+            cutLine();
+            sendOrderAndChunks();
+            partialFailure();
+            rejectedChunk();
+            requestCap();
+            optOut();
+            failedRewrite();
+            damagedFiles();
+            unreadableIsRetried();
+            limits();
+            mergedDayCap();
         } finally {
             deleteTree(root);
         }
@@ -35,12 +53,16 @@ public class TelemetryStoreTest {
     }
 
     private static void days() {
-        check("epoch", TelemetryStore.day(0).equals("1970-01-01"));
-        check("last ms of a day", TelemetryStore.day(DAY_MS - 1).equals("1970-01-01"));
-        check("next day", TelemetryStore.day(DAY_MS).equals("1970-01-02"));
-        check("2026", TelemetryStore.day(1_795_000_000_000L).equals("2026-11-18"));
-        check("before 1970 clamps", TelemetryStore.day(-5 * DAY_MS).equals("1970-01-01"));
-        check("far future clamps", TelemetryStore.day(Long.MAX_VALUE).equals("9999-12-31"));
+        TelemetryStore s = store("days", new TelemetryStore.Limits());
+        check("epoch", s.day(0).equals("1970-01-01"));
+        check("last ms of a day", s.day(DAY_MS - 1).equals("1970-01-01"));
+        check("next day", s.day(DAY_MS).equals("1970-01-02"));
+        check("2026", s.day(1_795_000_000_000L).equals(TODAY));
+        check("before 1970 clamps", s.day(-5 * DAY_MS).equals("1970-01-01"));
+        check("far future clamps", s.day(Long.MAX_VALUE).equals("9999-12-31"));
+        check("timestamp", s.timestamp(DAY_MS + 1000).equals("1970-01-02T00:00:01Z"));
+        check("timestamp before 1970 clamps", s.timestamp(-1).equals("1970-01-01T00:00:00Z"));
+        check("timestamp far future clamps", s.timestamp(Long.MAX_VALUE).equals("9999-12-31T23:59:59Z"));
         check("timestamp day", TelemetryStore.dayOfTimestamp("2025-03-04T05:06:07Z", "x").equals("2025-03-04"));
         check("bad timestamp", TelemetryStore.dayOfTimestamp("yesterday", "x").equals("x"));
         check("empty timestamp", TelemetryStore.dayOfTimestamp("", "x").equals("x"));
@@ -53,26 +75,25 @@ public class TelemetryStoreTest {
 
     private static void order() {
         List<String> got = TelemetryStore.uploadOrder(Arrays.asList(
-                "2026-11-17.gz", "2026-11-18", "x.tmp", "1970-01-01.gz", "2026-11-18.gz", "2099-01-01.gz", "2026-01-05.gz"),
-                "2026-11-18");
+                "2026-11-17.gz", TODAY, "x.tmp", "1970-01-01.gz", "2026-11-18.gz", "2099-01-01.gz", "2026-01-05.gz"), TODAY);
         check("today first, then oldest to newest: " + got, got.equals(Arrays.asList(
-                "2026-11-18", "1970-01-01.gz", "2026-01-05.gz", "2026-11-17.gz", "2026-11-18.gz", "2099-01-01.gz")));
-        check("no file today", TelemetryStore.uploadOrder(Arrays.asList("2026-11-02.gz", "2026-11-01.gz"), "2026-11-18")
+                TODAY, "1970-01-01.gz", "2026-01-05.gz", "2026-11-17.gz", "2026-11-18.gz", "2099-01-01.gz")));
+        check("no file today", TelemetryStore.uploadOrder(Arrays.asList("2026-11-02.gz", "2026-11-01.gz"), TODAY)
                 .equals(Arrays.asList("2026-11-01.gz", "2026-11-02.gz")));
     }
 
     private static void pruning() {
         Map<String, Long> sizes = new HashMap<String, Long>();
-        sizes.put("2026-11-18", 10L);
+        sizes.put(TODAY, 10L);
         sizes.put("2026-11-17.gz", 10L);
         sizes.put("2026-11-15.gz", 10L);
         sizes.put("2026-11-16.gz", 10L);
-        check("within limits", TelemetryStore.prune(sizes, "2026-11-18", 4, 40).isEmpty());
-        check("too many files", TelemetryStore.prune(sizes, "2026-11-18", 3, 40)
+        check("within limits", TelemetryStore.prune(sizes, TODAY, 4, 40).isEmpty());
+        check("too many files", TelemetryStore.prune(sizes, TODAY, 3, 40)
                 .equals(Collections.singletonList("2026-11-15.gz")));
-        check("too many bytes", TelemetryStore.prune(sizes, "2026-11-18", 30, 25)
+        check("too many bytes", TelemetryStore.prune(sizes, TODAY, 30, 25)
                 .equals(Arrays.asList("2026-11-15.gz", "2026-11-16.gz")));
-        check("today kept even when alone over", TelemetryStore.prune(sizes, "2026-11-18", 30, 5)
+        check("today kept even when alone over", TelemetryStore.prune(sizes, TODAY, 30, 5)
                 .equals(Arrays.asList("2026-11-15.gz", "2026-11-16.gz", "2026-11-17.gz")));
         // Clock set back to 1970: today sorts first but is still kept.
         sizes.put("1970-01-01", 10L);
@@ -80,135 +101,355 @@ public class TelemetryStoreTest {
                 .equals(Arrays.asList("2026-11-15.gz", "2026-11-16.gz", "2026-11-17.gz")));
     }
 
-    private static void trimming() {
-        List<String> lines = Arrays.asList("aaaa", "bbbb", "cccc");   // 5 bytes each with the newline
-        check("fits", TelemetryStore.dropCount(lines, 15) == 0);
-        check("one over", TelemetryStore.dropCount(lines, 14) == 1);
-        check("only the newest fits", TelemetryStore.dropCount(lines, 5) == 2);
-        check("nothing fits", TelemetryStore.dropCount(lines, 4) == 3);
-        check("utf-8 bytes", TelemetryStore.dropCount(Arrays.asList("é", "x"), 3) == 1);
+    private static void outcomes() {
+        check("200", TelemetryStore.outcome(200) == TelemetryStore.Outcome.SENT);
+        check("204", TelemetryStore.outcome(204) == TelemetryStore.Outcome.SENT);
+        check("400", TelemetryStore.outcome(400) == TelemetryStore.Outcome.REJECTED);
+        check("401", TelemetryStore.outcome(401) == TelemetryStore.Outcome.REJECTED);
+        check("413", TelemetryStore.outcome(413) == TelemetryStore.Outcome.REJECTED);
+        check("408", TelemetryStore.outcome(408) == TelemetryStore.Outcome.FAILED);
+        check("429", TelemetryStore.outcome(429) == TelemetryStore.Outcome.FAILED);
+        check("500", TelemetryStore.outcome(500) == TelemetryStore.Outcome.FAILED);
+        check("503", TelemetryStore.outcome(503) == TelemetryStore.Outcome.FAILED);
+        check("302", TelemetryStore.outcome(302) == TelemetryStore.Outcome.FAILED);
+        check("-1", TelemetryStore.outcome(-1) == TelemetryStore.Outcome.FAILED);
     }
 
-    private static void chunking() {
-        List<Integer> items = new ArrayList<Integer>();
-        for (int i = 0; i < 1001; i++) items.add(i);
-        List<List<Integer>> chunks = TelemetryStore.chunks(items, 500);
-        check("three chunks", chunks.size() == 3);
-        check("sizes", chunks.get(0).size() == 500 && chunks.get(1).size() == 500 && chunks.get(2).size() == 1);
-        check("order", chunks.get(1).get(0) == 500 && chunks.get(2).get(0) == 1000);
-        check("exact multiple", TelemetryStore.chunks(items.subList(0, 500), 500).size() == 1);
-        check("empty", TelemetryStore.chunks(new ArrayList<Integer>(), 500).isEmpty());
+    private static void backoff() {
+        long b = TelemetryStore.nextBackoff(0);
+        check("starts at 1 min", b == 60_000);
+        check("doubles", TelemetryStore.nextBackoff(b) == 120_000);
+        for (int i = 0; i < 10; i++) b = TelemetryStore.nextBackoff(b);
+        check("caps at 15 min", b == 15 * 60_000);
     }
 
-    private static void rotation(File dir) throws IOException {
-        TelemetryStore s = new TelemetryStore(dir, 30, 1 << 20);
+    private static void rotation() throws IOException {
+        TelemetryStore s = store("rotation", new TelemetryStore.Limits());
+        File dir = new File(root, "rotation");
         s.append("2026-11-17", "{\"a\":1}");
         s.append("2026-11-17", "{\"a\":2}");
-        check("nothing to rotate on the same day", s.rotate("2026-11-17").isEmpty());
         check("plain while current", new File(dir, "2026-11-17").isFile());
 
         // First write of a later day.
-        check("rotated cleanly", s.rotate("2026-11-18").isEmpty());
-        s.append("2026-11-18", "{\"b\":1}");
+        s.append(TODAY, "{\"b\":1}");
         check("old plain removed", !new File(dir, "2026-11-17").exists());
-        check("compressed", new File(dir, "2026-11-17.gz").isFile());
-        check("really gzip", firstBytes(new File(dir, "2026-11-17.gz"))[0] == 0x1f);
-        check("gzip round trip", Arrays.asList("{\"a\":1}", "{\"a\":2}").equals(s.read("2026-11-17.gz")));
-        check("no temp file left", new File(dir, "2026-11-17.gz.tmp").exists() == false);
+        File gz = new File(dir, "2026-11-17.gz");
+        check("really gzip", Files.readAllBytes(gz.toPath())[0] == 0x1f);
+        check("gzip round trip", Arrays.asList("{\"a\":1}", "{\"a\":2}").equals(lines(gz)));
+        check("no temp file left", tmpFiles(dir).isEmpty());
 
         // A late line for a finished day (clock change) is merged behind the compressed lines.
-        s.append("2026-11-17", "{\"a\":3}");
-        s.rotate("2026-11-18");
-        check("merged", Arrays.asList("{\"a\":1}", "{\"a\":2}", "{\"a\":3}").equals(s.read("2026-11-17.gz")));
-        check("today untouched", Collections.singletonList("{\"b\":1}").equals(s.read("2026-11-18")));
-
-        // A line cut short by a power loss does not swallow the next one.
-        FileOutputStream out = new FileOutputStream(new File(dir, "2026-11-18"), true);
-        out.write("{\"cut".getBytes("UTF-8"));
-        out.close();
-        s.append("2026-11-18", "{\"b\":2}");
-        check("cut line kept apart", Arrays.asList("{\"b\":1}", "{\"cut", "{\"b\":2}").equals(s.read("2026-11-18")));
+        s.add("2026-11-17", "{\"a\":3}");
+        s.rotate(TODAY);
+        check("merged", Arrays.asList("{\"a\":1}", "{\"a\":2}", "{\"a\":3}").equals(lines(gz)));
+        check("today untouched", Collections.singletonList("{\"b\":1}").equals(lines(new File(dir, TODAY))));
 
         s.deleteAll();
         check("deleteAll removes the directory", !dir.exists());
     }
 
-    private static void partialSend(File dir) throws IOException {
-        TelemetryStore s = new TelemetryStore(dir, 30, 1 << 20);
-        List<String> lines = new ArrayList<String>();
-        for (int i = 0; i < 1200; i++) lines.add("{\"n\":" + i + "}");
-        s.write("2026-11-10.gz", lines);
-        List<List<String>> chunks = TelemetryStore.chunks(s.read("2026-11-10.gz"), 500);
-        // First chunk sent, second failed: the rest is rewritten, compressed.
-        s.write("2026-11-10.gz", lines.subList(chunks.get(0).size(), lines.size()));
-        List<String> left = s.read("2026-11-10.gz");
-        check("remainder kept", left.size() == 700 && left.get(0).equals("{\"n\":500}") && left.get(699).equals("{\"n\":1199}"));
-        // All sent: the file goes.
-        s.write("2026-11-10.gz", new ArrayList<String>());
-        check("fully sent file deleted", !new File(dir, "2026-11-10.gz").exists());
-
-        s.append("2026-11-18", "{\"t\":1}");
-        s.append("2026-11-18", "{\"t\":2}");
-        s.write("2026-11-18", s.read("2026-11-18").subList(1, 2));
-        check("today rewritten without sent lines", Collections.singletonList("{\"t\":2}").equals(s.read("2026-11-18")));
-        check("today stays plain", firstBytes(new File(dir, "2026-11-18"))[0] == '{');
+    private static void tidyOnlyWhenNeeded() throws IOException {
+        TelemetryStore.Limits l = new TelemetryStore.Limits();
+        l.tidyEveryBytes = 100;
+        TelemetryStore s = store("tidy", l);
+        File dir = new File(root, "tidy");
+        s.append(TODAY, "{\"first\":1}");   // first append tidies
+        s.add("2026-11-10", "{\"old\":1}");
+        s.append(TODAY, "{\"x\":1}");
+        check("same day, few bytes: not rotated", new File(dir, "2026-11-10").exists());
+        for (int i = 0; i < 10; i++) s.append(TODAY, "{\"padding\":" + i + "}");
+        check("rotated after enough bytes", !new File(dir, "2026-11-10").exists()
+                && new File(dir, "2026-11-10.gz").exists());
+        s.add("2026-11-11", "{\"old\":2}");
+        s.append("2026-11-19", "{\"tomorrow\":1}");
+        check("rotated on a day change", new File(dir, "2026-11-11.gz").exists() && new File(dir, TODAY + ".gz").exists());
     }
 
-    private static void corrupt(File dir) throws IOException {
-        TelemetryStore s = new TelemetryStore(dir, 30, 1 << 20);
-        dir.mkdirs();
-        FileOutputStream out = new FileOutputStream(new File(dir, "2026-11-01.gz"));
-        out.write("not gzip at all".getBytes("UTF-8"));
+    private static void cutLine() throws IOException {
+        TelemetryStore s = store("cut", new TelemetryStore.Limits());
+        File f = new File(new File(root, "cut"), TODAY);
+        s.append(TODAY, "{\"b\":1}");
+        OutputStream out = new FileOutputStream(f, true);
+        out.write("{\"cut".getBytes("UTF-8"));
         out.close();
-        check("bad gzip unreadable", s.read("2026-11-01.gz") == null);
-        check("bad gzip deleted", !new File(dir, "2026-11-01.gz").exists());
+        s.append(TODAY, "{\"b\":2}");
+        check("cut line kept apart", Arrays.asList("{\"b\":1}", "{\"cut", "{\"b\":2}").equals(lines(f)));
+    }
 
-        List<String> lines = new ArrayList<String>();
-        for (int i = 0; i < 2000; i++) lines.add("{\"n\":" + i + ",\"pad\":\"" + i * 7919 + "\"}");
-        s.write("2026-11-02.gz", lines);
-        File gz = new File(dir, "2026-11-02.gz");
-        byte[] whole = Files.readAllBytes(gz.toPath());
-        Files.write(gz.toPath(), Arrays.copyOf(whole, whole.length / 2));
-        check("truncated gzip unreadable", s.read("2026-11-02.gz") == null);
-        check("truncated gzip deleted", !gz.exists());
+    private static void sendOrderAndChunks() throws IOException {
+        TelemetryStore s = store("order-send", new TelemetryStore.Limits());
+        File dir = new File(root, "order-send");
+        writeGz(new File(dir, "2026-11-10.gz"), events("ten", 1200));
+        writeGz(new File(dir, "2026-11-05.gz"), events("five", 2));
+        for (String e : events("today", 3)) s.add(TODAY, e);
+        FakeSender sender = new FakeSender();
+        int sent = s.send(sender, TODAY);
+        check("all sent: " + sent, sent == 1205);
+        check("today first, then oldest: " + sender.sizes(), sender.sizes().equals(Arrays.asList(3, 2, 500, 500, 200)));
+        check("today's lines", sender.chunks.get(0).get(0).equals("{\"today\":0}"));
+        check("then the 5th", sender.chunks.get(1).get(0).equals("{\"five\":0}"));
+        check("chunks in order", sender.chunks.get(3).get(0).equals("{\"ten\":500}"));
+        check("all files gone", s.names().isEmpty());
+    }
+
+    private static void partialFailure() throws IOException {
+        TelemetryStore s = store("partial", new TelemetryStore.Limits());
+        File dir = new File(root, "partial");
+        writeGz(new File(dir, "2026-11-10.gz"), events("ten", 1200));
+        writeGz(new File(dir, "2026-11-11.gz"), events("eleven", 5));
+        for (String e : events("today", 3)) s.add(TODAY, e);
+        FakeSender sender = new FakeSender(TelemetryStore.Outcome.SENT, TelemetryStore.Outcome.SENT,
+                TelemetryStore.Outcome.FAILED);
+        WARNINGS.clear();
+        check("failure returns -1", s.send(sender, TODAY) == -1);
+        check("sent count logged", WARNINGS.contains("sent 503 lines before a request failed"));
+        check("stopped at the failure", sender.chunks.size() == 3);
+        check("today gone", !new File(dir, TODAY).exists());
+        List<String> left = lines(new File(dir, "2026-11-10.gz"));
+        check("remainder kept compressed: " + left.size(), left.size() == 700 && left.get(0).equals("{\"ten\":500}")
+                && left.get(699).equals("{\"ten\":1199}"));
+        check("later day untouched", lines(new File(dir, "2026-11-11.gz")).size() == 5);
+
+        FakeSender retry = new FakeSender();
+        check("next attempt sends the rest", s.send(retry, TODAY) == 705);
+        check("starting where it stopped", retry.chunks.get(0).get(0).equals("{\"ten\":500}"));
+
+        // A failure on the first chunk of today's file leaves it as it was.
+        for (String e : events("t", 3)) s.add(TODAY, e);
+        check("failed at once", s.send(new FakeSender(TelemetryStore.Outcome.FAILED), TODAY) == -1);
+        check("today kept plain", lines(new File(dir, TODAY)).equals(events("t", 3))
+                && Files.readAllBytes(new File(dir, TODAY).toPath())[0] == '{');
+    }
+
+    private static void rejectedChunk() throws IOException {
+        TelemetryStore.Limits l = new TelemetryStore.Limits();
+        l.maxPerRequest = 2;
+        TelemetryStore s = store("rejected", l);
+        File dir = new File(root, "rejected");
+        for (String e : events("today", 5)) s.add(TODAY, e);
+        FakeSender sender = new FakeSender(TelemetryStore.Outcome.SENT, TelemetryStore.Outcome.REJECTED,
+                TelemetryStore.Outcome.SENT);
+        check("rejected lines not counted", s.send(sender, TODAY) == 3);
+        check("went on after the rejection", sender.chunks.size() == 3);
+        check("rejected lines dropped", !new File(dir, TODAY).exists());
+    }
+
+    private static void requestCap() throws IOException {
+        TelemetryStore.Limits l = new TelemetryStore.Limits();
+        l.maxPerRequest = 10;
+        l.maxRequests = 20;
+        TelemetryStore s = store("cap", l);
+        File dir = new File(root, "cap");
+        for (String e : events("today", 15)) s.add(TODAY, e);
+        writeGz(new File(dir, "2026-11-01.gz"), events("one", 250));
+        writeGz(new File(dir, "2026-11-02.gz"), events("two", 5));
+        FakeSender sender = new FakeSender();
+        check("cap is not a failure", s.send(sender, TODAY) == 195);
+        check("20 requests", sender.chunks.size() == 20);
+        List<String> left = lines(new File(dir, "2026-11-01.gz"));
+        check("rest kept for later: " + left.size(), left.size() == 70 && left.get(0).equals("{\"one\":180}"));
+        check("untouched day kept", lines(new File(dir, "2026-11-02.gz")).size() == 5);
+    }
+
+    private static void optOut() throws IOException {
+        TelemetryStore.Limits l = new TelemetryStore.Limits();
+        l.maxPerRequest = 2;
+        TelemetryStore s = store("optout", l);
+        File dir = new File(root, "optout");
+        for (String e : events("today", 6)) s.add(TODAY, e);
+        writeGz(new File(dir, "2026-11-01.gz"), events("one", 4));
+        FakeSender sender = new FakeSender();
+        sender.enabledFor = 2;
+        check("opt-out returns 0", s.send(sender, TODAY) == 0);
+        check("no request after the opt-out", sender.chunks.size() == 2);
+        check("everything deleted", !dir.exists());
+    }
+
+    private static void failedRewrite() throws IOException {
+        TelemetryStore.Limits l = new TelemetryStore.Limits();
+        l.maxPerRequest = 2;
+        TelemetryStore s = store("rewrite", l);
+        File dir = new File(root, "rewrite");
+        writeGz(new File(dir, "2026-11-01.gz"), events("one", 6));
+        // The temporary file cannot be created where a directory is in the way.
+        File blocker = new File(dir, "2026-11-01.gz.tmp");
+        check("blocker", blocker.mkdirs() && new File(blocker, "x").createNewFile());
+        FakeSender sender = new FakeSender(TelemetryStore.Outcome.SENT, TelemetryStore.Outcome.FAILED);
+        check("failed", s.send(sender, "2026-11-02") == -1);
+        check("file dropped rather than sent twice", !new File(dir, "2026-11-01.gz").exists());
+    }
+
+    private static void damagedFiles() throws IOException {
+        TelemetryStore s = store("damaged", new TelemetryStore.Limits());
+        File dir = new File(root, "damaged");
+        dir.mkdirs();
+        write(new File(dir, "2026-11-01.gz"), "not gzip at all".getBytes("UTF-8"));
+        write(new File(dir, "2026-11-02.gz"), new byte[] {0x1f, (byte) 0x8b, 8, 0});
+        File truncated = new File(dir, "2026-11-03.gz");
+        List<String> many = new ArrayList<String>();
+        for (int i = 0; i < 3000; i++) many.add("{\"n\":" + i + ",\"pad\":\"" + (i * 7919L * 104729L) + "\"}");
+        writeGz(truncated, many);
+        byte[] whole = Files.readAllBytes(truncated.toPath());
+        write(truncated, Arrays.copyOf(whole, whole.length / 2));
+
+        FakeSender sender = new FakeSender();
+        int sent = s.send(sender, TODAY);
+        check("bad header files deleted", !new File(dir, "2026-11-01.gz").exists() && !new File(dir, "2026-11-02.gz").exists());
+        check("readable start of a truncated file sent: " + sent, sent > 500 && sent < 3000);
+        check("in order", sender.chunks.get(0).get(0).startsWith("{\"n\":0,"));
+        check("truncated file gone after sending", !truncated.exists());
+
+        // Truncated and a later chunk fails: the unsent readable lines are kept in a valid file.
+        write(truncated, Arrays.copyOf(whole, whole.length / 2));
+        check("failed", s.send(new FakeSender(TelemetryStore.Outcome.SENT, TelemetryStore.Outcome.FAILED), TODAY) == -1);
+        List<String> kept = lines(truncated);
+        check("readable lines kept: " + kept.size(), kept.size() == sent - 500);
 
         // A bad compressed file next to a plain one for the same day: the plain lines still get compressed.
-        out = new FileOutputStream(new File(dir, "2026-11-03.gz"));
-        out.write(new byte[] {0x1f, (byte) 0x8b, 8, 0});
-        out.close();
-        s.append("2026-11-03", "{\"late\":1}");
-        List<String> dropped = s.rotate("2026-11-18");
-        check("dropped reported", dropped.equals(Collections.singletonList("2026-11-03.gz")));
-        check("plain lines survive", Collections.singletonList("{\"late\":1}").equals(s.read("2026-11-03.gz")));
-        s.deleteAll();
+        write(new File(dir, "2026-11-04.gz"), new byte[] {0x1f, (byte) 0x8b, 8, 0});
+        s.add("2026-11-04", "{\"late\":1}");
+        s.rotate(TODAY);
+        check("plain lines survive", Collections.singletonList("{\"late\":1}").equals(lines(new File(dir, "2026-11-04.gz"))));
     }
 
-    private static void limits(File dir) throws IOException {
-        TelemetryStore s = new TelemetryStore(dir, 3, 100);
-        for (int d = 1; d <= 5; d++) s.write("2026-11-0" + d + ".gz", Collections.singletonList("{\"d\":" + d + "}"));
-        s.append("2026-11-06", "{\"today\":1}");
+    private static void unreadableIsRetried() throws IOException {
+        TelemetryStore s = store("unreadable", new TelemetryStore.Limits());
+        File dir = new File(root, "unreadable");
+        File f = new File(dir, "2026-11-01.gz");
+        writeGz(f, events("one", 3));
+        if (!f.setReadable(false) || f.canRead()) return;   // running as root: cannot test
+        try {
+            s.send(new FakeSender(), TODAY);
+            check("an I/O error is thrown, not swallowed", false);
+        } catch (IOException e) {
+            check("file kept for a retry", f.exists());
+        } finally {
+            f.setReadable(true);
+        }
+    }
+
+    private static void limits() throws IOException {
+        TelemetryStore.Limits l = new TelemetryStore.Limits();
+        l.maxFiles = 3;
+        l.maxBytes = 1000;
+        l.maxTodayBytes = 100;
+        TelemetryStore s = store("limits", l);
+        File dir = new File(root, "limits");
+        for (int d = 1; d <= 5; d++) writeGz(new File(dir, "2026-11-0" + d + ".gz"), events("d" + d, 1));
+        s.add("2026-11-06", "{\"today\":1}");
         new FileOutputStream(new File(dir, "2026-11-05.gz.tmp")).close();
         s.enforceLimits("2026-11-06");
         List<String> names = s.names();
         Collections.sort(names);
         check("oldest pruned to 3 files: " + names,
                 names.equals(Arrays.asList("2026-11-04.gz", "2026-11-05.gz", "2026-11-06")));
-        check("stray temp file removed", !new File(dir, "2026-11-05.gz.tmp").exists());
+        check("stray temp file removed", tmpFiles(dir).isEmpty());
 
-        // Today alone over the byte limit: older days go, then today's oldest lines.
-        for (int i = 0; i < 20; i++) s.append("2026-11-06", "{\"line\":" + (100 + i) + "}");
+        // Today over its own cap: its oldest lines go, older days stay.
+        for (int i = 0; i < 20; i++) s.add("2026-11-06", "{\"line\":" + (100 + i) + "}");
         s.enforceLimits("2026-11-06");
-        names = s.names();
-        check("only today left: " + names, names.equals(Collections.singletonList("2026-11-06")));
-        List<String> today = s.read("2026-11-06");
-        check("today trimmed", new File(dir, "2026-11-06").length() <= 75);
-        check("newest line kept", today.get(today.size() - 1).equals("{\"line\":119}"));
-        check("oldest line dropped", !today.contains("{\"today\":1}"));
-        s.deleteAll();
+        File today = new File(dir, "2026-11-06");
+        List<String> kept = lines(today);
+        check("today trimmed: " + today.length(), today.length() <= 75 && today.length() > 50);
+        check("newest line kept", kept.get(kept.size() - 1).equals("{\"line\":119}"));
+        check("whole lines only", kept.get(0).startsWith("{\"line\":"));
+        check("oldest line dropped", !kept.contains("{\"today\":1}"));
+        check("older days kept", new File(dir, "2026-11-05.gz").exists());
     }
 
-    private static byte[] firstBytes(File f) throws IOException {
-        return Arrays.copyOf(Files.readAllBytes(f.toPath()), 1);
+    private static void mergedDayCap() throws IOException {
+        TelemetryStore.Limits l = new TelemetryStore.Limits();
+        l.maxDayBytes = 50;
+        TelemetryStore s = store("daycap", l);
+        File dir = new File(root, "daycap");
+        writeGz(new File(dir, "2026-11-01.gz"), events("old", 5));
+        for (String e : events("new", 5)) s.add("2026-11-01", e);
+        s.rotate(TODAY);
+        List<String> kept = lines(new File(dir, "2026-11-01.gz"));
+        check("newest lines kept: " + kept, kept.equals(events("new", 5)));
+    }
+
+    private static final class FakeSender implements TelemetryStore.Sender {
+        final List<List<String>> chunks = new ArrayList<List<String>>();
+        final List<TelemetryStore.Outcome> script;
+        int enabledFor = Integer.MAX_VALUE;
+
+        FakeSender(TelemetryStore.Outcome... script) {
+            this.script = Arrays.asList(script);
+        }
+
+        @Override
+        public boolean enabled() {
+            return chunks.size() < enabledFor;
+        }
+
+        @Override
+        public TelemetryStore.Outcome send(List<String> events) {
+            chunks.add(new ArrayList<String>(events));
+            int i = chunks.size() - 1;
+            return i < script.size() ? script.get(i) : TelemetryStore.Outcome.SENT;
+        }
+
+        List<Integer> sizes() {
+            List<Integer> sizes = new ArrayList<Integer>();
+            for (List<String> c : chunks) sizes.add(c.size());
+            return sizes;
+        }
+    }
+
+    private static TelemetryStore store(String name, TelemetryStore.Limits limits) {
+        return new TelemetryStore(new File(root, name), limits, new TelemetryStore.Warnings() {
+            @Override
+            public void warn(String message) {
+                WARNINGS.add(message);
+            }
+        });
+    }
+
+    private static List<String> events(String key, int n) {
+        List<String> events = new ArrayList<String>();
+        for (int i = 0; i < n; i++) events.add("{\"" + key + "\":" + i + "}");
+        return events;
+    }
+
+    private static void writeGz(File f, List<String> lines) throws IOException {
+        f.getParentFile().mkdirs();
+        OutputStream out = new GZIPOutputStream(new FileOutputStream(f));
+        try {
+            for (String line : lines) out.write((line + "\n").getBytes("UTF-8"));
+        } finally {
+            out.close();
+        }
+    }
+
+    private static void write(File f, byte[] bytes) throws IOException {
+        f.getParentFile().mkdirs();
+        Files.write(f.toPath(), bytes);
+    }
+
+    private static List<String> lines(File f) throws IOException {
+        List<String> lines = new ArrayList<String>();
+        InputStream in = new FileInputStream(f);
+        try {
+            if (f.getName().endsWith(".gz")) in = new GZIPInputStream(in);
+            BufferedReader r = new BufferedReader(new InputStreamReader(in, "UTF-8"));
+            String line;
+            while ((line = r.readLine()) != null) lines.add(line);
+        } finally {
+            in.close();
+        }
+        return lines;
+    }
+
+    private static List<String> tmpFiles(File dir) {
+        List<String> tmp = new ArrayList<String>();
+        String[] all = dir.list();
+        if (all != null) {
+            for (String name : all) {
+                if (name.endsWith(".tmp")) tmp.add(name);
+            }
+        }
+        return tmp;
     }
 
     private static void deleteTree(File f) {
