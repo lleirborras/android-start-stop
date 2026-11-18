@@ -21,18 +21,22 @@ import java.util.ArrayDeque;
 import java.util.Date;
 import java.util.Locale;
 import java.util.TimeZone;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Diagnostics the user agreed to on first launch: sends the app's log lines to PostHog. Lines are queued in a file so they
- * survive the head unit being offline, and go out the next time a line is logged with a connection.
+ * survive the head unit being offline, and go out the next time a line is logged with a connection. Uploads are batched:
+ * at most one every few seconds, so a burst of log lines does not cost a request each.
  */
 final class Telemetry {
     private static final String TAG = "NoStartStop";
     private static final String QUEUE = "telemetry-queue";
     private static final int MAX_QUEUED = 500;
-    private static final ExecutorService WORKER = Executors.newSingleThreadExecutor();
+    private static final long SEND_DELAY_S = 3;
+    private static final ScheduledExecutorService WORKER = Executors.newSingleThreadScheduledExecutor();
+    private static boolean sendScheduled;   // worker thread only
 
     /** False for builds made without a PostHog key, such as local builds. */
     static boolean configured() {
@@ -56,13 +60,35 @@ final class Telemetry {
                     queued.addLast(event(app, line, timestamp).toString());
                     while (queued.size() > MAX_QUEUED) queued.removeFirst();
                     write(app, queued);
-                    if (!send(queued)) return;
-                    queueFile(app).delete();
+                    if (!sendScheduled) {
+                        sendScheduled = true;
+                        WORKER.schedule(new Runnable() {
+                            @Override
+                            public void run() {
+                                sendScheduled = false;
+                                sendQueued(app);
+                            }
+                        }, SEND_DELAY_S, TimeUnit.SECONDS);
+                    }
                 } catch (Exception e) {
                     Log.w(TAG, "telemetry: " + e);
                 }
             }
         });
+    }
+
+    private static void sendQueued(Context app) {
+        try {
+            if (!Prefs.telemetry(app)) {
+                queueFile(app).delete();
+                return;
+            }
+            ArrayDeque<String> queued = read(app);
+            if (queued.isEmpty() || !send(queued)) return;
+            queueFile(app).delete();
+        } catch (Exception e) {
+            Log.w(TAG, "telemetry: " + e);
+        }
     }
 
     /** Drops anything not sent yet and forgets the install id; called when the user switches diagnostics off. */

@@ -4,7 +4,6 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Context;
 import android.content.DialogInterface;
-import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.StateListDrawable;
@@ -35,22 +34,18 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private static final int CARD_EDGE = 0xFF232A35;
     private static final int TEXT = 0xFFEAEFF5;
     private static final int MUTED = 0xFF8792A2;
-    private static final int ACCENT = 0xFF35D6A0;   // wanted state: stop-start off / service closed
-    private static final int WARN = 0xFFFFB02E;     // stop-start still active, not locked, confirm, transient warnings
+    private static final int ACCENT = 0xFF35D6A0;   // link up, command answered
+    private static final int WARN = 0xFFFFB02E;     // no answer, nothing sent
     private static final int LINK_BAD = 0xFFFF6B5E;
-    private static final int ON_ACCENT = 0xFF04140E;
     private static final int PRIMARY = 0xFF187A5A;  // 4.5:1 against TEXT
     private static final int PRIMARY_PRESSED = 0xFF1F8F6C;
     private static final int NEUTRAL = 0xFF1D2430;
     private static final int NEUTRAL_PRESSED = 0xFF2B3544;
 
-    private static final int B_PRIMARY = 0, B_NEUTRAL = 1, B_DISABLED = 2, B_ARMED = 3;
-
     private static final int MAX_LOG = 50;
     private static final long REQUERY_MS = 5000;
     private static final long STALE_MS = 12000;
-    private static final String NO_ANSWER = "No answer from the car.";
-    private static final long NOTE_MS = 3000, ARM_MS = 4000, ANSWER_MS = 3000, REVERT_MS = 4000, CONFIRM_MS = 10000;
+    private static final long NOTE_MS = 3000, ANSWER_MS = 3000, REVERT_MS = 4000;
 
     private static final int LINK_WAITING = 0, LINK_LIVE = 1, LINK_DOWN = -1;
 
@@ -60,15 +55,16 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private CanBox box;
     private boolean opened;
     private int link = LINK_WAITING;
-    private Boolean enabled;   // last value read; null = never read
-    private Boolean closed;    // last value read; null = never read
     private long lastFrameAt;
-    private String knownAt = "";   // HH:mm of the last frame
-    private Card pending;          // card whose command was sent and not yet answered by a frame
-    private Card awaitCard;        // command whose effect the next frames should show
-    private Boolean awaitFrom;     // value of that setting before the command
-    private boolean awaitTarget;
-    private long awaitUntil;
+    // A tap first waits for a fresh status frame to pick the bit, then for the echo of the command.
+    // After any send the button stays busy for HOLD_MS, so a bounce or double tap cannot flip stop-start back.
+    private static final int IDLE = 0, AWAIT_FRAME = 1, AWAIT_ECHO = 2, HOLD = 3;
+    private static final long HOLD_MS = 2000;
+    private int phase = IDLE;
+    private long sentAt;
+    private String result = "";    // outcome of the last switch command
+    private int resultColor = MUTED;
+    private String note;           // replaces the result line for a few seconds
 
     private float density;
     private TextView linkView;
@@ -78,11 +74,11 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private Toggle bootSwitch;
     private boolean askingAboutDiagnostics;
     private Toggle telemetrySwitch;   // null when the build has no PostHog key
-    private TextView lastAction;
+    private Toggle captureSwitch;
     private TextView logView;
     private ScrollView logScroll;
-    private Card stopCard;
-    private Card serviceCard;
+    private TextView feedback;
+    private TextView switchButton;
 
     private final Runnable requery = new Runnable() {
         @Override
@@ -96,12 +92,41 @@ public class MainActivity extends Activity implements CanBox.Listener {
         }
     };
 
+    private final Runnable noFrame = new Runnable() {
+        @Override
+        public void run() {
+            phase = IDLE;
+            showResult("No answer from the car. Nothing sent.", WARN);
+        }
+    };
+
+    private final Runnable settle = new Runnable() {
+        @Override
+        public void run() {
+            phase = IDLE;
+            showSent();
+        }
+    };
+
     private final Runnable noAnswer = new Runnable() {
         @Override
         public void run() {
-            Card c = pending;
-            pending = null;
-            if (c != null) flash(c, NO_ANSWER);
+            phase = IDLE;
+            showResult("No answer from the car.", WARN);
+        }
+    };
+
+    private final Runnable rerender = new Runnable() {
+        @Override
+        public void run() {
+            render();
+        }
+    };
+
+    private final Runnable clearNote = new Runnable() {
+        @Override
+        public void run() {
+            note = null;
             render();
         }
     };
@@ -112,16 +137,6 @@ public class MainActivity extends Activity implements CanBox.Listener {
             showIdleUpdate();
         }
     };
-
-    private static final class Card {
-        TextView state;
-        TextView detail;
-        TextView button;
-        boolean armed;
-        String note;   // replaces the detail line for a few seconds
-        Runnable clearNote;
-        Runnable disarm;
-    }
 
     private static final class Toggle {
         FrameLayout track;
@@ -162,9 +177,14 @@ public class MainActivity extends Activity implements CanBox.Listener {
         log.clear();
         log.addAll(LogFile.tail(this, MAX_LOG));
         renderLog();
+        result = "";
+        BootService.onRunningChanged = rerender;
+        box.setCaptureFrames(Prefs.captureFrames(this));
         opened = box.open();
         if (!opened) link = LINK_DOWN;
-        render();
+        // A brief overlay (reverse camera, volume panel) must not cut the hold short.
+        if (sentAt != 0 && SystemClock.elapsedRealtime() < sentAt + HOLD_MS) hold();
+        else render();
         if (opened) box.query();
         handler.postDelayed(requery, REQUERY_MS);
         askAboutDiagnostics();
@@ -173,44 +193,63 @@ public class MainActivity extends Activity implements CanBox.Listener {
     @Override
     protected void onPause() {
         handler.removeCallbacks(requery);
+        handler.removeCallbacks(noFrame);
         handler.removeCallbacks(noAnswer);
-        pending = null;
-        disarm(stopCard);
-        disarm(serviceCard);
+        handler.removeCallbacks(settle);
+        BootService.onRunningChanged = null;
+        phase = IDLE;
         box.close();
         opened = false;
         super.onPause();
     }
 
     @Override
-    public void onState(boolean startStopEnabled, boolean permanentlyClosed) {
-        enabled = startStopEnabled;
-        closed = permanentlyClosed;
+    public void onEcho(boolean echo) {
         link = LINK_LIVE;
         lastFrameAt = SystemClock.elapsedRealtime();
-        knownAt = clock();
-        if (awaitCard != null) {
-            boolean value = awaitCard == stopCard ? enabled : closed;
-            if (lastFrameAt > awaitUntil) {
-                awaitCard = null;
-            } else if (value == awaitTarget) {
-                // Only report a change: the value may already have been at the target.
-                if (awaitFrom == null || awaitFrom != awaitTarget) lastAction.setText((awaitCard == stopCard
-                        ? (awaitTarget ? "Stop-start turned back on at " : "Stop-start turned off at ")
-                        : (awaitTarget ? "Locked off at " : "Unlocked at ")) + knownAt);
-                awaitCard = null;
-            }
+        if (phase == AWAIT_FRAME) {
+            handler.removeCallbacks(noFrame);
+            phase = IDLE;
+            send();
+        } else if (phase == AWAIT_ECHO && echo) {
+            handler.removeCallbacks(noAnswer);
+            hold();
+        } else {
+            render();
         }
-        pending = null;
-        handler.removeCallbacks(noAnswer);
-        if (closed) disarm(serviceCard);
-        for (Card c : new Card[]{stopCard, serviceCard}) {
-            if (NO_ANSWER.equals(c.note)) {
-                c.note = null;
-                handler.removeCallbacks(c.clearNote);
-            }
+    }
+
+    /** Called with a status frame that has just arrived, so the bit is picked from the car's current echo. */
+    private void send() {
+        if (BootService.running) {
+            render();
+            return;
         }
+        int bit = box.toggle();
+        if (bit < 0) {
+            showResult("Could not send to the car. Nothing sent.", WARN);
+            return;
+        }
+        Prefs.recordSwitch(this, false);
+        sentAt = SystemClock.elapsedRealtime();
+        if (bit == 0) {
+            // A cleared echo looks the same as no answer, so it cannot confirm this command.
+            hold();
+            return;
+        }
+        phase = AWAIT_ECHO;
+        handler.postDelayed(noAnswer, ANSWER_MS);
         render();
+    }
+
+    private void hold() {
+        phase = HOLD;
+        handler.postDelayed(settle, Math.max(0, sentAt + HOLD_MS - SystemClock.elapsedRealtime()));
+        render();
+    }
+
+    private void showSent() {
+        showResult("Sent at " + clock() + ". Check the instrument cluster.", ACCENT);
     }
 
     @Override
@@ -233,68 +272,40 @@ public class MainActivity extends Activity implements CanBox.Listener {
     }
 
     private static String clock() {
-        return new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date());
+        return clock(System.currentTimeMillis());
     }
 
-    private void flash(Card c, String message) {
-        c.note = message;
-        handler.removeCallbacks(c.clearNote);
-        handler.postDelayed(c.clearNote, NOTE_MS);
+    private static String clock(long wallMs) {
+        return new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date(wallMs));
+    }
+
+    private void showResult(String text, int color) {
+        result = text;
+        resultColor = color;
         render();
     }
 
-    private void onCardTap(Card c) {
-        if (pending != null) return;
+    private void flash(String message) {
+        note = message;
+        handler.removeCallbacks(clearNote);
+        handler.postDelayed(clearNote, NOTE_MS);
+        render();
+    }
+
+    private void onSwitchTap() {
+        // A second command while one is pending would flip stop-start straight back.
+        if (phase != IDLE || BootService.running) return;
         if (link == LINK_DOWN) {
-            flash(c, "Not connected to the car. Nothing sent.");
+            flash("Not connected to the car. Nothing sent.");
             return;
         }
-        boolean needsConfirm = c == serviceCard && !Boolean.TRUE.equals(closed);
-        if (needsConfirm && !c.armed) {
-            c.armed = true;
-            handler.postDelayed(c.disarm, ARM_MS);
-            render();
-            return;
-        }
-        boolean wasArmed = c.armed;
-        disarm(c);
-        // The state changed under an armed button: the second tap must not send something else.
-        if (wasArmed && !needsConfirm) {
-            render();
-            return;
-        }
-        Boolean before = c == stopCard ? enabled : closed;
-        boolean target = c == stopCard ? toggleStopStart() : toggleService();
-        pending = c;
-        awaitCard = c;
-        awaitFrom = before;
-        awaitTarget = target;
-        awaitUntil = SystemClock.elapsedRealtime() + CONFIRM_MS;
-        handler.postDelayed(noAnswer, ANSWER_MS);
+        note = null;
+        handler.removeCallbacks(clearNote);
+        result = "";
+        phase = AWAIT_FRAME;
+        box.query();
+        handler.postDelayed(noFrame, ANSWER_MS);
         render();
-    }
-
-    private void disarm(Card c) {
-        c.armed = false;
-        handler.removeCallbacks(c.disarm);
-    }
-
-    // The other setting travels in the same command. Unless it was read from a live link, it is
-    // sent as its safe value (locked, stop-start off), so a tap can never undo a lock on old data.
-    private boolean toggleStopStart() {
-        boolean target = enabled == null ? false : !enabled;
-        boolean lockKnown = closed != null && link == LINK_LIVE;
-        if (!lockKnown) onLog("service state unknown, sending it as closed");
-        box.set(target, lockKnown ? closed : true);
-        return target;
-    }
-
-    private boolean toggleService() {
-        boolean target = closed == null ? true : !closed;
-        boolean stopStartKnown = enabled != null && link == LINK_LIVE;
-        if (!stopStartKnown) onLog("stop-start state unknown, sending it as off");
-        box.set(stopStartKnown ? enabled : false, target);
-        return target;
     }
 
     private void onUpdateClick() {
@@ -377,6 +388,14 @@ public class MainActivity extends Activity implements CanBox.Listener {
         renderBoot();
     }
 
+    private void toggleCapture() {
+        boolean on = !Prefs.captureFrames(this);
+        Prefs.setCaptureFrames(this, on);
+        box.setCaptureFrames(on);
+        onLog(on ? "recording car data on" : "recording car data off");
+        renderBoot();
+    }
+
     private void toggleTelemetry() {
         setTelemetry(!Prefs.telemetry(this));
     }
@@ -389,7 +408,8 @@ public class MainActivity extends Activity implements CanBox.Listener {
                 .setTitle("Help fix problems?")
                 .setMessage("Send this app's log to the developer? Each line includes the app version, "
                         + "Android version, head unit model and a random ID. The log holds the commands "
-                        + "sent to the car and the car's replies.\n\n"
+                        + "sent to the car and the car's replies. With Record car data on, it also holds raw "
+                        + "car data that may include vehicle details.\n\n"
                         + "You can change this later with the Share diagnostics switch.")
                 .setCancelable(false)
                 .setPositiveButton("Share", new DialogInterface.OnClickListener() {
@@ -457,43 +477,46 @@ public class MainActivity extends Activity implements CanBox.Listener {
     }
 
     private void render() {
-        String unknownDetail = link == LINK_DOWN ? "This head unit did not let the app reach the car."
-                : "Waiting for the car…";
-        String asOf = "As of " + knownAt + ". " + (link == LINK_DOWN ? "No link to the car." : "Reconnecting…");
-        boolean fresh = link == LINK_LIVE;
         linkView.setText(link == LINK_LIVE ? "●  CONNECTED TO CAR"
                 : link == LINK_DOWN ? "○  NO LINK TO CAR" : "○  CONNECTING…");
         linkView.setTextColor(link == LINK_LIVE ? ACCENT : link == LINK_DOWN ? LINK_BAD : MUTED);
 
-        if (enabled == null) {
-            setState(stopCard, "UNKNOWN", MUTED, unknownDetail);
-            setButton(stopCard, "Turn off", B_PRIMARY);
-        } else if (enabled) {
-            setState(stopCard, "● ON", fresh ? WARN : MUTED, fresh ? "The engine stops at standstill." : asOf);
-            setButton(stopCard, "Turn off", B_PRIMARY);
+        boolean bootBusy = BootService.running;
+        long last = Prefs.lastSwitchAt(this);
+        if (note != null) {
+            feedback.setText(note);
+            feedback.setTextColor(WARN);
+        } else if (bootBusy) {
+            feedback.setText("Switching at boot…");
+            feedback.setTextColor(MUTED);
+        } else if (result.isEmpty() && phase != IDLE) {
+            feedback.setText("");
+        } else if (result.isEmpty() && link == LINK_DOWN) {
+            feedback.setText("This head unit did not let the app reach the car.");
+            feedback.setTextColor(MUTED);
+        } else if (result.isEmpty() && Prefs.bootSwitchFailed(this)) {
+            feedback.setText("Switch at boot failed. Tap to switch.");
+            feedback.setTextColor(WARN);
+        } else if (result.isEmpty() && last != 0) {
+            feedback.setText("Last switch: " + clock(last) + (Prefs.lastSwitchAtBoot(this) ? ", at boot" : ""));
+            feedback.setTextColor(MUTED);
         } else {
-            setState(stopCard, "● OFF", fresh ? ACCENT : MUTED,
-                    fresh ? "The engine keeps running. The car turns it back on at the next start." : asOf);
-            setButton(stopCard, "Turn back on", B_NEUTRAL);
+            feedback.setText(result);
+            feedback.setTextColor(resultColor);
         }
 
-        if (closed == null) {
-            setState(serviceCard, "UNKNOWN", MUTED, unknownDetail);
-            setButton(serviceCard, "Lock off", B_PRIMARY);
-        } else if (closed) {
-            setState(serviceCard, "● LOCKED OFF", fresh ? ACCENT : MUTED,
-                    fresh ? "The car is told to keep stop-start off after a restart." : asOf);
-            setButton(serviceCard, "Unlock", B_NEUTRAL);
-        } else {
-            setState(serviceCard, "● NOT LOCKED", fresh ? WARN : MUTED,
-                    fresh ? "The car can turn stop-start back on by itself." : asOf);
-            setButton(serviceCard, "Lock off", B_PRIMARY);
-        }
+        boolean pending = phase != IDLE;
+        boolean usable = !pending && !bootBusy && link != LINK_DOWN;
+        switchButton.setText(pending ? "Sending…" : "Switch stop-start");
+        switchButton.setTextColor(usable ? TEXT : MUTED);
+        switchButton.setBackgroundDrawable(usable ? pressable(PRIMARY, PRIMARY_PRESSED, 0)
+                : pressable(NEUTRAL, NEUTRAL_PRESSED, 2));
         renderBoot();
     }
 
     private void renderBoot() {
         renderSwitch(bootSwitch, Prefs.applyAtBoot(this));
+        renderSwitch(captureSwitch, Prefs.captureFrames(this));
         if (telemetrySwitch != null) renderSwitch(telemetrySwitch, Prefs.telemetry(this));
     }
 
@@ -507,31 +530,6 @@ public class MainActivity extends Activity implements CanBox.Listener {
         lp.leftMargin = dp(4);
         lp.rightMargin = dp(4);
         t.knob.setLayoutParams(lp);
-    }
-
-    private void setState(Card c, String text, int color, String detail) {
-        c.state.setText(text);
-        c.state.setTextColor(color);
-        c.detail.setText(c.note != null ? c.note : detail);
-        c.detail.setTextColor(c.note != null ? WARN : MUTED);
-    }
-
-    private void setButton(Card c, String label, int style) {
-        if (pending != null) {
-            if (c == pending) label = "Sending…";
-            style = B_DISABLED;
-        } else if (link == LINK_DOWN) {
-            style = B_DISABLED;
-        } else if (c.armed) {
-            label = "Tap again to confirm";
-            style = B_ARMED;
-        }
-        c.button.setText(label);
-        c.button.setTextColor(style == B_PRIMARY ? TEXT : style == B_ARMED ? ON_ACCENT
-                : style == B_DISABLED ? MUTED : TEXT);
-        c.button.setBackgroundDrawable(style == B_PRIMARY ? pressable(PRIMARY, PRIMARY_PRESSED, 0)
-                : style == B_ARMED ? pressable(WARN, 0xFFFFC966, 0)
-                : pressable(NEUTRAL, NEUTRAL_PRESSED, 2));
     }
 
     private View buildUi() {
@@ -573,39 +571,14 @@ public class MainActivity extends Activity implements CanBox.Listener {
         header.addView(linkView);
         left.addView(header, new LinearLayout.LayoutParams(-1, -2));
 
-        lastAction = text("", 16, MUTED, false);
-        lastAction.setMinHeight(dp(20));
-        LinearLayout.LayoutParams lastLp = new LinearLayout.LayoutParams(-1, -2);
-        lastLp.topMargin = dp(4);
-        left.addView(lastAction, lastLp);
-
-        LinearLayout cards = new LinearLayout(this);
-        cards.setOrientation(LinearLayout.HORIZONTAL);
-        LinearLayout.LayoutParams cardsLp = new LinearLayout.LayoutParams(-1, 0, 1f);
-        cardsLp.topMargin = dp(8);
-        left.addView(cards, cardsLp);
-
-        stopCard = card("STOP-START", new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                onCardTap(stopCard);
-            }
-        });
-        serviceCard = card("KEEP IT OFF", new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                onCardTap(serviceCard);
-            }
-        });
-        cards.addView((View) stopCard.state.getParent(), new LinearLayout.LayoutParams(0, -1, 1f));
-        LinearLayout.LayoutParams second = new LinearLayout.LayoutParams(0, -1, 1f);
-        second.leftMargin = dp(16);
-        cards.addView((View) serviceCard.state.getParent(), second);
+        LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, 0, 1f);
+        cardLp.topMargin = dp(8);
+        left.addView(switchCard(), cardLp);
 
         LinearLayout settings = new LinearLayout(this);
         settings.setOrientation(LinearLayout.HORIZONTAL);
-        bootSwitch = addSetting(settings, "Apply at boot",
-                "When the head unit starts: turns stop-start off and locks it off.",
+        bootSwitch = addSetting(settings, "Switch off at boot",
+                "Sends one switch when the radio boots: each engine start turns it on.",
                 new View.OnClickListener() {
                     @Override
                     public void onClick(View v) {
@@ -625,6 +598,19 @@ public class MainActivity extends Activity implements CanBox.Listener {
         LinearLayout.LayoutParams settingsLp = new LinearLayout.LayoutParams(-1, -2);
         settingsLp.topMargin = dp(12);
         left.addView(settings, settingsLp);
+
+        LinearLayout capture = new LinearLayout(this);
+        captureSwitch = addSetting(capture, "Record car data",
+                "Logs raw car data to find the stop-start state. May include vehicle details.",
+                new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        toggleCapture();
+                    }
+                });
+        LinearLayout.LayoutParams captureLp = new LinearLayout.LayoutParams(-1, -2);
+        captureLp.topMargin = dp(12);
+        left.addView(capture, captureLp);
 
         LinearLayout logCard = new LinearLayout(this);
         logCard.setOrientation(LinearLayout.VERTICAL);
@@ -648,51 +634,47 @@ public class MainActivity extends Activity implements CanBox.Listener {
         return root;
     }
 
-    private Card card(String title, View.OnClickListener onButton) {
+    private View switchCard() {
         LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(20), dp(16), dp(20), dp(18));
+        box.setOrientation(LinearLayout.HORIZONTAL);
+        box.setPadding(dp(24), dp(16), dp(20), dp(20));
         box.setBackgroundDrawable(shape(CARD, 20, 1, CARD_EDGE));
 
-        final Card c = new Card();
-        c.clearNote = new Runnable() {
-            @Override
-            public void run() {
-                c.note = null;
-                render();
-            }
-        };
-        c.disarm = new Runnable() {
-            @Override
-            public void run() {
-                c.armed = false;
-                render();
-            }
-        };
-        TextView t = text(title, 14, MUTED, true);
+        LinearLayout words = new LinearLayout(this);
+        words.setOrientation(LinearLayout.VERTICAL);
+        box.addView(words, new LinearLayout.LayoutParams(0, -1, 1.4f));
+
+        TextView t = text("STOP-START", 14, MUTED, true);
         t.setLetterSpacing(0.14f);
-        box.addView(t);
+        words.addView(t);
 
-        c.state = text("", 32, MUTED, true);
-        LinearLayout.LayoutParams stateLp = new LinearLayout.LayoutParams(-1, 0, 1f);
-        stateLp.topMargin = dp(8);
-        c.state.setGravity(Gravity.BOTTOM);
-        box.addView(c.state, stateLp);
+        TextView about = text("The car does not tell the app whether stop-start is on or off. "
+                + "Each tap switches it. "
+                + "The instrument cluster shows a message when stop-start is switched off or on.", 18, TEXT, false);
+        about.setLineSpacing(0, 1.15f);
+        LinearLayout.LayoutParams aboutLp = new LinearLayout.LayoutParams(-1, -2);
+        aboutLp.topMargin = dp(8);
+        words.addView(about, aboutLp);
 
-        c.detail = text("", 16, MUTED, false);
-        c.detail.setMinLines(2);
-        LinearLayout.LayoutParams detailLp = new LinearLayout.LayoutParams(-1, -2);
-        detailLp.topMargin = dp(4);
-        box.addView(c.detail, detailLp);
+        feedback = text("", 18, MUTED, true);
+        feedback.setGravity(Gravity.BOTTOM);
+        LinearLayout.LayoutParams feedbackLp = new LinearLayout.LayoutParams(-1, 0, 1f);
+        feedbackLp.topMargin = dp(8);
+        words.addView(feedback, feedbackLp);
 
-        c.button = text("", 22, TEXT, true);
-        c.button.setGravity(Gravity.CENTER);
-        c.button.setClickable(true);
-        c.button.setOnClickListener(onButton);
-        LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(-1, dp(64));
-        btnLp.topMargin = dp(14);
-        box.addView(c.button, btnLp);
-        return c;
+        switchButton = text("", 24, TEXT, true);
+        switchButton.setGravity(Gravity.CENTER);
+        switchButton.setClickable(true);
+        switchButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                onSwitchTap();
+            }
+        });
+        LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(0, -1, 1f);
+        btnLp.leftMargin = dp(24);
+        box.addView(switchButton, btnLp);
+        return box;
     }
 
     private TextView text(String s, float sp, int color, boolean bold) {
