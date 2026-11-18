@@ -9,6 +9,7 @@ final class Prefs {
     private static final String FILE = "prefs";
     private static final String APPLY_AT_BOOT = "apply_at_boot";
     private static final String TELEMETRY = "telemetry";
+    private static final String CAPTURE_FRAMES = "capture_frames";
     private static final String INSTALL_ID = "install_id";
 
     static boolean applyAtBoot(Context c) {
@@ -17,6 +18,15 @@ final class Prefs {
 
     static void setApplyAtBoot(Context c, boolean on) {
         c.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean(APPLY_AT_BOOT, on).apply();
+    }
+
+    /** Off by default: unknown CAN frames may hold vehicle details, and the log can be shared. */
+    static boolean captureFrames(Context c) {
+        return c.getSharedPreferences(FILE, Context.MODE_PRIVATE).getBoolean(CAPTURE_FRAMES, false);
+    }
+
+    static void setCaptureFrames(Context c, boolean on) {
+        c.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean(CAPTURE_FRAMES, on).apply();
     }
 
     /** False until the user has answered the first-launch question with yes. */

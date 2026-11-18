@@ -18,7 +18,8 @@ The screenshots are from an emulator at 1920x720 with a simulated CAN box. On a 
 - **No on/off display**: the car does not report whether stop-start is on or off, so the app does not show it. The instrument cluster shows a message when stop-start is switched off or on; look there after a tap.
 - **Feedback**: the button shows "Sending…" until the CAN box echoes the command. The card then says "Sent at HH:mm. Check the instrument cluster.", or "No answer from the car." after 3 seconds without an echo. Taps while a command is pending are ignored, so a double tap does not switch it straight back.
 - **Switch off at boot**: off by default. When on, the app sends one switch command after the head unit boots, then stops. The car turns stop-start on at every engine start, so one switch turns it off. See [the limits](#switch-off-at-boot-limits).
-- **Log**: the commands sent, the CAN box frames and any errors.
+- **Record car data**: off by default. When on, the log also records the raw frames the CAN box passes on from the car, to help find where the car reports the real stop-start state. These frames may include vehicle details (for example the VIN, speed or position), so leave it off unless you are helping with that.
+- **Log**: the commands sent, the CAN box status frames and any errors.
 - **Check for updates**: downloads and installs the latest release when you ask for it.
 - **Share diagnostics**: asked on first launch, with a switch to change it later. Sends the app's log lines to the developer.
 
@@ -63,6 +64,8 @@ What is sent with each line:
 - the app version, the Android SDK level and the head unit's model name;
 - a random id created for this install, so lines from one head unit can be told apart. It is not tied to you or to the vehicle.
 
+The `frame …` lines with raw car data are only written to the log while **Record car data** is on, and only sent if **Share diagnostics** is on too. Switching **Record car data** off stops new lines; lines already in the log file stay there.
+
 Nothing is sent while the switch is off. Lines logged while the head unit is offline are kept (up to 500) and sent the next time a line is logged with a connection. Switching it off discards anything not sent yet and forgets the random id, so switching it on again starts with a new one.
 
 The switch only appears in builds made with a PostHog key. Release builds get it from the repository variables `POSTHOG_KEY` and `POSTHOG_HOST`; a local build has no key unless you set those environment variables for `build.sh`. The key is a public, write-only project key.
@@ -88,7 +91,7 @@ Each line has a date and time. Lines to look for:
 - `app opened, version …, android …`: app and Android version.
 - `TWUtil open` / `TWUtil unavailable: …`: whether the head unit's MCU link works.
 - `status 00 4A …`: the raw settings frame (id 56) from the CAN box, logged whenever it changes.
-- `frame <id> …`: any other CAN box frame, logged when it changes, at most 20 lines per frame id each time the app connects. These are kept to find where the car reports the real stop-start state.
+- `frame <id> …`: any other CAN box frame, only while **Record car data** is on. Logged when it changes, at most 20 lines per frame id, 64 frame ids and 400 lines in total each time the app connects. The boot service never records them.
 - `sent stop-start switch, bit=…, rc=…`: a switch command sent to the CAN box.
 - `boot: …`: what the boot service did, including whether the CAN box echoed the command.
 
@@ -191,7 +194,7 @@ These were read from the decompiled vendor app `com.tw.car` (`PsaRaiseSettingsAc
 ## Status
 
 - Tested on a real Jumpy head unit (Android 10). The switch command works: every command flips stop-start, and the instrument cluster shows a message each time.
-- The car's real stop-start state is not readable through the settings frame. The app logs the other CAN box frames (`frame …` lines) so it can be looked for later.
+- The car's real stop-start state is not readable through the settings frame. With **Record car data** on, the app logs the other CAN box frames (`frame …` lines) so it can be looked for.
 - "Permanently closed" does nothing on this van.
 
 ## Troubleshooting

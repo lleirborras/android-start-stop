@@ -21,7 +21,9 @@ final class CanBox {
     }
 
     private static final String TAG = "NoStartStop";
-    private static final int MAX_OTHER_FRAME_LINES = 20;
+    private static final int MAX_LINES_PER_FRAME_ID = 20;
+    private static final int MAX_FRAME_IDS = 64;
+    private static final int MAX_FRAME_LINES = 400;
     private static int instances;
 
     private final Listener listener;
@@ -29,7 +31,9 @@ final class CanBox {
     private TWUtil tw;
     private boolean shortFrameLogged;
     private byte[] lastFrame;
-    // Other frames are logged so the real stop-start state can be found in them later.
+    // Other frames are logged, only when the user opts in, so the real stop-start state can be found in them later.
+    private boolean captureFrames;
+    private int frameLines;
     private final Map<Integer, byte[]> otherFrames = new HashMap<Integer, byte[]>();
     private final Map<Integer, Integer> otherFrameLines = new HashMap<Integer, Integer>();
 
@@ -56,6 +60,7 @@ final class CanBox {
                 lastFrame = null;
                 otherFrames.clear();
                 otherFrameLines.clear();
+                frameLines = 0;
                 t.addHandler(tag, handler);
                 t.start();
                 tw = t;
@@ -88,6 +93,10 @@ final class CanBox {
         } catch (Throwable e) {
             log("close failed: " + e);
         }
+    }
+
+    void setCaptureFrames(boolean on) {
+        captureFrames = on;
     }
 
     void query() {
@@ -131,12 +140,14 @@ final class CanBox {
     }
 
     private void onOtherFrame(int id, byte[] b) {
-        if (Arrays.equals(b, otherFrames.get(id))) return;
-        otherFrames.put(id, b.clone());
+        if (!captureFrames || frameLines >= MAX_FRAME_LINES) return;
         Integer lines = otherFrameLines.get(id);
+        if (lines == null && otherFrameLines.size() >= MAX_FRAME_IDS) return;
         int n = lines == null ? 0 : lines;
-        if (n >= MAX_OTHER_FRAME_LINES) return;
+        if (n >= MAX_LINES_PER_FRAME_ID || Arrays.equals(b, otherFrames.get(id))) return;
+        otherFrames.put(id, b.clone());
         otherFrameLines.put(id, n + 1);
+        frameLines++;
         log("frame " + id + " " + hex(b));
     }
 

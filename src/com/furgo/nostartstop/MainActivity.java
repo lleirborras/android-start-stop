@@ -70,6 +70,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private Toggle bootSwitch;
     private boolean askingAboutDiagnostics;
     private Toggle telemetrySwitch;   // null when the build has no PostHog key
+    private Toggle captureSwitch;
     private TextView logView;
     private ScrollView logScroll;
     private TextView feedback;
@@ -149,6 +150,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         log.clear();
         log.addAll(LogFile.tail(this, MAX_LOG));
         renderLog();
+        box.setCaptureFrames(Prefs.captureFrames(this));
         opened = box.open();
         if (!opened) link = LINK_DOWN;
         render();
@@ -317,6 +319,14 @@ public class MainActivity extends Activity implements CanBox.Listener {
         renderBoot();
     }
 
+    private void toggleCapture() {
+        boolean on = !Prefs.captureFrames(this);
+        Prefs.setCaptureFrames(this, on);
+        box.setCaptureFrames(on);
+        onLog(on ? "recording car data on" : "recording car data off");
+        renderBoot();
+    }
+
     private void toggleTelemetry() {
         setTelemetry(!Prefs.telemetry(this));
     }
@@ -423,6 +433,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
 
     private void renderBoot() {
         renderSwitch(bootSwitch, Prefs.applyAtBoot(this));
+        renderSwitch(captureSwitch, Prefs.captureFrames(this));
         if (telemetrySwitch != null) renderSwitch(telemetrySwitch, Prefs.telemetry(this));
     }
 
@@ -484,7 +495,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         LinearLayout settings = new LinearLayout(this);
         settings.setOrientation(LinearLayout.HORIZONTAL);
         bootSwitch = addSetting(settings, "Switch off at boot",
-                "Sends one switch when the radio boots. The car turns stop-start on at every engine start.",
+                "Sends one switch when the radio boots: each engine start turns it on.",
                 new View.OnClickListener() {
                     @Override
                     public void onClick(View v) {
@@ -504,6 +515,19 @@ public class MainActivity extends Activity implements CanBox.Listener {
         LinearLayout.LayoutParams settingsLp = new LinearLayout.LayoutParams(-1, -2);
         settingsLp.topMargin = dp(12);
         left.addView(settings, settingsLp);
+
+        LinearLayout capture = new LinearLayout(this);
+        captureSwitch = addSetting(capture, "Record car data",
+                "Logs raw car data to find the stop-start state. May include vehicle details.",
+                new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        toggleCapture();
+                    }
+                });
+        LinearLayout.LayoutParams captureLp = new LinearLayout.LayoutParams(-1, -2);
+        captureLp.topMargin = dp(12);
+        left.addView(capture, captureLp);
 
         LinearLayout logCard = new LinearLayout(this);
         logCard.setOrientation(LinearLayout.VERTICAL);
@@ -542,7 +566,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         words.addView(t);
 
         TextView about = text("The car does not tell the app whether stop-start is on or off. "
-                + "Each tap switches it: off if it is on, on if it is off. "
+                + "Each tap switches it. "
                 + "The instrument cluster shows a message when stop-start is switched off or on.", 18, TEXT, false);
         about.setLineSpacing(0, 1.15f);
         LinearLayout.LayoutParams aboutLp = new LinearLayout.LayoutParams(-1, -2);
