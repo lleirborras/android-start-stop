@@ -9,12 +9,18 @@ public class BootReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         if (!Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) return;
-        if (!Prefs.applyAtBoot(context)) return;
-        Intent i = new Intent(context, BootService.class);
-        if (Build.VERSION.SDK_INT >= 26) {
-            context.startForegroundService(i);
-        } else {
-            context.startService(i);
+        if (Prefs.applyAtBoot(context)) {
+            Intent i = new Intent(context, BootService.class);
+            if (Build.VERSION.SDK_INT >= 26) {
+                context.startForegroundService(i);
+            } else {
+                context.startService(i);
+            }
+        }
+        try {
+            UpdateJob.schedule(context, true);
+        } catch (RuntimeException e) {
+            LogFile.append(context, "update job not scheduled: " + UpdateCheck.reason(e));
         }
     }
 }
