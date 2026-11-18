@@ -23,12 +23,13 @@ final class Prefs {
     private static final String IGNITION_OFF = "ignition_off";
     private static final String LAST_SWITCH_ELAPSED = "last_switch_elapsed";
     private static final LogBudget WAKE_LINES = new LogBudget(30);
-    // The assumed stop-start state, see AssumedState: the cycle it belongs to, and that cycle's counts.
+    // The fields of AssumedState.
     private static final String ASSUMED_CYCLE = "assumed_cycle";
-    private static final String ASSUMED_ENDED = "assumed_ended";
+    private static final String ASSUMED_ENDED = "assumed_ended_flag";
     private static final String ASSUMED_WAKE = "assumed_wake";
     private static final String ASSUMED_SOURCE = "assumed_source";
-    private static final String ASSUMED_WAKE_AT = "assumed_wake_at";
+    private static final String ASSUMED_START_AT = "assumed_start_at";
+    private static final String ASSUMED_ENGINE_START = "assumed_engine_start";
     private static final String ASSUMED_SWITCHES = "assumed_switches";
     private static final String ASSUMED_REPORTS = "assumed_reports";
     private static final LogBudget ASSUMED_LINES = new LogBudget(60);
@@ -67,82 +68,124 @@ final class Prefs {
     }
 
     /** Starts a new ignition cycle; event is {@link WakeRules#IGNITION_ON_CYCLE} or {@link WakeRules#CRANK_CYCLE}. */
-    static synchronized void newWake(Context c, String source, int event) {
-        String boot = currentBoot(c);
-        SharedPreferences p = prefs(c);
-        boolean sameBoot = boot.equals(p.getString(WAKE_BOOT, null));
+    static void newWake(Context c, String source, int event) {
         long now = SystemClock.elapsedRealtime();
-        int n = WakeRules.nextWake(sameBoot, p.getInt(WAKE_COUNT, 0));
-        p.edit().putString(WAKE_BOOT, boot).putInt(WAKE_COUNT, n)
-                .putBoolean(IGNITION_OFF, WakeRules.ignitionOffAfter(ignitionOff(c), event))
-                .putString(ASSUMED_CYCLE, WakeRules.cycle(boot, n))
-                .putInt(ASSUMED_WAKE, n)
-                .putString(ASSUMED_SOURCE, source)
-                .putLong(ASSUMED_WAKE_AT, now)
-                .putInt(ASSUMED_SWITCHES, 0)
-                .putInt(ASSUMED_REPORTS, 0)
-                .commit();
+        int n;
+        String change;
+        synchronized (Prefs.class) {
+            String boot = currentBoot(c);
+            SharedPreferences p = prefs(c);
+            boolean sameBoot = boot.equals(p.getString(WAKE_BOOT, null));
+            n = WakeRules.nextWake(sameBoot, p.getInt(WAKE_COUNT, 0));
+            String cycle = WakeRules.cycle(boot, n);
+            AssumedState m = loadAssumed(p);
+            m.newCycle(cycle, n, source, event == WakeRules.CRANK_CYCLE, now);
+            saveAssumed(p.edit().putString(WAKE_BOOT, boot).putInt(WAKE_COUNT, n)
+                    .putBoolean(IGNITION_OFF, WakeRules.ignitionOffAfter(ignitionOff(c), event)), m)
+                    .commit();
+            change = AssumedState.change(m.state(cycle, applyAtBoot(c)), source);
+        }
         if (WAKE_LINES.take(now)) LogFile.append(c, "wake " + n + " (" + source + ")");
-        assumedChanged(c, source);
+        assumedChanged(c, change);
     }
 
     static synchronized int assumedState(Context c) {
-        SharedPreferences p = prefs(c);
-        String cycle = currentCycle(c);
-        return AssumedState.state(cycle.equals(p.getString(ASSUMED_CYCLE, null)),
-                cycle.equals(p.getString(ASSUMED_ENDED, null)),
-                p.getInt(ASSUMED_SWITCHES, 0) + p.getInt(ASSUMED_REPORTS, 0));
+        return loadAssumed(prefs(c)).state(currentCycle(c), applyAtBoot(c));
     }
 
     /**
-     * An engine start that stays in the current cycle (nothing was sent before it): the car turned stop-start on again,
-     * so the model starts over, including any reports made before it.
+     * An engine start that stays in the current cycle: the car turned stop-start on again. switchedDuringCrank: a
+     * switch went out during that crank, so it counts for this engine start.
      */
-    static synchronized void assumedEngineStart(Context c) {
-        prefs(c).edit()
-                .putString(ASSUMED_CYCLE, currentCycle(c))
-                .remove(ASSUMED_ENDED)
-                .putString(ASSUMED_SOURCE, "engine start, same cycle")
-                .putLong(ASSUMED_WAKE_AT, SystemClock.elapsedRealtime())
-                .putInt(ASSUMED_SWITCHES, 0)
-                .putInt(ASSUMED_REPORTS, 0)
-                .commit();
-        assumedChanged(c, "engine start, same cycle");
-    }
-
-    /** Ignition off: the state is unknown until the next cycle starts. */
-    static synchronized void assumedIgnitionOff(Context c) {
-        if (assumedState(c) == AssumedState.UNKNOWN) return;
-        prefs(c).edit().putString(ASSUMED_ENDED, currentCycle(c)).commit();
-        assumedChanged(c, "ignition off");
-    }
-
-    /**
-     * The user says the shown state is wrong: logs what led to it and flips it. Sends nothing to the car. Returns
-     * false when the state is unknown, which cannot be reported.
-     */
-    static synchronized boolean reportAssumedWrong(Context c, int centivolts, int powerState) {
-        int state = assumedState(c);
-        if (state == AssumedState.UNKNOWN) return false;
-        SharedPreferences p = prefs(c);
-        String cycle = currentCycle(c);
-        long now = SystemClock.elapsedRealtime();
-        int reports = p.getInt(ASSUMED_REPORTS, 0);
-        long switchAt = cycle.equals(p.getString(LAST_SWITCH_BOOT, null)) ? p.getLong(LAST_SWITCH_ELAPSED, -1) : -1;
-        String line = AssumedState.report(state, p.getInt(ASSUMED_WAKE, -1), p.getString(ASSUMED_SOURCE, null),
-                p.getInt(ASSUMED_SWITCHES, 0), reports, now - p.getLong(ASSUMED_WAKE_AT, now),
-                switchAt < 0 ? -1 : now - switchAt, p.getBoolean(LAST_SWITCH_AT_BOOT, false), centivolts, powerState);
-        p.edit().putInt(ASSUMED_REPORTS, reports + 1).commit();
-        if (REPORT_LINES.take(now)) LogFile.append(c, line);
-        assumedChanged(c, "reported wrong");
-        return true;
-    }
-
-    private static void assumedChanged(Context c, String why) {
-        if (ASSUMED_LINES.take(SystemClock.elapsedRealtime())) {
-            LogFile.append(c, AssumedState.change(assumedState(c), why));
+    static void assumedEngineStart(Context c, boolean switchedDuringCrank) {
+        String change;
+        synchronized (Prefs.class) {
+            SharedPreferences p = prefs(c);
+            String cycle = currentCycle(c);
+            AssumedState m = loadAssumed(p);
+            m.sameCycleEngineStart(cycle, currentWake(c), switchedDuringCrank, SystemClock.elapsedRealtime());
+            saveAssumed(p.edit(), m).commit();
+            change = AssumedState.change(m.state(cycle, applyAtBoot(c)), m.source);
         }
+        assumedChanged(c, change);
+    }
+
+    /**
+     * The state is unknown until the next cycle starts: ignition off, the automatic switch turned off, or the watch
+     * service unable to follow the ignition. why is logged.
+     */
+    static void assumedEnd(Context c, String why) {
+        synchronized (Prefs.class) {
+            SharedPreferences p = prefs(c);
+            AssumedState m = loadAssumed(p);
+            if (!m.end(currentCycle(c), true)) return;
+            saveAssumed(p.edit(), m).commit();
+        }
+        assumedChanged(c, AssumedState.change(AssumedState.UNKNOWN, why));
+    }
+
+    static final int REPORT_REFUSED = 0, REPORT_LOGGED = 1, REPORT_NOT_LOGGED = 2;
+
+    /**
+     * The user says the shown state is wrong: logs what led to it and flips it. Sends nothing to the car. Refused
+     * while the state is unknown; REPORT_NOT_LOGGED when the daily limit for report lines is reached.
+     */
+    static int reportAssumedWrong(Context c, int centivolts, long centivoltsAt, int powerState, long powerStateAt) {
+        long now = SystemClock.elapsedRealtime();
+        String line;
+        String change;
+        synchronized (Prefs.class) {
+            SharedPreferences p = prefs(c);
+            String cycle = currentCycle(c);
+            boolean enabled = applyAtBoot(c);
+            AssumedState m = loadAssumed(p);
+            if (m.state(cycle, enabled) == AssumedState.UNKNOWN) return REPORT_REFUSED;
+            long switchAt = cycle.equals(p.getString(LAST_SWITCH_BOOT, null)) ? p.getLong(LAST_SWITCH_ELAPSED, -1) : -1;
+            line = m.reportLine(cycle, enabled, now, switchAt, p.getBoolean(LAST_SWITCH_AT_BOOT, false),
+                    centivolts, centivoltsAt, powerState, powerStateAt);
+            m.report(cycle, enabled);
+            saveAssumed(p.edit(), m).commit();
+            change = AssumedState.change(m.state(cycle, enabled), "reported wrong");
+        }
+        boolean logged = REPORT_LINES.take(now);
+        if (logged) LogFile.append(c, line);
+        assumedChanged(c, change);
+        return logged ? REPORT_LOGGED : REPORT_NOT_LOGGED;
+    }
+
+    /** Logs one assumed-state event and redraws the screen. Never called with the Prefs lock held. */
+    private static void assumedChanged(Context c, String change) {
+        if (ASSUMED_LINES.take(SystemClock.elapsedRealtime())) LogFile.append(c, change);
         if (onAssumedChanged != null) onAssumedChanged.run();
+    }
+
+    private static int currentWake(Context c) {
+        SharedPreferences p = prefs(c);
+        return currentBoot(c).equals(p.getString(WAKE_BOOT, null)) ? p.getInt(WAKE_COUNT, 0) : 0;
+    }
+
+    private static AssumedState loadAssumed(SharedPreferences p) {
+        AssumedState m = new AssumedState();
+        m.cycle = p.getString(ASSUMED_CYCLE, null);
+        m.ended = p.getBoolean(ASSUMED_ENDED, false);
+        m.wake = p.getInt(ASSUMED_WAKE, -1);
+        m.source = p.getString(ASSUMED_SOURCE, null);
+        m.startAt = p.getLong(ASSUMED_START_AT, 0);
+        m.engineStart = p.getBoolean(ASSUMED_ENGINE_START, false);
+        m.switches = p.getInt(ASSUMED_SWITCHES, 0);
+        m.reports = p.getInt(ASSUMED_REPORTS, 0);
+        return m;
+    }
+
+    private static SharedPreferences.Editor saveAssumed(SharedPreferences.Editor e, AssumedState m) {
+        return e.putString(ASSUMED_CYCLE, m.cycle)
+                .putBoolean(ASSUMED_ENDED, m.ended)
+                .putInt(ASSUMED_WAKE, m.wake)
+                .putString(ASSUMED_SOURCE, m.source)
+                .putLong(ASSUMED_START_AT, m.startAt)
+                .putBoolean(ASSUMED_ENGINE_START, m.engineStart)
+                .putInt(ASSUMED_SWITCHES, m.switches)
+                .putInt(ASSUMED_REPORTS, m.reports);
     }
 
     /** Written at once: the head unit kills the app a few seconds after ignition off. */
@@ -173,21 +216,26 @@ final class Prefs {
      * Clears the ignition off flag: stop-start is no longer in the state the car set at its last start.
      */
     static void recordSwitch(Context c, boolean atBoot, String cycle) {
-        prefs(c).edit()
-                .putLong(LAST_SWITCH_AT, System.currentTimeMillis())
-                .putLong(LAST_SWITCH_ELAPSED, SystemClock.elapsedRealtime())
-                .putBoolean(IGNITION_OFF,
-                        WakeRules.ignitionOffAfter(ignitionOff(c), WakeRules.FIRED, WatchService.ignitionOffNow))
-                .putBoolean(LAST_SWITCH_AT_BOOT, atBoot)
-                .putString(LAST_SWITCH_BOOT, cycle)
-                .remove(BOOT_SWITCH_FAILED)
-                .commit();
+        String change;
         synchronized (Prefs.class) {
-            if (assumedState(c) == AssumedState.UNKNOWN || !cycle.equals(currentCycle(c))) return;
             SharedPreferences p = prefs(c);
-            p.edit().putInt(ASSUMED_SWITCHES, p.getInt(ASSUMED_SWITCHES, 0) + 1).commit();
+            String current = currentCycle(c);
+            boolean enabled = applyAtBoot(c);
+            AssumedState m = loadAssumed(p);
+            boolean counted = m.switchSent(cycle, current, enabled);
+            saveAssumed(p.edit(), m)
+                    .putLong(LAST_SWITCH_AT, System.currentTimeMillis())
+                    .putLong(LAST_SWITCH_ELAPSED, SystemClock.elapsedRealtime())
+                    .putBoolean(IGNITION_OFF,
+                            WakeRules.ignitionOffAfter(ignitionOff(c), WakeRules.FIRED, WatchService.ignitionOffNow))
+                    .putBoolean(LAST_SWITCH_AT_BOOT, atBoot)
+                    .putString(LAST_SWITCH_BOOT, cycle)
+                    .remove(BOOT_SWITCH_FAILED)
+                    .commit();
+            change = counted ? AssumedState.change(m.state(current, enabled),
+                    atBoot ? "switch sent, automatic" : "switch sent, tap") : null;
         }
-        assumedChanged(c, atBoot ? "switch sent, automatic" : "switch sent, tap");
+        if (change != null) assumedChanged(c, change);
     }
 
     static void setBootSwitchFailed(Context c, String cycle) {

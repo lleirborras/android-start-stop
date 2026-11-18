@@ -26,6 +26,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
     static boolean ignitionOffNow;
     /** The last power state and battery reading this process saw, or -1, for the "status is wrong" report. */
     static int seenPowerState = -1, seenCentivolts = -1;
+    static long seenPowerStateAt, seenCentivoltsAt;
     private static final int NOTIFICATION_ID = 3;
     private static final long[] OPEN_BACKOFF_MS = {1_000, 2_000, 4_000, 8_000, 15_000};
     private static final long SILENT_MS = 60_000;
@@ -60,6 +61,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
             else c.startService(i);
         } catch (RuntimeException e) {
             if (WATCH_LINES.take(SystemClock.elapsedRealtime())) LogFile.append(c, "watch service not started: " + e);
+            Prefs.assumedEnd(c, "watch service not started");
         }
     }
 
@@ -84,6 +86,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
             if (openAttempt >= OPEN_BACKOFF_MS.length) {
                 openAttempt = -1;
                 watchLog("no power messages from the head unit (" + canBox.openFailure() + "), nothing will be sent");
+                Prefs.assumedEnd(WatchService.this, "no power messages");
                 return;
             }
             handler.postDelayed(this, OPEN_BACKOFF_MS[openAttempt++]);
@@ -99,6 +102,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
                 reopenEvery = Math.min(reopenEvery * 2, MAX_REOPEN_MS);
                 canBox.close();
                 linkOpen = false;
+                forgetSeen();
                 power.linkClosed();
                 quietReopen = !SILENT_LINES.take(now);
                 if (!quietReopen) LogFile.append(WatchService.this, "watch: link silent, reopened");
@@ -147,6 +151,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
         if (canBox != null) {
             unregisterReceiver(receiver);
             canBox.close();
+            forgetSeen();
             watchLog("service stopped");
         }
         super.onDestroy();
@@ -161,6 +166,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
     public void onPowerState(int state) {
         heard();
         seenPowerState = state;
+        seenPowerStateAt = lastMessageAt;
         if (state != lastPowerState) {
             lastPowerState = state;
             if (POWER_LINES.take(lastMessageAt)) LogFile.append(this, "power state " + state);
@@ -171,7 +177,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
             offSeenHere = true;
             ignitionOffNow = true;
             Prefs.ignitionEvent(this, WakeRules.OFF_SEEN);
-            Prefs.assumedIgnitionOff(this);
+            Prefs.assumedEnd(this, "ignition off");
             handler.removeCallbacks(tick);
             if (auto.disarm()) autoLog("ignition off, nothing sent");
         } else if (state == PowerWatch.STATE_CRANK) {
@@ -182,7 +188,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
             if (fresh) Prefs.newWake(this, "engine start", WakeRules.CRANK_CYCLE);
             else {
                 Prefs.ignitionEvent(this, WakeRules.CRANK_CYCLE);
-                Prefs.assumedEngineStart(this);
+                Prefs.assumedEngineStart(this, auto.switchedDuringCrank());
             }
             armed(fresh ? "engine start" : "engine start, same cycle");
         } else if (state == PowerWatch.STATE_AWAKE) {
@@ -195,6 +201,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
     public void onBattery(int centivolts) {
         heard();
         seenCentivolts = centivolts;
+        seenCentivoltsAt = lastMessageAt;
         if (auto.armed() && ARMED_BATTERY_LINES.take(lastMessageAt)) {
             long ms = lastMessageAt - armedAt;
             LogFile.append(this, "auto: battery " + Protocol.volts(centivolts) + " V, " + ms / 1000 + "." + ms % 1000 / 100
@@ -212,6 +219,11 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
         if (quietReopen && line.startsWith("TWUtil open")) return;
         LogBudget budget = line.startsWith("battery ") ? BATTERY_LINES : WATCH_LINES;
         if (budget.take(SystemClock.elapsedRealtime())) LogFile.append(this, "watch: " + line);
+    }
+
+    private static void forgetSeen() {
+        seenPowerState = -1;
+        seenCentivolts = -1;
     }
 
     private void heard() {

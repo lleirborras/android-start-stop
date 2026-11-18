@@ -446,9 +446,13 @@ public class MainActivity extends Activity implements CanBox.Listener {
         boolean on = !Prefs.applyAtBoot(this);
         Prefs.setApplyAtBoot(this, on);
         onLog(on ? "automatic switch on" : "automatic switch off");
-        if (on) WatchService.start(this, PowerWatch.BY_APP);
-        else stopService(new Intent(this, WatchService.class));
-        renderBoot();
+        if (on) {
+            WatchService.start(this, PowerWatch.BY_APP);
+        } else {
+            stopService(new Intent(this, WatchService.class));
+            Prefs.assumedEnd(this, "automatic switch off");
+        }
+        render();
     }
 
     private void toggleCapture() {
@@ -601,10 +605,13 @@ public class MainActivity extends Activity implements CanBox.Listener {
         long now = SystemClock.elapsedRealtime();
         // A double tap would flip it straight back.
         if (now < reportedAt + HOLD_MS || phase != IDLE || BootService.running) return;
-        if (!Prefs.reportAssumedWrong(this, WatchService.seenCentivolts, WatchService.seenPowerState)) return;
+        int result = Prefs.reportAssumedWrong(this, WatchService.seenCentivolts, WatchService.seenCentivoltsAt,
+                WatchService.seenPowerState, WatchService.seenPowerStateAt);
+        if (result == Prefs.REPORT_REFUSED) return;
         reportedAt = now;
         handler.postDelayed(rerender, HOLD_MS);
-        flash("Noted in the log. Nothing sent to the car.");
+        flash(result == Prefs.REPORT_LOGGED ? "Noted in the log. Nothing sent to the car."
+                : "Changed, but not logged: too many reports today. Nothing sent to the car.");
     }
 
     private void renderBoot() {

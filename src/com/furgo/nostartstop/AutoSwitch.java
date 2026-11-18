@@ -24,6 +24,7 @@ final class AutoSwitch {
     private boolean cranking;
     private long crankStartAt;
     private long deferredSince = -1;
+    private boolean switchedDuringCrank;
 
     /**
      * Arms the switch. Without timed it never gives up: after an ignition on noticed by a service start, which may
@@ -55,6 +56,11 @@ final class AutoSwitch {
         return now - crankStartAt > PowerWatch.MAX_CRANK_MS;
     }
 
+    /** Whether the last {@link #onCrank} saw a switch sent during the crank; then it belongs to that engine start. */
+    boolean switchedDuringCrank() {
+        return switchedDuringCrank;
+    }
+
     /** A 6 or 1 that does not end the crank as an engine start: only lifts the hold. */
     void crankOver() {
         cranking = false;
@@ -71,6 +77,7 @@ final class AutoSwitch {
         cranking = false;
         boolean before = switchAt >= 0 && switchAt < start;
         boolean during = switchAt >= start;
+        switchedDuringCrank = during;
         boolean fresh = before || !armed && !during;
         arm(now, true, start);
         return fresh;

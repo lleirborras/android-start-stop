@@ -86,6 +86,17 @@ public class AutoSwitchTest {
         b.arm(0, false);
         crank(b, 8_000);
         check("tap during the crank, pending: same cycle", !b.onCrank(10_000, 9_000));
+        check("tap during the crank is reported", b.switchedDuringCrank());
+        b = new AutoSwitch();
+        b.arm(0, false);
+        crank(b, 8_000);
+        b.onCrank(10_000, 5_000);
+        check("tap before the crank is not during it", !b.switchedDuringCrank());
+        b = new AutoSwitch();
+        b.arm(0, false);
+        crank(b, 8_000);
+        b.onCrank(10_000, NONE);
+        check("no tap", !b.switchedDuringCrank());
 
         // Armed by an ignition on: no 3-minute limit, the head unit may still be off for hours.
         a.arm(0, false);
