@@ -43,6 +43,7 @@ public class BootService extends Service implements CanBox.Listener {
             }
             if (SystemClock.elapsedRealtime() - startedAt >= OPEN_TIMEOUT_MS) {
                 onLog("no link to the car after " + OPEN_TIMEOUT_MS / 1000 + " s, nothing sent");
+                Prefs.setBootSwitchFailed(BootService.this);
                 finish();
                 return;
             }

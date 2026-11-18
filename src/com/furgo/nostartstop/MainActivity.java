@@ -182,7 +182,9 @@ public class MainActivity extends Activity implements CanBox.Listener {
         box.setCaptureFrames(Prefs.captureFrames(this));
         opened = box.open();
         if (!opened) link = LINK_DOWN;
-        render();
+        // A brief overlay (reverse camera, volume panel) must not cut the hold short.
+        if (sentAt != 0 && SystemClock.elapsedRealtime() < sentAt + HOLD_MS) hold();
+        else render();
         if (opened) box.query();
         handler.postDelayed(requery, REQUERY_MS);
         askAboutDiagnostics();
