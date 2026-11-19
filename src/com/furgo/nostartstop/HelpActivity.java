@@ -92,6 +92,14 @@ public class HelpActivity extends Activity {
             page.addView(columns, new LinearLayout.LayoutParams(-1, -2));
         }
 
+        TextView by = text("No Start-Stop " + MainActivity.versionName(this) + ", by Lleïr Borràs\n"
+                + "github.com/lleirborras/android-start-stop", 14, MUTED, false);
+        by.setGravity(Gravity.CENTER);
+        by.setLineSpacing(0, 1.2f);
+        LinearLayout.LayoutParams byLp = new LinearLayout.LayoutParams(-1, -2);
+        byLp.topMargin = dp(20);
+        page.addView(by, byLp);
+
         final ScrollView scroll = new ScrollView(this);
         scroll.setBackgroundColor(BG);
         scroll.addView(page, new FrameLayout.LayoutParams(-1, -2));

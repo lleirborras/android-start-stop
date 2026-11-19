@@ -1120,10 +1120,16 @@ public class MainActivity extends Activity implements CanBox.Listener {
         header.addView(title);
         String v = versionName();
         // Release builds are named like "0.3.0"; local builds are "dev".
-        TextView version = text(Character.isDigit(v.charAt(0)) ? "v" + v : v, 14, MUTED, false);
+        LinearLayout about = new LinearLayout(this);
+        about.setOrientation(LinearLayout.VERTICAL);
+        about.addView(text(Character.isDigit(v.charAt(0)) ? "v" + v : v, 14, MUTED, false));
+        TextView by = text("by Lleïr Borràs", 12, MUTED, false);
+        by.setSingleLine(true);
+        by.setEllipsize(TextUtils.TruncateAt.END);
+        about.addView(by);
         LinearLayout.LayoutParams versionLp = new LinearLayout.LayoutParams(0, -2, 1f);
         versionLp.leftMargin = dp(12);
-        header.addView(version, versionLp);
+        header.addView(about, versionLp);
         left.addView(header, new LinearLayout.LayoutParams(-1, -2));
 
         updateView = text("", 14, MUTED, true);
