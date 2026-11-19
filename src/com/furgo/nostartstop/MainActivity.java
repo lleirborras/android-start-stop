@@ -53,6 +53,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private static final int PRIMARY = 0xFF187A5A;  // 4.5:1 against TEXT
     private static final int PRIMARY_PRESSED = 0xFF1F8F6C;
     private static final int NEUTRAL = 0xFF1D2430;
+    private static final int OFF_EDGE = 0xFF5B6678;   // border of the card, and of a button, for stop-start off
     private static final int NEUTRAL_PRESSED = 0xFF2B3544;
 
     private static final int MAX_LOG = 50;
@@ -731,7 +732,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         int assumed = Prefs.assumedState(this);
         int stateColor = assumed == AssumedState.OFF ? TEXT : assumed == AssumedState.ON ? ACCENT : MUTED;
         badge.setState(assumed);
-        stateCard.setBackgroundDrawable(shape(CARD, 20, 2, assumed == AssumedState.UNKNOWN ? CARD_EDGE : assumed == AssumedState.OFF ? 0xFF5B6678 : ACCENT));
+        stateCard.setBackgroundDrawable(shape(CARD, 20, 2, assumed == AssumedState.UNKNOWN ? CARD_EDGE : assumed == AssumedState.OFF ? OFF_EDGE : ACCENT));
         String word = assumed == AssumedState.UNKNOWN ? "UNKNOWN" : AssumedState.name(assumed).toUpperCase(Locale.ROOT);
         SpannableStringBuilder sb = new SpannableStringBuilder(word);
         if (assumed != AssumedState.UNKNOWN) {
@@ -752,17 +753,18 @@ public class MainActivity extends Activity implements CanBox.Listener {
         boolean free = !pending && !bootBusy && SystemClock.elapsedRealtime() >= reportedAt + HOLD_MS;
         wrongButton.setVisibility(unknown ? View.GONE : View.VISIBLE);
         setRow.setVisibility(unknown ? View.VISIBLE : View.GONE);
-        renderOutlined(wrongButton, !unknown && free);
+        renderOutlined(wrongButton, !unknown && free, TEXT, 0xFF4A5568);
         boolean canSet = unknown && free && Prefs.canSetAssumed(this);
-        renderOutlined(setOnButton, canSet);
-        renderOutlined(setOffButton, canSet);
+        // The colours of the state each one sets: green for on, white for off.
+        renderOutlined(setOnButton, canSet, ACCENT, ACCENT);
+        renderOutlined(setOffButton, canSet, TEXT, OFF_EDGE);
         renderBoot();
     }
 
-    private void renderOutlined(TextView button, boolean enabled) {
+    private void renderOutlined(TextView button, boolean enabled, int color, int edge) {
         button.setEnabled(enabled);
-        button.setTextColor(enabled ? TEXT : 0xFF5C6676);
-        button.setBackgroundDrawable(enabled ? outlined() : dashed());
+        button.setTextColor(enabled ? color : 0xFF5C6676);
+        button.setBackgroundDrawable(enabled ? outlined(edge) : dashed());
     }
 
     /** Sets the unknown state to what the user reads on the instrument cluster. Sends nothing to the car. */
@@ -1119,10 +1121,10 @@ public class MainActivity extends Activity implements CanBox.Listener {
         return s;
     }
 
-    private StateListDrawable outlined() {
+    private StateListDrawable outlined(int edge) {
         StateListDrawable s = new StateListDrawable();
-        s.addState(new int[]{android.R.attr.state_pressed}, shape(NEUTRAL_PRESSED, 16, 2, 0xFF5B6678));
-        s.addState(new int[]{}, shape(NEUTRAL, 16, 2, 0xFF4A5568));
+        s.addState(new int[]{android.R.attr.state_pressed}, shape(NEUTRAL_PRESSED, 16, 2, edge));
+        s.addState(new int[]{}, shape(NEUTRAL, 16, 2, edge));
         return s;
     }
 
