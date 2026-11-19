@@ -30,11 +30,21 @@ The screenshots are from an emulator at 1920x720 with a simulated CAN box: the m
 
 ![No link to the car](docs/unreachable.png)
 
+While the state is unknown, **Started** and **Stopped** set it by hand from what the instrument cluster shows:
+
+![Unknown state with the Started and Stopped buttons](docs/set-by-hand.png)
+
+In split screen the same screen is one scrolling column, here after a tap on **Stopped**:
+
+![Split screen: one column](docs/split.png)
+
 ## What it does
 
 - **Switch stop-start**: one button that sends one switch command to the car. The command is a toggle: each tap turns stop-start off if it was on, and on if it was off.
 - **Assumed state**: the car does not report whether stop-start is on or off, so the card shows the state the app assumes, as a large **OFF** (white), **ON** (green) or **UNKNOWN** (grey). Beside the word is the stop-start symbol, the "A" in a circular arrow: struck through for OFF, plain for ON, replaced by a dashed ring with "?" for UNKNOWN. OFF and ON carry the word "assumed"; the card says it is not read from the car. The instrument cluster shows a message when stop-start is switched off or on; look there to be sure. See [the assumed state](#the-assumed-stop-start-state).
-- **Car shows the opposite**: tap it when the instrument cluster disagrees with the assumed state. It writes one line to the log with what led to the assumed state and flips the shown state. It sends nothing to the car. It is greyed out while the state is unknown, while a tap's command is being sent, while **Switch off at engine start** is sending ("Switching…"), and for 2 seconds after each report. The card then says "Noted in the log. Nothing sent to the car.", or, past the daily limit of report lines, "Changed, but not logged: too many reports today. Nothing sent to the car."
+- **Split screen**: in a window narrower than 900 dp the screen is one scrolling column: header, stop-start card with its buttons below the text, one setting per row, then the log.
+- **Started** / **Stopped**: shown while the state is UNKNOWN. Read the instrument cluster and tap **Started** if stop-start is on, **Stopped** if it is off. They carry the colours of the state they set: **Started** green like ON, **Stopped** white like OFF. The card then shows that state as assumed and says "Set by hand. Nothing sent to the car." Greyed out while **Switch off at engine start** is off or its background service has no link to the head unit, because then nothing would end the state at the next ignition off.
+- **Car shows the opposite**: tap it when the instrument cluster disagrees with the assumed state. It writes one line to the log with what led to the assumed state and flips the shown state. It sends nothing to the car. While the state is unknown, **Started** and **Stopped** take its place. It is greyed out while a tap's command is being sent, while **Switch off at engine start** is sending ("Switching…"), and for 2 seconds after each report. The card then says "Noted in the log. Nothing sent to the car.", or, past the daily limit of report lines, "Changed, but not logged: too many reports today. Nothing sent to the car."
 - **Feedback**: a tap first asks the CAN box for a fresh status frame and picks the command from it, then sends. The button shows "Sending…" meanwhile. The card then says:
   - "Sent at HH:mm. Check the instrument cluster." once the CAN box echoes the command. When the command's bit is 0 the echo cannot confirm it, so this shows as soon as it is sent.
   - "No answer from the car." when the command was sent but not echoed within 3 seconds. Check the instrument cluster before tapping again: the switch may have worked.
@@ -111,6 +121,8 @@ It needs **Switch off at engine start** on: only then does the app follow the ig
 - while **Switch off at engine start** is off, and after it is turned off until the next cycle;
 - when the background service could not start, gets no power messages from the head unit, or its link to the head unit goes silent, until the next cycle.
 
+While it is unknown and the background service is following the ignition, **Started** and **Stopped** set it by hand to what the instrument cluster shows. Switches and reports flip it from there, and the next ignition off or engine start ends it like any other state.
+
 It is not verified on the van yet. It is a model, not a reading from the car. It is wrong after a switch the car ignored (for example one sent with the engine off), after an engine start the app missed, or after a stop-start change made from the car's own menu. That is what **Car shows the opposite** is for: the log line it writes shows what led to the mistake.
 
 ## Troubleshooting
@@ -123,7 +135,8 @@ It is not verified on the van yet. It is a model, not a reading from the car. It
 - **Stop-start ends up on after a tap**: each tap flips it, so it was off before. Tap once more and check the instrument cluster message.
 - **Switch off at engine start does nothing**: open the app once after installing, and leave it on screen when you switch the ignition off. Then check the log for `wake` and `auto:` lines after an engine start; without a `wake` line the app did not notice the ignition on or the engine start. `auto: battery …` lines show the voltages it saw while waiting.
 - **Stop-start is on after an engine start with Switch off at engine start on**: the app probably was not running at that engine start, or the car ignored the switch. If the card says **OFF** (assumed), tap **Car shows the opposite** first so the log records it. Then tap **Switch stop-start** once and share the log.
-- **"UNKNOWN"** on the stop-start card: the app has not seen the ignition come on or an engine start since the last ignition off or head unit reboot, the automatic switch is off, or the background service lost the head unit. See [the assumed state](#the-assumed-stop-start-state).
+- **"UNKNOWN"** on the stop-start card: the app has not seen the ignition come on or an engine start since the last ignition off or head unit reboot, the automatic switch is off, or the background service lost the head unit. Check the instrument cluster and tap **Started** or **Stopped**. See [the assumed state](#the-assumed-stop-start-state).
+- **"This app may be harmful" when installing or updating**: Google Play Protect shows this for apps it does not know. The APK is not on Google Play, installs its own updates and starts at boot, which is what Play Protect flags. The release APK is signed (APK signature schemes v1 to v3) with the same key every time. Tap **Install anyway**. To stop the prompt, turn off **Scan apps with Play Protect** in the Play Store's Play Protect settings on the head unit.
 
 ## Status
 
@@ -175,7 +188,7 @@ Each line has a date and time. Lines to look for:
 - `engine rpm=… speed=…` and `battery 12.34 V`: only while **Record car data** is on, except that `watch: battery …` is logged whenever **Switch off at engine start** is on. Logged when they change noticeably, at most one of each every 10 seconds and 100 of each each time the app connects. `rpm=?` means the head unit reported it as invalid.
 - `unit id …` / `unit config …`: the head unit's identity text and configuration block, once each time the app starts, only while **Record car data** is on.
 - `sent stop-start switch, bit=…, rc=…`: a switch command sent to the CAN box. With **Record car data** on and the engine speed known, it ends with `, rpm=…`.
-- `assumed: on (ignition on)`, `assumed: on (engine start)`, `assumed: on (engine start, same cycle)`, `assumed: off (switch sent, automatic)`, `assumed: on (switch sent, tap)`, `assumed: on (reported wrong)`, `assumed: unknown (ignition off)`, `assumed: unknown (automatic switch off)`, `assumed: unknown (no power messages)`, `assumed: unknown (link silent)`, `assumed: unknown (watch service not started)`: each event that sets the assumed state and why, with the state after it. An event that leaves the state as it was, such as an engine start right after an ignition on, still gets its line (at most 60 lines per 24 hours).
+- `assumed: on (ignition on)`, `assumed: on (engine start)`, `assumed: on (engine start, same cycle)`, `assumed: off (switch sent, automatic)`, `assumed: on (switch sent, tap)`, `assumed: on (reported wrong)`, `assumed: off (set by hand)`, `assumed: unknown (ignition off)`, `assumed: unknown (automatic switch off)`, `assumed: unknown (no power messages)`, `assumed: unknown (link silent)`, `assumed: unknown (watch service not started)`: each event that sets the assumed state and why, with the state after it. An event that leaves the state as it was, such as an engine start right after an ignition on, still gets its line (at most 60 lines per 24 hours).
 - `report: car shows ON, app assumed OFF, wake 5 (ignition on), 1 switch sent, 0 reports, cycle 312 s old, last switch 300 s ago (automatic), battery 14.85 V, power state 6`: a **Car shows the opposite** tap, written before the shown state flips. `cycle N s old` counts from the ignition on; after an engine start it reads `engine start N s ago` instead. A battery or power state value older than 10 seconds gets its age, for example `battery 14.85 V 312 s ago`. Fields the app does not know are left out (at most 50 lines per 24 hours).
 - `auto: …`: what the automatic switch did, including why it sent or did not send and whether the CAN box echoed the command. `watch: …` lines come from the background service that waits for the engine.
 - `process started, pid …`, `wake <n> (<source>)`, `power state <n>` and `broadcast <action> (manifest|runtime), up … s`: what the app sees across ignition cycles, to learn how the head unit sleeps and wakes. `watch: service started (…)` says how the service was started (by the app, at boot, after update, by a broadcast or restarted by the system). Capped at 30 `wake`, 60 `power state`, 30 `broadcast` and 60 `auto: battery` lines per 24 hours; the other `auto:` and `watch:` lines are capped too.

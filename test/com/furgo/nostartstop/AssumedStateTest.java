@@ -66,6 +66,27 @@ public class AssumedStateTest {
         same("an engine start after ignition off is known again", m.state(C1, true), ON);
         same("wake refreshed", m.wake, 3);
 
+        // Set by hand: only while unknown and followed, then switches and reports flip it from there.
+        AssumedState h = new AssumedState();
+        check("not set while the automatic switch is off", !h.setByHand(C1, false, 0, OFF, 0));
+        check("unknown is not a state to set", !h.setByHand(C1, true, 0, U, 0));
+        check("set off by hand", h.setByHand(C1, true, 0, OFF, 0));
+        same("set by hand: off", h.state(C1, true), OFF);
+        check("not set again while known", !h.setByHand(C1, true, 0, ON, 0));
+        check("a tap after it is counted", h.switchSent(C1, C1, true));
+        same("off by hand, one switch: on", h.state(C1, true), ON);
+        same("kept across a reload", reload(h).state(C1, true), ON);
+        check("ignition off ends it", h.end(C1, true));
+        check("set on by hand after ignition off", h.setByHand(C1, true, 0, ON, 10_000));
+        same("set by hand: on", h.state(C1, true), ON);
+        h.setByHand(C2, true, 2, OFF, 20_000);
+        same("another cycle is unknown, so it can be set", h.state(C2, true), OFF);
+        h.sameCycleEngineStart(C2, 2, false, 30_000);
+        same("an engine start turns it on again", h.state(C2, true), ON);
+        text("its report line names the source", h.reportLine(C2, true, 40_000, -1, false, -1, -1, -1, -1),
+                "report: car shows OFF, app assumed ON, wake 2 (engine start, same cycle), 0 switches sent, 0 reports, "
+                        + "engine start 10 s ago");
+
         text("name", AssumedState.name(OFF), "off");
         text("change", AssumedState.change(OFF, "switch sent, automatic"), "assumed: off (switch sent, automatic)");
         text("change unknown", AssumedState.change(U, "automatic switch off"),
@@ -104,6 +125,7 @@ public class AssumedStateTest {
         r.engineStart = m.engineStart;
         r.switches = m.switches;
         r.reports = m.reports;
+        r.base = m.base;
         return r;
     }
 

@@ -24,6 +24,8 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
     private static final String EXTRA_HOW = "how";
     /** The last power state this process saw was ignition off. Main thread only. */
     static boolean ignitionOffNow;
+    /** This process has the power messages open, so an ignition off or engine start will be seen. Main thread only. */
+    static boolean following;
     /** The last power state and battery reading this process saw, or -1, for the "Car shows the opposite" report. */
     static int seenPowerState = -1, seenCentivolts = -1;
     static long seenPowerStateAt, seenCentivoltsAt;
@@ -79,6 +81,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
             if (canBox.open()) {
                 openAttempt = -1;
                 linkOpen = true;
+                following = true;
                 quietReopen = false;
                 lastMessageAt = SystemClock.elapsedRealtime();
                 return;
@@ -223,6 +226,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
     }
 
     private static void forgetSeen() {
+        following = false;
         seenPowerState = -1;
         seenCentivolts = -1;
     }

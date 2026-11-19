@@ -4,7 +4,8 @@ package com.furgo.nostartstop;
  * The stop-start state the app assumes. The car does not report it, so it is a model: the car turns stop-start on at
  * every engine start, each switch sent flips it, and so does each "Car shows the opposite" report. It is unknown before the
  * app has seen a cycle start, from ignition off until the next one, and while the automatic switch is off (then
- * nothing watches the ignition). Plain fields, so Prefs can store and reload them; times are elapsedRealtime.
+ * nothing watches the ignition). While it is unknown the user can set it by hand from the instrument cluster.
+ * Plain fields, so Prefs can store and reload them; times are elapsedRealtime.
  */
 final class AssumedState {
     static final int UNKNOWN = 0, ON = 1, OFF = 2;
@@ -23,6 +24,8 @@ final class AssumedState {
     boolean engineStart;
     int switches;
     int reports;
+    /** The state before any switch or report: ON as the car sets it, or what the user set by hand. */
+    int base = ON;
 
     /** A new ignition cycle: stop-start is on. */
     void newCycle(String cycle, int wake, String source, boolean engineStart, long now) {
@@ -34,6 +37,18 @@ final class AssumedState {
         startAt = now;
         switches = 0;
         reports = 0;
+        base = ON;
+    }
+
+    /**
+     * The user says what the instrument cluster shows. Only while the state is unknown; enabled: the watch service
+     * follows the ignition, so that the next ignition off or engine start still ends it. Returns true if it was set.
+     */
+    boolean setByHand(String current, boolean enabled, int wake, int state, long now) {
+        if (!enabled || state == UNKNOWN || state(current, enabled) != UNKNOWN) return false;
+        newCycle(current, wake, "set by hand", false, now);
+        base = state;
+        return true;
     }
 
     /**
@@ -69,7 +84,7 @@ final class AssumedState {
     /** enabled: the automatic switch is on, so the watch service follows the ignition. */
     int state(String current, boolean enabled) {
         if (!enabled || cycle == null || !cycle.equals(current) || ended) return UNKNOWN;
-        return (switches + reports) % 2 == 0 ? ON : OFF;
+        return (switches + reports) % 2 == 0 ? base : base == ON ? OFF : ON;
     }
 
     static String name(int state) {
