@@ -181,6 +181,17 @@ public class BootFlowTest {
         return f;
     }
 
+    /** Sent at 1 000, done at once with the stop due 6 s after the send, and 1 s passed since. */
+    private static Fake sentAndDone() {
+        Fake f = started();
+        f.flow.onEcho(false);
+        f.flow.onEcho(true);
+        f.did("sent and done", a("log: status received, echo bit 0", "cancel send", "mark b#1", "toggle", "record b#1",
+                "post no-echo 3000", "log: echo bit changed to 1, done"), FINISHED, a("post stop 6000"));
+        f.pass(1_000);
+        return f;
+    }
+
     public static void main(String[] args) {
         // A normal send: status frame, mark, switch, echo, then the link stays open 6 s from the send.
         Fake f = started();
@@ -329,6 +340,70 @@ public class BootFlowTest {
         f.did.clear();
         f.pass(2_000);
         f.did("opened on the second try", OPENED);
+
+        // A newer cycle starts over within 6 s of the first send and sends nothing itself: it stops at once, the wait
+        // after the first cycle's send is not carried over.
+        f = sentAndDone();
+        f.cycle = "b#2";
+        f.mark = "b#2";
+        f.flow.start();
+        f.did("restart, already switched", a("cancel stop", "close", "new link", "log: service started, facts",
+                "log: already switched during this ignition cycle, nothing sent"), FINISHED, STOPPED);
+        f.pass(60_000);
+        f.did("restart, already switched: nothing left");
+        f = sentAndDone();
+        f.cycle = "b#2";
+        f.switchCycle = "b#2";
+        f.flow.start();
+        f.did("restart, switched from the screen", a("cancel stop", "close", "new link", "log: service started, facts",
+                "mark b#2", "log: already switched from the screen during this ignition cycle, nothing sent"),
+                FINISHED, STOPPED);
+        f = sentAndDone();
+        f.cycle = "b#2";
+        f.bit = -1;
+        f.flow.start();
+        f.did("restart", a("cancel stop", "close"), STARTED);
+        f.pass(0);
+        f.did("restart: link opened", OPENED);
+        f.flow.onEcho(false);
+        f.did("restart, send failed", a("log: status received, echo bit 0", "cancel send", "mark b#2", "toggle",
+                "failed b#2", "log: switch failed, nothing sent"), FINISHED, STOPPED);
+        f.pass(60_000);
+        f.did("restart, send failed: nothing left");
+
+        // After the stop ran, until the service is destroyed: the same cycle is dropped, a newer one starts over.
+        f = sentAndDone();
+        f.pass(5_000);
+        f.did("stopped", STOPPED);
+        f.flow.start();
+        f.did("same cycle after the stop", a("log: already running, start request dropped"));
+        f.pass(60_000);
+        f.did("same cycle after the stop: nothing left");
+        f.cycle = "b#2";
+        f.flow.start();
+        f.did("newer cycle after the stop", a("cancel stop", "close"), STARTED);
+        f.pass(0);
+        f.did("newer cycle after the stop: link opened", OPENED);
+        f.flow.onEcho(false);
+        f.did("newer cycle after the stop: sent", a("log: status received, echo bit 0", "cancel send", "mark b#2",
+                "toggle", "record b#2", "post no-echo 3000"));
+        f.pass(3_000);
+        f.did("newer cycle after the stop: no echo", a("log: echo bit did not change within 3 s, done"), FINISHED,
+                a("post stop 3000"));
+        f.pass(3_000);
+        f.did("newer cycle after the stop: stopped", STOPPED);
+
+        // The same after a flow that sent nothing and stopped at once.
+        f = started();
+        f.bit = -1;
+        f.flow.onEcho(false);
+        f.did.clear();
+        f.flow.start();
+        f.did("same cycle after a failed send", a("log: already running, start request dropped"));
+        f.cycle = "b#2";
+        f.bit = 1;
+        f.flow.start();
+        f.did("newer cycle after a failed send", a("cancel stop", "close"), STARTED);
 
         System.out.println("BootFlowTest passed");
     }
