@@ -47,6 +47,7 @@ public class TelemetryStoreTest {
             readErrorAfterSending();
             limits();
             mergedDayCap();
+            failedRotationKeepsLimits();
         } finally {
             deleteTree(root);
         }
@@ -443,6 +444,37 @@ public class TelemetryStoreTest {
         s.rotate(TODAY);
         List<String> kept = lines(new File(dir, "2026-11-01.gz"));
         check("newest lines kept: " + kept, kept.equals(events("new", 5)));
+    }
+
+    private static void failedRotationKeepsLimits() throws IOException {
+        TelemetryStore.Limits l = new TelemetryStore.Limits();
+        l.maxFiles = 3;
+        l.maxTodayBytes = 100;
+        TelemetryStore s = store("rotatefail", l);
+        File dir = new File(root, "rotatefail");
+        writeGz(new File(dir, "2026-10-01.gz"), events("a", 1));
+        writeGz(new File(dir, "2026-10-02.gz"), events("b", 1));
+        s.add("2026-11-01", "{\"stuck\":1}");
+        s.add("2026-11-02", "{\"fine\":1}");
+        for (int i = 0; i < 20; i++) s.add(TODAY, "{\"line\":" + (100 + i) + "}");
+        // The compressed temporary file cannot be created where a directory is in the way.
+        File blocker = new File(dir, "2026-11-01.gz.tmp");
+        check("blocker", blocker.mkdirs() && new File(blocker, "x").createNewFile());
+
+        for (int round = 1; round <= 2; round++) {
+            int warned = WARNINGS.size();
+            s.send(new FakeSender(TelemetryStore.Outcome.FAILED), TODAY);
+            List<String> names = s.names();
+            Collections.sort(names);
+            String at = "round " + round + ": ";
+            check(at + "other day rotated, oldest pruned: " + names,
+                    names.equals(Arrays.asList("2026-11-01", "2026-11-02.gz", TODAY)));
+            check(at + "today trimmed: " + new File(dir, TODAY).length(), new File(dir, TODAY).length() <= 100);
+            check(at + "stuck day kept", Collections.singletonList("{\"stuck\":1}").equals(lines(new File(dir, "2026-11-01"))));
+            List<String> added = WARNINGS.subList(warned, WARNINGS.size());
+            check(at + "one warning: " + added, added.size() == 1 && added.get(0).contains("2026-11-01.gz.tmp"));
+            for (int i = 0; i < 20; i++) s.add(TODAY, "{\"more\":" + (100 + i) + "}");
+        }
     }
 
     private static final class FakeSender implements TelemetryStore.Sender {
