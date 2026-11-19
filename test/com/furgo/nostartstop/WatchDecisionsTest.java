@@ -107,6 +107,8 @@ public class WatchDecisionsTest {
 
     private static Shell s;
     private static WatchDecisions d;
+    /** How far the clock is past the time of a power state, a reading or a tick when it is handled. */
+    private static long skew;
 
     public static void main(String[] args) {
         bootThenCrankThenFire();
@@ -118,6 +120,8 @@ public class WatchDecisionsTest {
         secondCrankInOneCycle();
         engineStartAfterASwitch();
         anotherSwitchStillBeingSent();
+        ignitionOffWhileWaitingForAnotherSwitch();
+        crankWhileWaitingForAnotherSwitch();
         System.out.println("WatchDecisionsTest passed");
     }
 
@@ -129,11 +133,11 @@ public class WatchDecisionsTest {
         tick("that tick", 1_000, NOTHING);
         battery("engine already running, nothing pending", 1340, 2_000, NOTHING);
         state("9", 9, 10_000, "offNow false");
-        battery("reading during the crank", 1340, 12_000, NOTHING);
+        battery("reading right after the 9", 1340, 10_003, NOTHING);
         state("6 ends the crank: new cycle", 6, 15_000, armed("engine start", "offNow false", "log: crank seen",
                 "wake engine start CRANK_CYCLE"));
         check("pending", d.armed());
-        same("armed at the crank end", d.armedAt(), 15_000);
+        same("armed when the crank end was handled", d.armedAt(), 15_000 + skew);
         tick("before the settle delay", 15_000 + SETTLE - 1, NOTHING);
         tick("the reading from the crank fires", 15_000 + SETTLE, FIRE);
         check("no longer pending", !d.armed());
@@ -160,6 +164,14 @@ public class WatchDecisionsTest {
         tick("no give-up after an ignition on", 500 + GIVE_UP, NOTHING);
         battery("engine runs an hour later", 1340, HOUR, FIRE);
         check("firing clears the flag", !s.flag);
+
+        // The settle delay counts from the clock at the start, against the time of the reading or tick.
+        fresh();
+        s.flag = true;
+        start("boot after an ignition off", PowerWatch.AT_BOOT, 500, armed("ignition on",
+                "wake ignition on IGNITION_ON_CYCLE"));
+        battery("engine running, just before the settle delay", 1340, 500 + SETTLE - 1, NOTHING);
+        tick("at the settle delay", 500 + SETTLE, FIRE);
     }
 
     private static void ignitionOffThenOnByTheApp() {
@@ -300,6 +312,7 @@ public class WatchDecisionsTest {
         s.busy = false;
         tick("free again", 13_000, FIRE);
 
+        // The 30 s count on the clock, from the clock at the first busy fire, not on the times of the ticks.
         fresh();
         state("9", 9, 0, "offNow false");
         state("6", 6, 4_000, armed("engine start", "offNow false", "log: crank seen",
@@ -307,17 +320,65 @@ public class WatchDecisionsTest {
         s.busy = true;
         battery("due while a switch is being sent", 1340, 9_000, "cancel",
                 "log: another switch is still being sent, waiting", "tick+" + WatchDecisions.BUSY_RETRY_MS);
-        tick("just before 30 s", 9_000 + AutoSwitch.BUSY_MS - 1, "cancel", "tick+" + WatchDecisions.BUSY_RETRY_MS);
-        tick("busy for 30 s", 9_000 + AutoSwitch.BUSY_MS, "cancel",
+        long since = 9_000 + skew;
+        skew = 0;
+        tick("clock just before 30 s", since + AutoSwitch.BUSY_MS - 1, "cancel",
+                "tick+" + WatchDecisions.BUSY_RETRY_MS);
+        skew = 50;
+        tick("clock at 30 s, tick time before", since + AutoSwitch.BUSY_MS - 50, "cancel",
                 "log: another switch was still being sent after 30 s, nothing sent");
         check("no longer pending", !d.armed());
         s.busy = false;
-        tick("nothing after that", 9_000 + AutoSwitch.BUSY_MS + 1, NOTHING);
+        tick("nothing after that", since + AutoSwitch.BUSY_MS, NOTHING);
+    }
+
+    private static void ignitionOffWhileWaitingForAnotherSwitch() {
+        fresh();
+        state("9", 9, 0, "offNow false");
+        state("6", 6, 4_000, armed("engine start", "offNow false", "log: crank seen",
+                "wake engine start CRANK_CYCLE"));
+        s.busy = true;
+        battery("due while a switch is being sent", 1340, 9_000, "cancel",
+                "log: another switch is still being sent, waiting", "tick+" + WatchDecisions.BUSY_RETRY_MS);
+        state("ignition off", 1, 10_000, "offNow true", "event OFF_SEEN", "assumed end ignition off", "cancel",
+                "log: ignition off, nothing sent");
+        tick("the retry tick", 11_000, NOTHING);
+
+        // The next engine start waits its own 30 s and says so again.
+        state("9", 9, 20_000, "offNow false");
+        state("6", 6, 24_000, armed("engine start", "offNow false", "log: crank seen",
+                "wake engine start CRANK_CYCLE"));
+        battery("due, the other switch still being sent", 1340, 24_000 + SETTLE, "cancel",
+                "log: another switch is still being sent, waiting", "tick+" + WatchDecisions.BUSY_RETRY_MS);
+        tick("30 s after the first wait began", 9_000 + AutoSwitch.BUSY_MS + 100, "cancel",
+                "tick+" + WatchDecisions.BUSY_RETRY_MS);
+        tick("30 s after the second began", 24_000 + SETTLE + AutoSwitch.BUSY_MS, "cancel",
+                "log: another switch was still being sent after 30 s, nothing sent");
+    }
+
+    private static void crankWhileWaitingForAnotherSwitch() {
+        fresh();
+        state("9", 9, 0, "offNow false");
+        state("6", 6, 4_000, armed("engine start", "offNow false", "log: crank seen",
+                "wake engine start CRANK_CYCLE"));
+        s.busy = true;
+        battery("due while a switch is being sent", 1340, 9_000, "cancel",
+                "log: another switch is still being sent, waiting", "tick+" + WatchDecisions.BUSY_RETRY_MS);
+        state("9", 9, 12_000, "offNow false");
+        state("6: same cycle, armed again", 6, 15_000, armed("engine start, same cycle", "offNow false",
+                "log: crank seen", "event CRANK_CYCLE", "assumed engine start false"));
+        battery("due again: the wait starts afresh and is logged again", 1340, 15_000 + SETTLE, "cancel",
+                "log: another switch is still being sent, waiting", "tick+" + WatchDecisions.BUSY_RETRY_MS);
+        tick("30 s after the first wait began", 9_000 + AutoSwitch.BUSY_MS + 100, "cancel",
+                "tick+" + WatchDecisions.BUSY_RETRY_MS);
+        s.busy = false;
+        tick("free again", 9_000 + AutoSwitch.BUSY_MS + 2_100, FIRE);
     }
 
     private static void fresh() {
         s = new Shell();
         d = new WatchDecisions(s);
+        skew = 7;
     }
 
     /** What arming does, after the given steps. */
@@ -328,26 +389,27 @@ public class WatchDecisionsTest {
         return all.toArray(new String[0]);
     }
 
-    private static void start(String name, String how, long at, String... expected) {
-        s.now = at;
+    /** A start has no time of its own: it reads the clock. */
+    private static void start(String name, String how, long clock, String... expected) {
+        s.now = clock;
         d.onStart(how);
         did(name, expected);
     }
 
     private static void state(String name, int state, long at, String... expected) {
-        s.now = at;
+        s.now = at + skew;
         d.onPowerState(state, at);
         did(name, expected);
     }
 
     private static void battery(String name, int centivolts, long at, String... expected) {
-        s.now = at;
+        s.now = at + skew;
         d.onBattery(centivolts, at);
         did(name, expected);
     }
 
     private static void tick(String name, long at, String... expected) {
-        s.now = at;
+        s.now = at + skew;
         d.onTick(at);
         did(name, expected);
     }
