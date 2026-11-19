@@ -40,9 +40,7 @@ import android.widget.TextView;
 import java.net.ConnectException;
 import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
-import java.text.SimpleDateFormat;
 import java.util.ArrayDeque;
-import java.util.Date;
 import java.util.Locale;
 
 public class MainActivity extends Activity implements CanBox.Listener {
@@ -63,8 +61,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private static final int MAX_LOG = 50;
     private static final long REQUERY_MS = 5000;
     private static final long STALE_MS = 12000;
-    private static final long NOTE_MS = 3000, ANSWER_MS = 3000, REVERT_MS = 4000;
-    private static final long SHARE_SENT_MS = 8000;
+    private static final long NOTE_MS = 3000, REVERT_MS = 4000;
 
     private static final int LINK_WAITING = 0, LINK_LIVE = 1, LINK_DOWN = -1;
 
@@ -76,12 +73,8 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private boolean opened;
     private int link = LINK_WAITING;
     private long lastFrameAt;
-    // A tap first waits for a fresh status frame to pick the bit, then for the echo of the command.
-    // After any send the button stays busy for HOLD_MS, so a bounce or double tap cannot flip stop-start back.
-    private static final int IDLE = 0, AWAIT_FRAME = 1, AWAIT_ECHO = 2, HOLD = 3;
-    private static final long HOLD_MS = 2000;
-    private int phase = IDLE;
-    private long sentAt;
+    private static final long HOLD_MS = ManualSwitch.HOLD_MS;
+    private final ManualSwitch manual = new ManualSwitch();
     private String result = "";    // outcome of the last switch command
     private int resultColor = MUTED;
     private String note;           // replaces the result line for a few seconds
@@ -137,27 +130,13 @@ public class MainActivity extends Activity implements CanBox.Listener {
         }
     };
 
-    private final Runnable noFrame = new Runnable() {
+    private final Runnable phaseTimeout = new Runnable() {
         @Override
         public void run() {
-            phase = IDLE;
-            showResult("No answer from the car. Nothing sent.", WARN);
-        }
-    };
-
-    private final Runnable settle = new Runnable() {
-        @Override
-        public void run() {
-            phase = IDLE;
-            showSent();
-        }
-    };
-
-    private final Runnable noAnswer = new Runnable() {
-        @Override
-        public void run() {
-            phase = IDLE;
-            showResult("No answer from the car.", WARN);
+            int outcome = manual.timeout();
+            if (outcome == ManualSwitch.NO_FRAME) showResult("No answer from the car. Nothing sent.", WARN);
+            else if (outcome == ManualSwitch.NO_ANSWER) showResult("No answer from the car.", WARN);
+            else if (outcome == ManualSwitch.SENT) showSent();
         }
     };
 
@@ -372,7 +351,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         opened = box.open();
         if (!opened) link = LINK_DOWN;
         // A brief overlay (reverse camera, volume panel) must not cut the hold short.
-        if (sentAt != 0 && SystemClock.elapsedRealtime() < sentAt + HOLD_MS) hold();
+        if (manual.resume(SystemClock.elapsedRealtime())) hold();
         else render();
         if (opened) box.query();
         handler.postDelayed(requery, REQUERY_MS);
@@ -389,9 +368,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     @Override
     protected void onPause() {
         handler.removeCallbacks(requery);
-        handler.removeCallbacks(noFrame);
-        handler.removeCallbacks(noAnswer);
-        handler.removeCallbacks(settle);
+        handler.removeCallbacks(phaseTimeout);
         BootService.onRunningChanged = null;
         Prefs.onAssumedChanged = null;
         UpdateJob.onResult = null;
@@ -399,7 +376,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         shareLive = false;
         handler.removeCallbacks(shareChanged);
         stopSharePulse();
-        phase = IDLE;
+        manual.pause();
         box.close();
         opened = false;
         super.onPause();
@@ -409,12 +386,12 @@ public class MainActivity extends Activity implements CanBox.Listener {
     public void onEcho(boolean echo) {
         link = LINK_LIVE;
         lastFrameAt = SystemClock.elapsedRealtime();
-        if (phase == AWAIT_FRAME) {
-            handler.removeCallbacks(noFrame);
-            phase = IDLE;
+        int action = manual.frame(echo);
+        if (action == ManualSwitch.SEND) {
+            handler.removeCallbacks(phaseTimeout);
             send();
-        } else if (phase == AWAIT_ECHO && echo) {
-            handler.removeCallbacks(noAnswer);
+        } else if (action == ManualSwitch.CONFIRMED) {
+            handler.removeCallbacks(phaseTimeout);
             hold();
         } else {
             render();
@@ -433,20 +410,17 @@ public class MainActivity extends Activity implements CanBox.Listener {
             return;
         }
         Prefs.recordSwitch(this, false);
-        sentAt = SystemClock.elapsedRealtime();
-        if (bit == 0) {
-            // A cleared echo looks the same as no answer, so it cannot confirm this command.
+        if (manual.sent(bit, SystemClock.elapsedRealtime()) == ManualSwitch.HOLD) {
             hold();
             return;
         }
-        phase = AWAIT_ECHO;
-        handler.postDelayed(noAnswer, ANSWER_MS);
+        handler.postDelayed(phaseTimeout, ManualSwitch.ANSWER_MS);
         render();
     }
 
+    /** Runs the timer of a hold the phase machine has just entered. */
     private void hold() {
-        phase = HOLD;
-        handler.postDelayed(settle, Math.max(0, sentAt + HOLD_MS - SystemClock.elapsedRealtime()));
+        handler.postDelayed(phaseTimeout, manual.holdLeft(SystemClock.elapsedRealtime()));
         render();
     }
 
@@ -474,11 +448,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     }
 
     private static String clock() {
-        return clock(System.currentTimeMillis());
-    }
-
-    private static String clock(long wallMs) {
-        return new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date(wallMs));
+        return Feedback.clock(System.currentTimeMillis());
     }
 
     private void showResult(String text, int color) {
@@ -495,18 +465,17 @@ public class MainActivity extends Activity implements CanBox.Listener {
     }
 
     private void onSwitchTap() {
-        // A second command while one is pending would flip stop-start straight back.
-        if (phase != IDLE || BootService.running) return;
-        if (link == LINK_DOWN) {
+        int action = manual.tap(BootService.running, link == LINK_DOWN);
+        if (action == ManualSwitch.NOTHING) return;
+        if (action == ManualSwitch.NO_LINK) {
             flash("Not connected to the car. Nothing sent.");
             return;
         }
         note = null;
         handler.removeCallbacks(clearNote);
         result = "";
-        phase = AWAIT_FRAME;
         box.query();
-        handler.postDelayed(noFrame, ANSWER_MS);
+        handler.postDelayed(phaseTimeout, ManualSwitch.ANSWER_MS);
         render();
     }
 
@@ -731,40 +700,16 @@ public class MainActivity extends Activity implements CanBox.Listener {
         handler.removeCallbacks(shareChanged);
         int n = Telemetry.waiting;
         long sentAt = Telemetry.lastSentAt;
-        String s;
-        int color = MUTED, dot = ACCENT;
-        boolean pulse = false;
-        float fill = 0;
-        if (!Prefs.telemetry(this)) {
-            s = "Diagnostics off";
-            dot = 0;
-        } else if (Telemetry.sending) {
-            int done = Telemetry.sendDone, total = Telemetry.sendTotal;
-            s = done > 0 && total > done ? "Sending: " + done + " of " + lines(total)
-                    : n > 0 ? "Sending " + lines(n) + "…" : "Sending…";
-            fill = total > 0 ? Math.min(1f, (float) done / total) : 0;
-            color = TEXT;
-            pulse = true;
-        } else if (Telemetry.failed && n > 0) {
-            s = "Send failed, " + stored(n) + " waiting";
-            dot = WARN;
-        } else if (n > 0) {
-            s = stored(n) + " waiting to send";
-            dot = MUTED;
-        } else if (sentAt > 0) {
-            long age = System.currentTimeMillis() - sentAt;
-            if (age >= 0 && age < SHARE_SENT_MS) {
-                s = "Sent " + lines(Telemetry.lastSent) + " at " + clock(sentAt);
-                color = TEXT;
-                if (shareLive) handler.postDelayed(shareChanged, SHARE_SENT_MS - age);
-            } else {
-                s = "All sent at " + clock(sentAt);
-            }
-        } else {
-            s = n < 0 ? "Diagnostics on" : "Diagnostics on, nothing waiting";
-        }
-        shareText.setText(s);
-        shareText.setTextColor(color);
+        ShareStatus st = ShareStatus.of(Prefs.telemetry(this), Telemetry.sending, Telemetry.sendDone,
+                Telemetry.sendTotal, Telemetry.failed, n, Telemetry.waitingDays, Telemetry.lastSent, sentAt,
+                System.currentTimeMillis());
+        if (st.recheckMs >= 0 && shareLive) handler.postDelayed(shareChanged, st.recheckMs);
+        int dot = st.dot == ShareStatus.RING ? 0 : st.dot == ShareStatus.FAILED ? WARN
+                : st.dot == ShareStatus.WAITING ? MUTED : ACCENT;
+        boolean pulse = st.pulse;
+        float fill = st.fill;
+        shareText.setText(st.text);
+        shareText.setTextColor(st.bright ? TEXT : MUTED);
         if (((LinearLayout.LayoutParams) shareFill.getLayoutParams()).weight != fill) {
             shareFill.setLayoutParams(new LinearLayout.LayoutParams(0, -1, fill));
             shareRest.setLayoutParams(new LinearLayout.LayoutParams(0, -1, 1 - fill));
@@ -791,16 +736,6 @@ public class MainActivity extends Activity implements CanBox.Listener {
         sharePulse.cancel();
         sharePulse = null;
         shareDot.setAlpha(1f);
-    }
-
-    /** For example "1240 lines from 3 days". */
-    private static String stored(int n) {
-        int days = Telemetry.waitingDays;
-        return days > 1 ? lines(n) + " from " + days + " days" : lines(n);
-    }
-
-    private static String lines(int n) {
-        return n == 1 ? "1 line" : n + " lines";
     }
 
     /** Adds a tappable setting card with a drawn switch to a horizontal row and returns the switch. */
@@ -846,29 +781,14 @@ public class MainActivity extends Activity implements CanBox.Listener {
 
         boolean bootBusy = BootService.running;
         long last = Prefs.lastSwitchAt(this);
-        if (note != null) {
-            feedback.setText(note);
-            feedback.setTextColor(WARN);
-        } else if (bootBusy) {
-            feedback.setText("Switching…");
-            feedback.setTextColor(MUTED);
-        } else if (result.isEmpty() && phase != IDLE) {
-            feedback.setText("");
-        } else if (result.isEmpty() && link == LINK_DOWN) {
-            feedback.setText("This head unit did not let the app reach the car.");
-            feedback.setTextColor(MUTED);
-        } else if (result.isEmpty() && Prefs.bootSwitchFailed(this)) {
-            feedback.setText("Automatic switch failed. Tap to switch.");
-            feedback.setTextColor(WARN);
-        } else if (result.isEmpty() && last != 0) {
-            feedback.setText("Last switch: " + clock(last) + (Prefs.lastSwitchAtBoot(this) ? ", automatic" : ""));
-            feedback.setTextColor(MUTED);
-        } else {
-            feedback.setText(result);
-            feedback.setTextColor(resultColor);
+        Feedback f = Feedback.of(note, bootBusy, result, manual.pending(), link == LINK_DOWN,
+                Prefs.bootSwitchFailed(this), last, Prefs.lastSwitchAtBoot(this));
+        feedback.setText(f.text);
+        if (f.color != Feedback.KEEP) {
+            feedback.setTextColor(f.color == Feedback.WARN ? WARN : f.color == Feedback.MUTED ? MUTED : resultColor);
         }
 
-        boolean pending = phase != IDLE;
+        boolean pending = manual.pending();
         boolean usable = !pending && !bootBusy && link != LINK_DOWN;
         switchButton.setText(pending ? "Sending…" : "Switch stop-start");
         switchButton.setTextColor(usable ? TEXT : MUTED);
@@ -916,7 +836,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     /** Sets the unknown state to what the user reads on the instrument cluster. Sends nothing to the car. */
     private void onSetTap(int state) {
         long now = SystemClock.elapsedRealtime();
-        if (now < reportedAt + HOLD_MS || phase != IDLE || BootService.running) return;
+        if (now < reportedAt + HOLD_MS || manual.pending() || BootService.running) return;
         if (!Prefs.setAssumedByHand(this, state)) return;
         // The row turns into "Car shows the opposite": a second tap in the same place must not flip it.
         reportedAt = now;
@@ -928,7 +848,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private void onWrongTap() {
         long now = SystemClock.elapsedRealtime();
         // A double tap would flip it straight back.
-        if (now < reportedAt + HOLD_MS || phase != IDLE || BootService.running) return;
+        if (now < reportedAt + HOLD_MS || manual.pending() || BootService.running) return;
         int result = Prefs.reportAssumedWrong(this, WatchService.seenCentivolts, WatchService.seenCentivoltsAt,
                 WatchService.seenPowerState, WatchService.seenPowerStateAt);
         if (result == Prefs.REPORT_REFUSED) return;

@@ -48,6 +48,7 @@ public class TelemetryStoreTest {
             limits();
             mergedDayCap();
             failedRotationKeepsLimits();
+            failedTrimKeepsPruning();
         } finally {
             deleteTree(root);
         }
@@ -475,6 +476,30 @@ public class TelemetryStoreTest {
             check(at + "one warning: " + added, added.size() == 1 && added.get(0).contains("2026-11-01.gz.tmp"));
             for (int i = 0; i < 20; i++) s.add(TODAY, "{\"more\":" + (100 + i) + "}");
         }
+    }
+
+    private static void failedTrimKeepsPruning() throws IOException {
+        TelemetryStore.Limits l = new TelemetryStore.Limits();
+        l.maxFiles = 3;
+        l.maxTodayBytes = 100;
+        TelemetryStore s = store("trimfail", l);
+        File dir = new File(root, "trimfail");
+        for (int d = 1; d <= 4; d++) writeGz(new File(dir, "2026-10-0" + d + ".gz"), events("d" + d, 1));
+        for (int i = 0; i < 20; i++) s.add(TODAY, "{\"line\":" + (100 + i) + "}");
+        long untrimmed = new File(dir, TODAY).length();
+        // The trimmed temporary file cannot be created where a directory is in the way.
+        File blocker = new File(dir, TODAY + ".trim.tmp");
+        check("blocker", blocker.mkdirs() && new File(blocker, "x").createNewFile());
+
+        int warned = WARNINGS.size();
+        s.send(new FakeSender(TelemetryStore.Outcome.FAILED), TODAY);
+        List<String> names = s.names();
+        Collections.sort(names);
+        check("oldest pruned although the trim failed: " + names,
+                names.equals(Arrays.asList("2026-10-03.gz", "2026-10-04.gz", TODAY)));
+        check("today left whole", new File(dir, TODAY).length() == untrimmed);
+        List<String> added = WARNINGS.subList(warned, WARNINGS.size());
+        check("one warning: " + added, added.size() == 1 && added.get(0).contains(TODAY + ".trim.tmp"));
     }
 
     private static final class FakeSender implements TelemetryStore.Sender {
