@@ -23,6 +23,9 @@
             </intent-filter>
         </activity>
 
+        <activity android:name=".HelpActivity" android:exported="false"
+            android:configChanges="uiMode|orientation|screenSize|keyboardHidden"/>
+
         <activity android:name=".InstallStatusActivity" android:exported="false"
             android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
 

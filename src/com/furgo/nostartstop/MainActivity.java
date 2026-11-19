@@ -1145,6 +1145,16 @@ public class MainActivity extends Activity implements CanBox.Listener {
                 onStartTap();
             }
         });
+        TextView helpView = text("Help", 14, TEXT, true);
+        helpView.setGravity(Gravity.CENTER);
+        helpView.setPadding(dp(20), 0, dp(20), 0);
+        helpView.setBackgroundDrawable(pressable(0, NEUTRAL_PRESSED, 0));
+        helpView.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                startActivity(new Intent(MainActivity.this, HelpActivity.class));
+            }
+        });
         linkView = text("", 14, MUTED, true);
         LinearLayout.LayoutParams updateLp = new LinearLayout.LayoutParams(-2, dp(36));
         if (narrow) {
@@ -1156,9 +1166,11 @@ public class MainActivity extends Activity implements CanBox.Listener {
             left.addView(second, new LinearLayout.LayoutParams(-1, -2));
             LinearLayout third = new LinearLayout(this);
             third.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
+            third.addView(helpView, new LinearLayout.LayoutParams(-2, dp(36)));
             third.addView(startView, new LinearLayout.LayoutParams(-2, dp(36)));
             left.addView(third, new LinearLayout.LayoutParams(-1, -2));
         } else {
+            header.addView(helpView, new LinearLayout.LayoutParams(-2, dp(36)));
             header.addView(startView, new LinearLayout.LayoutParams(-2, dp(36)));
             updateLp.rightMargin = dp(24);
             header.addView(updateView, updateLp);
