@@ -22,9 +22,6 @@ import java.net.URL;
  * Both methods block on the network; call them off the main thread.
  */
 final class Updater {
-    /** Id of the install session this process committed, or -1. Checked by InstallStatusActivity. */
-    static volatile int pendingSession = -1;
-
     private static final String REPO = "lleirborras/android-start-stop";
     private static final String LATEST_URL = "https://api.github.com/repos/" + REPO + "/releases/latest";
     private static final String DOWNLOAD_PREFIX = "https://github.com/" + REPO + "/releases/download/";
@@ -107,7 +104,8 @@ final class Updater {
             // The installer fills in the result extras, so from Android 12 the intent must be mutable.
             int flags = PendingIntent.FLAG_UPDATE_CURRENT
                     | (Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0);
-            pendingSession = sessionId;
+            // InstallStatusActivity acts only on this session.
+            Prefs.setPendingSession(context, sessionId);
             session.commit(PendingIntent.getActivity(context, sessionId, status, flags).getIntentSender());
         } catch (IOException e) {
             session.abandon();

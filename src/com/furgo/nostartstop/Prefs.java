@@ -336,6 +336,7 @@ final class Prefs {
     private static final String UPDATE_CHECKED_AT = "update_checked_at";
     private static final String NOTIFIED_TAG = "notified_tag";
     private static final String UPDATE_FAILURE = "update_failure";
+    private static final String PENDING_SESSION = "pending_session";
 
     /** On by default: the check only asks GitHub for the latest release and never installs anything by itself. */
     static boolean autoUpdate(Context c) {
@@ -380,5 +381,15 @@ final class Prefs {
 
     static void setUpdateFailure(Context c, String reason) {
         prefs(c).edit().putString(UPDATE_FAILURE, reason).apply();
+    }
+
+    /** Id of the install session this app committed and has no result for yet, or -1. */
+    static int pendingSession(Context c) {
+        return prefs(c).getInt(PENDING_SESSION, -1);
+    }
+
+    /** Written at once: the installer may answer after this process is gone. */
+    static void setPendingSession(Context c, int session) {
+        prefs(c).edit().putInt(PENDING_SESSION, session).commit();
     }
 }
