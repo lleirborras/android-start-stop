@@ -30,6 +30,14 @@ The screenshots are from an emulator at 1920x720 with a simulated CAN box: the m
 
 ![No link to the car](docs/unreachable.png)
 
+While the state is unknown, **Started** and **Stopped** set it by hand from what the instrument cluster shows:
+
+![Unknown state with the Started and Stopped buttons](docs/set-by-hand.png)
+
+In split screen the same screen is one scrolling column, here after a tap on **Stopped**:
+
+![Split screen: one column](docs/split.png)
+
 ## What it does
 
 - **Switch stop-start**: one button that sends one switch command to the car. The command is a toggle: each tap turns stop-start off if it was on, and on if it was off.
