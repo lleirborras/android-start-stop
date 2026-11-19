@@ -445,7 +445,10 @@ class TelemetryStore {
         }
     }
 
-    /** Deletes the oldest day files while over the limits, and drops today's oldest lines when its file is too big. */
+    /**
+     * Deletes the oldest day files while over the limits, and drops today's oldest lines when its file is too big.
+     * A failed trim is thrown once the old days are pruned.
+     */
     void enforceLimits(String today) throws IOException {
         String[] all = dir.list();
         if (all != null) {
@@ -456,10 +459,16 @@ class TelemetryStore {
         }
         File current = new File(dir, today);
         // Trim below the cap so the next lines do not rewrite the whole file again.
-        if (current.length() > limits.maxTodayBytes) trimHead(current, limits.maxTodayBytes * 3 / 4);
+        IOException failure = null;
+        try {
+            if (current.length() > limits.maxTodayBytes) trimHead(current, limits.maxTodayBytes * 3 / 4);
+        } catch (IOException e) {
+            failure = e;
+        }
         Map<String, Long> sizes = new TreeMap<String, Long>();
         for (String name : names()) sizes.put(name, new File(dir, name).length());
         for (String name : prune(sizes, today, limits.maxFiles, limits.maxBytes)) new File(dir, name).delete();
+        if (failure != null) throw failure;
     }
 
     /** Drops whole lines from the start of a plain file until at most target bytes are left. */

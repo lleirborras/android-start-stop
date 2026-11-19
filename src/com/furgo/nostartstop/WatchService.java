@@ -33,7 +33,6 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
     private static final long[] OPEN_BACKOFF_MS = {1_000, 2_000, 4_000, 8_000, 15_000};
     private static final long SILENT_MS = 60_000;
     private static final long MAX_REOPEN_MS = 10 * 60_000;
-    private static final long BUSY_RETRY_MS = 2_000;
     private static final LogBudget POWER_LINES = new LogBudget(60);
     private static final LogBudget AUTO_LINES = new LogBudget(50);
     private static final LogBudget WATCH_LINES = new LogBudget(50);
@@ -42,8 +41,83 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
     private static final LogBudget SILENT_LINES = new LogBudget(5);
 
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private final AutoSwitch auto = new AutoSwitch();
-    private final PowerWatch power = new PowerWatch();
+    private final WatchDecisions decisions = new WatchDecisions(new WatchDecisions.Shell() {
+        @Override
+        public long now() {
+            return SystemClock.elapsedRealtime();
+        }
+
+        @Override
+        public boolean ignitionOff() {
+            return Prefs.ignitionOff(WatchService.this);
+        }
+
+        @Override
+        public long lastSwitchElapsed() {
+            return Prefs.lastSwitchElapsed(WatchService.this);
+        }
+
+        @Override
+        public boolean switchBusy() {
+            return BootService.running;
+        }
+
+        @Override
+        public void ignitionOffNow(boolean off) {
+            ignitionOffNow = off;
+        }
+
+        @Override
+        public void newWake(String source, int event) {
+            Prefs.newWake(WatchService.this, source, event);
+        }
+
+        @Override
+        public void ignitionEvent(int event) {
+            Prefs.ignitionEvent(WatchService.this, event);
+        }
+
+        @Override
+        public void assumedEnd(String why) {
+            Prefs.assumedEnd(WatchService.this, why);
+        }
+
+        @Override
+        public void assumedEngineStart(boolean switchedDuringCrank) {
+            Prefs.assumedEngineStart(WatchService.this, switchedDuringCrank);
+        }
+
+        @Override
+        public void autoLog(String line) {
+            WatchService.this.autoLog(line);
+        }
+
+        @Override
+        public void cancelTicks() {
+            handler.removeCallbacks(tick);
+        }
+
+        @Override
+        public void tickNow() {
+            handler.post(tick);
+        }
+
+        @Override
+        public void tickIn(long ms) {
+            handler.postDelayed(tick, ms);
+        }
+
+        @Override
+        public void sendSwitch() {
+            Intent i = new Intent(WatchService.this, BootService.class);
+            try {
+                if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
+                else startService(i);
+            } catch (RuntimeException e) {
+                WatchService.this.autoLog("switch service not started: " + e);
+            }
+        }
+    });
     private CanBox canBox;
     private int openAttempt = -1;   // -1 while not trying
     private boolean linkOpen;
@@ -53,7 +127,6 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
     private boolean quietReopen;
     private boolean gaveUp;
     private int lastPowerState = -1;
-    private long armedAt;
 
     static void start(Context c, String how) {
         if (!Prefs.applyAtBoot(c)) return;
@@ -109,7 +182,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
                 canBox.close();
                 linkOpen = false;
                 forgetSeen();
-                power.linkClosed();
+                decisions.linkClosed();
                 quietReopen = !SILENT_LINES.take(now);
                 if (!quietReopen) LogFile.append(WatchService.this, "watch: link silent, reopened");
                 Prefs.assumedEnd(WatchService.this, "link silent");
@@ -126,7 +199,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
     private final Runnable tick = new Runnable() {
         @Override
         public void run() {
-            act(auto.onTick(SystemClock.elapsedRealtime()));
+            decisions.onTick(SystemClock.elapsedRealtime());
         }
     };
 
@@ -147,12 +220,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
             registerReceiver(receiver, f);
             handler.postDelayed(health, SILENT_MS);
         }
-        if (PowerWatch.startIsIgnitionOn(Prefs.ignitionOff(this), how, auto.armed(),
-                power.offSeenHere(SystemClock.elapsedRealtime()))) {
-            Prefs.newWake(this, "ignition on", WakeRules.IGNITION_ON_CYCLE);
-            auto.arm(SystemClock.elapsedRealtime(), false);
-            armed("ignition on");
-        }
+        decisions.onStart(how);
         ensureOpen();
         return START_STICKY;
     }
@@ -183,29 +251,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
             lastPowerState = state;
             if (POWER_LINES.take(lastMessageAt)) LogFile.append(this, "power state " + state);
         }
-        int event = power.onState(state, lastMessageAt);
-        if (state == PowerWatch.STATE_AWAKE || state == PowerWatch.STATE_CRANK) ignitionOffNow = false;
-        if (event == PowerWatch.IGNITION_OFF) {
-            ignitionOffNow = true;
-            Prefs.ignitionEvent(this, WakeRules.OFF_SEEN);
-            Prefs.assumedEnd(this, "ignition off");
-            handler.removeCallbacks(tick);
-            if (auto.disarm()) autoLog("ignition off, nothing sent");
-        } else if (state == PowerWatch.STATE_CRANK) {
-            auto.onCrankStart(lastMessageAt);
-        } else if (event == PowerWatch.CRANK_END) {
-            autoLog("crank seen");
-            boolean fresh = auto.onCrank(lastMessageAt, Prefs.lastSwitchElapsed(this));
-            if (fresh) Prefs.newWake(this, "engine start", WakeRules.CRANK_CYCLE);
-            else {
-                Prefs.ignitionEvent(this, WakeRules.CRANK_CYCLE);
-                Prefs.assumedEngineStart(this, auto.switchedDuringCrank());
-            }
-            armed(fresh ? "engine start" : "engine start, same cycle");
-        } else if (state == PowerWatch.STATE_AWAKE) {
-            auto.crankOver();
-            handler.post(tick);
-        }
+        decisions.onPowerState(state, lastMessageAt);
     }
 
     @Override
@@ -213,12 +259,12 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
         heard();
         seenCentivolts = centivolts;
         seenCentivoltsAt = lastMessageAt;
-        if (auto.armed() && ARMED_BATTERY_LINES.take(lastMessageAt)) {
-            long ms = lastMessageAt - armedAt;
+        if (decisions.armed() && ARMED_BATTERY_LINES.take(lastMessageAt)) {
+            long ms = lastMessageAt - decisions.armedAt();
             LogFile.append(this, "auto: battery " + Protocol.volts(centivolts) + " V, " + ms / 1000 + "." + ms % 1000 / 100
                     + " s after arming");
         }
-        act(auto.onBattery(centivolts, lastMessageAt));
+        decisions.onBattery(centivolts, lastMessageAt);
     }
 
     @Override
@@ -255,42 +301,6 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
         if (openAttempt >= 0 || linkOpen) return;
         openAttempt = 0;
         handler.post(openTick);
-    }
-
-    private void armed(String why) {
-        armedAt = SystemClock.elapsedRealtime();
-        handler.removeCallbacks(tick);
-        handler.postDelayed(tick, AutoSwitch.SETTLE_MS);
-        handler.postDelayed(tick, AutoSwitch.GIVE_UP_MS);
-        autoLog(why + ", waiting for the engine to run");
-    }
-
-    private void act(int what) {
-        if (what == AutoSwitch.WAIT) return;
-        handler.removeCallbacks(tick);
-        if (what == AutoSwitch.GIVE_UP) {
-            autoLog("engine not seen running within " + AutoSwitch.GIVE_UP_MS / 60_000 + " min, nothing sent");
-            return;
-        }
-        if (BootService.running) {
-            boolean first = !auto.deferring();
-            if (auto.defer(SystemClock.elapsedRealtime())) {
-                if (first) autoLog("another switch is still being sent, waiting");
-                handler.postDelayed(tick, BUSY_RETRY_MS);
-            } else {
-                autoLog("another switch was still being sent after " + AutoSwitch.BUSY_MS / 1000 + " s, nothing sent");
-            }
-            return;
-        }
-        autoLog("engine running (" + Protocol.volts(auto.newest()) + " V), switching");
-        Prefs.ignitionEvent(this, WakeRules.FIRED);
-        Intent i = new Intent(this, BootService.class);
-        try {
-            if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
-            else startService(i);
-        } catch (RuntimeException e) {
-            autoLog("switch service not started: " + e);
-        }
     }
 
     private Notification buildNotification() {
