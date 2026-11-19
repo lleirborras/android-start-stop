@@ -344,6 +344,8 @@ Merging a pull request into `master` publishes a release automatically, dependin
 
 The release is tagged `vX.Y.Z` on the merge commit and has `nostartstop-vX.Y.Z.apk` attached. Its notes are the pull request's title and description, so write the description as a changelog for someone installing the APK. Commits pushed straight to `master` without a pull request do not release.
 
+Runs for `master` wait in a queue and go one at a time, so pull requests merged quickly one after another each get their own release. A run does not release when the latest tag already contains its commit: a queued run that started after a later merge's run, or a re-run of a run that already released.
+
 To release by hand instead, push a tag (the notes are then GitHub's generated list of changes):
 
 ```sh
