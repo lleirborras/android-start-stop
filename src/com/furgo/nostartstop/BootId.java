@@ -14,6 +14,16 @@ final class BootId {
         return "time " + Math.round((wallMs - elapsedMs) / 10_000.0);
     }
 
+    /**
+     * The id to use where the boot count is missing. The wall clock can jump within one boot, which changes the id
+     * from {@link #of}; the uptime only goes back at a reboot. So the stored id, last seen at storedElapsedMs, is kept
+     * unless the uptime is below that. A reboot first read later in its uptime than that keeps the old id too.
+     * stored is null when there is none.
+     */
+    static String keep(String stored, long storedElapsedMs, String fresh, long elapsedMs) {
+        return stored != null && elapsedMs >= storedElapsedMs ? stored : fresh;
+    }
+
     /** For the log, for example "boot count 7, up 42 s". */
     static String facts(int bootCount, long elapsedMs) {
         return "boot count " + (bootCount >= 0 ? String.valueOf(bootCount) : "unknown") + ", " + up(elapsedMs);
