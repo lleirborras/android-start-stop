@@ -28,13 +28,15 @@ final class LogFile {
     static String append(Context c, String line) {
         String stamped = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date()) + "  " + line;
         try {
-            File f = file(c);
-            if (f.length() > MAX_BYTES) f.renameTo(new File(f.getPath() + ".1"));
-            FileWriter w = new FileWriter(f, true);
-            try {
-                w.write(stamped + "\n");
-            } finally {
-                w.close();
+            synchronized (LogFile.class) {
+                File f = file(c);
+                if (f.length() > MAX_BYTES) f.renameTo(new File(f.getPath() + ".1"));
+                FileWriter w = new FileWriter(f, true);
+                try {
+                    w.write(stamped + "\n");
+                } finally {
+                    w.close();
+                }
             }
         } catch (IOException e) {
             Log.w("NoStartStop", "log file: " + e);
