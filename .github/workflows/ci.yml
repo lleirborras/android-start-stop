@@ -59,8 +59,10 @@ jobs:
     needs: [test, security]
     runs-on: ubuntu-latest
     permissions:
-      contents: write        # create the release and its tag
+      contents: read
       pull-requests: read    # find the merged pull request's branch name
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -114,23 +116,15 @@ jobs:
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
+      # Signed with a debug key made on the runner; the release job signs it again with the release key.
       - name: Build APK
         env:
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
-          RELEASE_KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_B64 }}
-          KS_PASS: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
           VERSION_CODE: ${{ github.run_number }}
           # Public, write-only PostHog project key; diagnostics are left out of the build when unset.
           POSTHOG_KEY: ${{ vars.POSTHOG_KEY }}
           POSTHOG_HOST: ${{ vars.POSTHOG_HOST }}
         run: |
-          if [ -n "$RELEASE_KEYSTORE_B64" ]; then
-            echo "$RELEASE_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.p12"
-            export KEYSTORE="$RUNNER_TEMP/release.p12" KEY_ALIAS=release
-          elif [ -n "$RELEASE_TAG" ]; then
-            echo "::error::RELEASE_KEYSTORE_B64 secret is missing; refusing to release a debug-signed APK"
-            exit 1
-          fi
           if [ -n "$RELEASE_TAG" ]; then
             export VERSION_NAME="${RELEASE_TAG#v}"
           else
@@ -157,11 +151,51 @@ jobs:
           name: nostartstop-apk
           path: build/nostartstop.apk
 
+  # Runs no code from the repository: it only signs and publishes the APK the build job made.
+  release:
+    needs: build
+    if: github.event_name == 'push' && needs.build.outputs.tag != ''
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write        # create the release and its tag
+      pull-requests: read    # find the merged pull request for the notes
+    env:
+      RELEASE_TAG: ${{ needs.build.outputs.tag }}
+    steps:
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android SDK packages
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;34.0.0" > /dev/null
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: nostartstop-apk
+          path: build
+
+      - name: Sign APK
+        env:
+          RELEASE_KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$RELEASE_KEYSTORE_B64" ]; then
+            echo "::error::RELEASE_KEYSTORE_B64 secret is missing; refusing to release a debug-signed APK"
+            exit 1
+          fi
+          echo "$RELEASE_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.p12"
+          bt="$ANDROID_HOME/build-tools/34.0.0"
+          "$bt/apksigner" sign --ks "$RUNNER_TEMP/release.p12" --ks-key-alias release \
+            --ks-pass env:KS_PASS --key-pass env:KS_PASS build/nostartstop.apk
+          rm "$RUNNER_TEMP/release.p12"
+          "$bt/apksigner" verify build/nostartstop.apk
+
       - name: Publish release
-        if: steps.version.outputs.tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          GH_REPO: ${{ github.repository }}    # no checkout here for gh to read it from
         run: |
           apk="nostartstop-$RELEASE_TAG.apk"
           cp build/nostartstop.apk "$apk"

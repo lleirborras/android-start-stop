@@ -326,7 +326,8 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on every push to `master` and o
 
 - **test**: `shellcheck` on the scripts and the unit tests (`sh test.sh`). The tests cover the CAN box frame encoding, the echo bit, the switch value and the parsing of the logged diagnostic data in `Protocol.java`, the boot id and the boot facts in `BootId.java`, the ignition cycle rules in `WakeRules.java`, the reading of the power state (ignition off, engine crank) in `PowerWatch.java`, when the automatic switch fires in `AutoSwitch.java`, the assumed stop-start state and its log lines in `AssumedState.java`, the log caps in `LogBudget.java`, the diagnostics storage (per-day files, compression, upload order and size limits) in `TelemetryStore.java`, and the version bump rules; they need only a JDK.
 - **security**: `gitleaks` scans the commits for leaked secrets and `zizmor` audits the workflow file. Actions are pinned to commit SHAs.
-- **build**: compiles with javac warnings as errors, builds the APK, checks its contents (launcher activity, boot components, and that the `TWUtil` stub is not packaged) and keeps it as a workflow artifact.
+- **build**: compiles with javac warnings as errors, builds the APK, checks its contents (launcher activity, boot components, and that the `TWUtil` stub is not packaged) and keeps it as a workflow artifact. That APK is signed with a debug key made on the runner. The job has no access to the release key.
+- **release**: only when a release was decided (see below). Signs the APK from the build job with the release key and publishes it. It runs no code from the repository.
 
 Nothing in CI talks to a head unit or a CAN box.
 
@@ -351,7 +352,7 @@ git tag v0.2.0 && git push origin v0.2.0
 
 [Renovate](https://docs.renovatebot.com/) (`renovate.json`) opens pull requests for new versions of the GitHub Actions (keeping them pinned to commit SHAs) and the pinned JDK patch level. It needs the Renovate GitHub App installed on the repository.
 
-Releases are signed with the key in the repository secrets `RELEASE_KEYSTORE_B64` (base64 of a PKCS12 keystore, alias `release`) and `RELEASE_KEYSTORE_PASSWORD`. A release build fails if they are missing. Keep a copy of that keystore: if it is lost, later releases cannot update earlier installs.
+Releases are signed with the key in the secrets `RELEASE_KEYSTORE_B64` (base64 of a PKCS12 keystore, alias `release`) and `RELEASE_KEYSTORE_PASSWORD`. They belong to the GitHub environment `release`, which only `master` and `v*` tags may use, so only the release job can read them. A release fails if they are missing. Keep a copy of that keystore: if it is lost, later releases cannot update earlier installs.
 
 ## License
 
