@@ -147,9 +147,11 @@ public class TelemetryStoreTest {
         s.rotate(TODAY);
         check("merged", Arrays.asList("{\"a\":1}", "{\"a\":2}", "{\"a\":3}").equals(lines(gz)));
         check("today untouched", Collections.singletonList("{\"b\":1}").equals(lines(new File(dir, TODAY))));
+        check("count, plain and compressed", s.count() == 4);
 
         s.deleteAll();
         check("deleteAll removes the directory", !dir.exists());
+        check("count of nothing", s.count() == 0);
     }
 
     private static void tidyOnlyWhenNeeded() throws IOException {

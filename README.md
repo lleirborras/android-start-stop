@@ -38,6 +38,10 @@ In split screen the same screen is one scrolling column:
 
 ![Split screen: one column](docs/split.png)
 
+In builds that can share diagnostics, the line under the log shows when log lines are being sent:
+
+![Line under the log: sending 2 lines](docs/diagnostics.png)
+
 ## What it does
 
 - **Switch stop-start**: one button that sends one switch command to the car. The command is a toggle: each tap turns stop-start off if it was on, and on if it was off.
@@ -58,7 +62,7 @@ In split screen the same screen is one scrolling column:
 - **Log**: the commands sent, the CAN box status frames, the CAN box function frame, what the automatic switch saw and did (ignition, engine starts, battery voltage), the assumed state, boot, screen, shutdown and network events, and any errors. See [Getting the log off the head unit](#getting-the-log-off-the-head-unit).
 - **Check for updates**: downloads and installs the latest release when you ask for it.
 - **Check for updates automatically**: on by default. About once a day, and after a boot once there is a connection, the app checks for a new release and shows a notification. It never installs by itself. See [Updating from the app](#updating-from-the-app).
-- **Share diagnostics**: asked on first launch, with a switch to change it later. Sends the app's log lines to the developer. Only in builds made with a PostHog key, such as releases. See [Diagnostics](#diagnostics).
+- **Share diagnostics**: asked on first launch, with a switch to change it later. Sends the app's log lines to the developer. The line under the log shows what it is doing: off, lines waiting, sending or sent. Only in builds made with a PostHog key, such as releases. See [Diagnostics](#diagnostics).
 
 There is no "keep it off" or lock option: the vendor app's "permanently closed" setting has no effect on this van, and stop-start is on again after every engine start whatever it is set to.
 
@@ -162,6 +166,19 @@ It is not verified on the van yet. It is a model, not a reading from the car. It
 ## Diagnostics
 
 The first time a release build is opened it asks **Help fix problems?**, with **Share** and **Don't share**. Nothing is sent before you answer. If you choose **Share**, each line the app writes to its log is also sent to the developer's [PostHog](https://posthog.com) project, so problems can be diagnosed without copying the log file by hand. The **Share diagnostics** switch on the main screen changes your answer at any time. With **Record car data** on, the log also holds raw car data that may include vehicle details. Lines are uploaded in batches, a few seconds after they are logged.
+
+The line under the log on the main screen shows what the app is doing with them. It is only there in builds that can share diagnostics, and it cannot be tapped.
+
+| Line | Dot | Meaning |
+|---|---|---|
+| `Diagnostics off` | grey ring | Sharing is off. Nothing is stored for sending and nothing is sent. |
+| `Diagnostics on, nothing waiting` | green | Sharing is on. Nothing was sent since the app started. |
+| `3 lines waiting to send` | grey | Lines are stored and go out in the next batch. |
+| `Sending 3 lines…` | green, pulsing | A request to PostHog is on its way. |
+| `Sending: 500 of 1240 lines` | green, pulsing | A backlog, for example older days stored while offline, goes out in requests of up to 500 lines. The rule above the line fills from left to right as they go. |
+| `Sent 3 lines at 14:32` | green | The last batch went out. Shown for 8 seconds. |
+| `All sent at 14:32` | green | Nothing is waiting; the time is that of the last batch. |
+| `Send failed, 3 lines waiting` | amber | The last upload failed, for example with no network. The lines stay stored for the next try. |
 
 What is sent with each line:
 

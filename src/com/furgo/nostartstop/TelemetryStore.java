@@ -179,6 +179,29 @@ class TelemetryStore {
         return names;
     }
 
+    /** Lines stored and not sent yet. A file that cannot be read counts for what was read of it. */
+    int count() {
+        int n = 0;
+        for (String name : names()) {
+            try {
+                BufferedReader in = open(new File(dir, name));
+                if (in == null) continue;
+                try {
+                    String line;
+                    while ((line = readLine(in)) != null) {
+                        if (!line.isEmpty()) n++;
+                    }
+                } finally {
+                    in.close();
+                }
+            } catch (IOException | OutOfMemoryError e) {
+                warnings.warn("not counted " + name + ": " + e);
+            }
+        }
+        truncated = false;
+        return n;
+    }
+
     /** Appends an event; compresses finished days and applies the limits when the day changed or enough was written. */
     void append(String day, String line) throws IOException {
         if (!day.equals(tidiedFor) || appendedSinceTidy >= limits.tidyEveryBytes) tidy(day);
