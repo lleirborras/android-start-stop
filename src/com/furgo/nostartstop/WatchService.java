@@ -53,7 +53,6 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
     private boolean quietReopen;
     private int lastPowerState = -1;
     private long armedAt;
-    private boolean offSeenHere;
 
     static void start(Context c, String how) {
         if (!Prefs.applyAtBoot(c)) return;
@@ -140,7 +139,8 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
             registerReceiver(receiver, f);
             handler.postDelayed(health, SILENT_MS);
         }
-        if (PowerWatch.startIsIgnitionOn(Prefs.ignitionOff(this), how, auto.armed(), offSeenHere)) {
+        if (PowerWatch.startIsIgnitionOn(Prefs.ignitionOff(this), how, auto.armed(),
+                power.offSeenHere(SystemClock.elapsedRealtime()))) {
             Prefs.newWake(this, "ignition on", WakeRules.IGNITION_ON_CYCLE);
             auto.arm(SystemClock.elapsedRealtime(), false);
             armed("ignition on");
@@ -178,7 +178,6 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
         int event = power.onState(state, lastMessageAt);
         if (state == PowerWatch.STATE_AWAKE || state == PowerWatch.STATE_CRANK) ignitionOffNow = false;
         if (event == PowerWatch.IGNITION_OFF) {
-            offSeenHere = true;
             ignitionOffNow = true;
             Prefs.ignitionEvent(this, WakeRules.OFF_SEEN);
             Prefs.assumedEnd(this, "ignition off");
