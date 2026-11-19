@@ -12,7 +12,7 @@ find test -name '*.java' -exec javac -Xlint:all -Werror -d "$out" \
     src/com/furgo/nostartstop/LogBudget.java src/com/furgo/nostartstop/TelemetryStore.java \
     src/com/furgo/nostartstop/PowerWatch.java src/com/furgo/nostartstop/AssumedState.java \
     src/com/furgo/nostartstop/ManualSwitch.java src/com/furgo/nostartstop/Feedback.java \
-    src/com/furgo/nostartstop/ShareStatus.java {} +
+    src/com/furgo/nostartstop/ShareStatus.java src/com/furgo/nostartstop/WatchDecisions.java {} +
 java -cp "$out" com.furgo.nostartstop.ProtocolTest
 java -cp "$out" com.furgo.nostartstop.BootIdTest
 java -cp "$out" com.furgo.nostartstop.WakeRulesTest
@@ -22,6 +22,7 @@ java -cp "$out" com.furgo.nostartstop.FeedbackTest
 java -cp "$out" com.furgo.nostartstop.ShareStatusTest
 java -cp "$out" com.furgo.nostartstop.PowerWatchTest
 java -cp "$out" com.furgo.nostartstop.AssumedStateTest
+java -cp "$out" com.furgo.nostartstop.WatchDecisionsTest
 java -cp "$out" com.furgo.nostartstop.LogBudgetTest
 java -cp "$out" com.furgo.nostartstop.VersionTest
 java -cp "$out" com.furgo.nostartstop.UpdateCheckTest
