@@ -1,5 +1,7 @@
 package com.furgo.nostartstop;
 
+import android.animation.ObjectAnimator;
+import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Context;
@@ -20,6 +22,7 @@ import android.os.SystemClock;
 import android.text.Layout;
 import android.text.SpannableStringBuilder;
 import android.text.TextPaint;
+import android.text.TextUtils;
 import android.text.style.ForegroundColorSpan;
 import android.text.style.RelativeSizeSpan;
 import android.util.DisplayMetrics;
@@ -28,6 +31,7 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.Window;
+import android.view.animation.LinearInterpolator;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -60,6 +64,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private static final long REQUERY_MS = 5000;
     private static final long STALE_MS = 12000;
     private static final long NOTE_MS = 3000, ANSWER_MS = 3000, REVERT_MS = 4000;
+    private static final long SHARE_SENT_MS = 8000;
 
     private static final int LINK_WAITING = 0, LINK_LIVE = 1, LINK_DOWN = -1;
 
@@ -84,10 +89,13 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private float density;
     private TextView linkView;
     private TextView updateView;
+    private TextView startView;      // "Background start: On/Off", opens Android's notification access screen
     private boolean updateBusy;
     private String updateLabel;      // what the update button shows, kept across a rebuild of the screen
     private int updateColor;
     private boolean updatePrimary;
+    private AlertDialog startDialog;
+    private Boolean startShown;      // the background start state last drawn, to log a change made in Settings
     private Updater.Release available;   // non-null once a newer release was found
     private Toggle bootSwitch;
     private boolean askingAboutDiagnostics;
@@ -95,6 +103,11 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private Toggle captureSwitch;
     private Toggle autoUpdateSwitch;
     private TextView logView;
+    private TextView shareText;      // null when the build has no PostHog key
+    private View shareDot;
+    private View shareFill, shareRest;   // the rule above the line, filled as a send of several requests goes on
+    private ObjectAnimator sharePulse;
+    private boolean shareLive;       // resumed: a rebuild of the screen while paused must not start the pulse or a timer
     private ScrollView logScroll;
     private TextView feedback;
     private TextView switchButton;
@@ -174,6 +187,14 @@ public class MainActivity extends Activity implements CanBox.Listener {
             setContentView(buildUi());
             renderLog();
             render();
+            renderShare();
+        }
+    };
+
+    private final Runnable shareChanged = new Runnable() {
+        @Override
+        public void run() {
+            renderShare();
         }
     };
 
@@ -311,6 +332,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     protected void onDestroy() {
         watch.stop();
         handler.removeCallbacks(relayout);
+        if (startDialog != null) startDialog.dismiss();
         super.onDestroy();
     }
 
@@ -356,6 +378,10 @@ public class MainActivity extends Activity implements CanBox.Listener {
         handler.postDelayed(requery, REQUERY_MS);
         askAboutDiagnostics();
         UpdateJob.onResult = jobDone;
+        Telemetry.onChange = shareChanged;
+        shareLive = true;
+        Telemetry.refresh(this);
+        renderShare();
         showStoredUpdate();
         UpdateJob.schedule(this, true);
     }
@@ -369,6 +395,10 @@ public class MainActivity extends Activity implements CanBox.Listener {
         BootService.onRunningChanged = null;
         Prefs.onAssumedChanged = null;
         UpdateJob.onResult = null;
+        Telemetry.onChange = null;
+        shareLive = false;
+        handler.removeCallbacks(shareChanged);
+        stopSharePulse();
         phase = IDLE;
         box.close();
         opened = false;
@@ -616,6 +646,37 @@ public class MainActivity extends Activity implements CanBox.Listener {
         setTelemetry(!Prefs.telemetry(this));
     }
 
+    /** Explains the notification access the background start needs, then opens Android's screen for it. */
+    private void onStartTap() {
+        if (!StartListener.available(this)) {
+            flash("This head unit does not allow a background start.");
+            return;
+        }
+        boolean on = StartListener.enabled(this);
+        startDialog = new AlertDialog.Builder(this)
+                .setTitle(on ? "Background start is on" : "Start with the head unit?")
+                .setMessage("Android can start this app in the background when the head unit powers on or wakes, "
+                        + "so Switch off at engine start also works when another app was on screen.\n\n"
+                        + "It uses Android's notification access, because Android starts apps that have it. "
+                        + "This app does not read any notification.\n\n"
+                        + (on ? "To turn it off, switch off No Start-Stop on the next screen."
+                        : "On the next screen, switch on No Start-Stop."))
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Open settings", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        try {
+                            startActivity(new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"));
+                            onLog("background start: opened notification access settings");
+                        } catch (RuntimeException e) {
+                            onLog("background start: no notification access settings: " + e);
+                            flash("This head unit has no notification access screen.");
+                        }
+                    }
+                })
+                .show();
+    }
+
     /** Asked once, on the first launch of a build that can share diagnostics. Nothing is sent before an answer. */
     private void askAboutDiagnostics() {
         if (!Telemetry.configured() || Prefs.telemetryAnswered(this) || askingAboutDiagnostics) return;
@@ -655,6 +716,86 @@ public class MainActivity extends Activity implements CanBox.Listener {
         }
         UpdateJob.schedule(this, false);
         renderBoot();
+        Telemetry.refresh(this);
+        renderShare();
+    }
+
+    /** The line under the log: what diagnostics sharing is doing right now. */
+    private void renderShare() {
+        if (shareText == null) return;
+        handler.removeCallbacks(shareChanged);
+        int n = Telemetry.waiting;
+        long sentAt = Telemetry.lastSentAt;
+        String s;
+        int color = MUTED, dot = ACCENT;
+        boolean pulse = false;
+        float fill = 0;
+        if (!Prefs.telemetry(this)) {
+            s = "Diagnostics off";
+            dot = 0;
+        } else if (Telemetry.sending) {
+            int done = Telemetry.sendDone, total = Telemetry.sendTotal;
+            s = done > 0 && total > done ? "Sending: " + done + " of " + lines(total)
+                    : n > 0 ? "Sending " + lines(n) + "…" : "Sending…";
+            fill = total > 0 ? Math.min(1f, (float) done / total) : 0;
+            color = TEXT;
+            pulse = true;
+        } else if (Telemetry.failed && n > 0) {
+            s = "Send failed, " + stored(n) + " waiting";
+            dot = WARN;
+        } else if (n > 0) {
+            s = stored(n) + " waiting to send";
+            dot = MUTED;
+        } else if (sentAt > 0) {
+            long age = System.currentTimeMillis() - sentAt;
+            if (age >= 0 && age < SHARE_SENT_MS) {
+                s = "Sent " + lines(Telemetry.lastSent) + " at " + clock(sentAt);
+                color = TEXT;
+                if (shareLive) handler.postDelayed(shareChanged, SHARE_SENT_MS - age);
+            } else {
+                s = "All sent at " + clock(sentAt);
+            }
+        } else {
+            s = n < 0 ? "Diagnostics on" : "Diagnostics on, nothing waiting";
+        }
+        shareText.setText(s);
+        shareText.setTextColor(color);
+        if (((LinearLayout.LayoutParams) shareFill.getLayoutParams()).weight != fill) {
+            shareFill.setLayoutParams(new LinearLayout.LayoutParams(0, -1, fill));
+            shareRest.setLayoutParams(new LinearLayout.LayoutParams(0, -1, 1 - fill));
+        }
+        GradientDrawable d = new GradientDrawable();
+        d.setShape(GradientDrawable.OVAL);
+        if (dot == 0) d.setStroke(dp(1.5f), OFF_EDGE);
+        else d.setColor(dot);
+        shareDot.setBackgroundDrawable(d);
+        if (!pulse || !shareLive) {
+            stopSharePulse();
+        } else if (sharePulse == null) {
+            sharePulse = ObjectAnimator.ofFloat(shareDot, "alpha", 1f, 0.35f);
+            sharePulse.setDuration(700);
+            sharePulse.setInterpolator(new LinearInterpolator());
+            sharePulse.setRepeatCount(ValueAnimator.INFINITE);
+            sharePulse.setRepeatMode(ValueAnimator.REVERSE);
+            sharePulse.start();
+        }
+    }
+
+    private void stopSharePulse() {
+        if (sharePulse == null) return;
+        sharePulse.cancel();
+        sharePulse = null;
+        shareDot.setAlpha(1f);
+    }
+
+    /** For example "1240 lines from 3 days". */
+    private static String stored(int n) {
+        int days = Telemetry.waitingDays;
+        return days > 1 ? lines(n) + " from " + days + " days" : lines(n);
+    }
+
+    private static String lines(int n) {
+        return n == 1 ? "1 line" : n + " lines";
     }
 
     /** Adds a tappable setting card with a drawn switch to a horizontal row and returns the switch. */
@@ -808,6 +949,13 @@ public class MainActivity extends Activity implements CanBox.Listener {
     }
 
     private void renderBoot() {
+        boolean startOn = StartListener.enabled(this);
+        if (startShown == null || startOn != startShown) {
+            if (startShown != null) onLog(startOn ? "background start on" : "background start off");
+            startShown = startOn;
+        }
+        startView.setText("Background start: " + (startOn ? "On" : "Off"));
+        startView.setTextColor(startOn ? TEXT : MUTED);
         renderSwitch(bootSwitch, Prefs.applyAtBoot(this));
         renderSwitch(captureSwitch, Prefs.captureFrames(this));
         if (telemetrySwitch != null) renderSwitch(telemetrySwitch, Prefs.telemetry(this));
@@ -906,6 +1054,31 @@ public class MainActivity extends Activity implements CanBox.Listener {
         LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(-1, 0, 1f);
         scrollLp.topMargin = dp(8);
         logCard.addView(logScroll, scrollLp);
+        stopSharePulse();
+        if (Telemetry.configured()) {
+            LinearLayout rule = new LinearLayout(this);
+            rule.setBackgroundColor(CARD_EDGE);
+            shareFill = new View(this);
+            shareFill.setBackgroundColor(ACCENT);
+            shareRest = new View(this);
+            rule.addView(shareFill, new LinearLayout.LayoutParams(0, -1, 0));
+            rule.addView(shareRest, new LinearLayout.LayoutParams(0, -1, 1));
+            LinearLayout.LayoutParams ruleLp = new LinearLayout.LayoutParams(-1, dp(2));
+            ruleLp.topMargin = dp(8);
+            logCard.addView(rule, ruleLp);
+            LinearLayout share = new LinearLayout(this);
+            share.setGravity(Gravity.CENTER_VERTICAL);
+            shareDot = new View(this);
+            share.addView(shareDot, new LinearLayout.LayoutParams(dp(8), dp(8)));
+            shareText = text("", 12, MUTED, false);
+            shareText.setSingleLine(true);
+            shareText.setEllipsize(TextUtils.TruncateAt.END);
+            LinearLayout.LayoutParams shareTextLp = new LinearLayout.LayoutParams(0, -2, 1f);
+            shareTextLp.leftMargin = dp(8);
+            share.addView(shareText, shareTextLp);
+            share.setPadding(0, dp(8), 0, 0);
+            logCard.addView(share, new LinearLayout.LayoutParams(-1, -2));
+        }
 
         LinearLayout root = new LinearLayout(this);
         root.setBackgroundColor(BG);
@@ -962,6 +1135,16 @@ public class MainActivity extends Activity implements CanBox.Listener {
                 onUpdateClick();
             }
         });
+        startView = text("", 14, MUTED, true);
+        startView.setGravity(Gravity.CENTER);
+        startView.setPadding(dp(20), 0, dp(20), 0);
+        startView.setBackgroundDrawable(pressable(0, NEUTRAL_PRESSED, 0));
+        startView.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                onStartTap();
+            }
+        });
         linkView = text("", 14, MUTED, true);
         LinearLayout.LayoutParams updateLp = new LinearLayout.LayoutParams(-2, dp(36));
         if (narrow) {
@@ -971,7 +1154,12 @@ public class MainActivity extends Activity implements CanBox.Listener {
             second.addView(linkView, new LinearLayout.LayoutParams(0, -2, 1f));
             second.addView(updateView, updateLp);
             left.addView(second, new LinearLayout.LayoutParams(-1, -2));
+            LinearLayout third = new LinearLayout(this);
+            third.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
+            third.addView(startView, new LinearLayout.LayoutParams(-2, dp(36)));
+            left.addView(third, new LinearLayout.LayoutParams(-1, -2));
         } else {
+            header.addView(startView, new LinearLayout.LayoutParams(-2, dp(36)));
             updateLp.rightMargin = dp(24);
             header.addView(updateView, updateLp);
             header.addView(linkView);

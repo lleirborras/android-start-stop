@@ -2,6 +2,8 @@ package com.furgo.nostartstop;
 
 import android.content.Context;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
 
@@ -42,6 +44,54 @@ final class Telemetry {
     private static long backoffMs;
     private static long retryAt;   // elapsedRealtime
 
+    // What the screen shows about sending. Written on the worker thread, read on the main thread.
+    /** Lines stored and not sent yet, or -1 before they were counted. */
+    static volatile int waiting = -1;
+    /** Days those lines are from. */
+    static volatile int waitingDays;
+    /** A request is on its way. */
+    static volatile boolean sending;
+    /** While sending: the lines that were waiting when this send began, and how many of them went so far. */
+    static volatile int sendTotal, sendDone;
+    /** The last send failed. */
+    static volatile boolean failed;
+    /** Lines of the last send that sent some, and its wall clock time; 0 before the first one in this process. */
+    static volatile int lastSent;
+    static volatile long lastSentAt;
+    /** Run on the main thread after any of the above changed. Main thread only. */
+    static Runnable onChange;
+    private static final Handler MAIN = new Handler(Looper.getMainLooper());
+    private static final Runnable NOTIFY = new Runnable() {
+        @Override
+        public void run() {
+            if (onChange != null) onChange.run();
+        }
+    };
+
+    private static void changed() {
+        MAIN.removeCallbacks(NOTIFY);
+        MAIN.post(NOTIFY);
+    }
+
+    /** Counts the stored lines if that was not done yet in this process. */
+    static void refresh(Context context) {
+        if (!configured() || !Prefs.telemetry(context) || waiting >= 0) return;
+        final Context app = context.getApplicationContext();
+        WORKER.execute(new Runnable() {
+            @Override
+            public void run() {
+                if (waiting >= 0) return;
+                try {
+                    waiting = store(app).count();
+                    waitingDays = store(app).days();
+                    changed();
+                } catch (Exception e) {
+                    Log.w(TAG, "telemetry: " + e);
+                }
+            }
+        });
+    }
+
     /** False for builds made without a PostHog key, such as local builds. */
     static boolean configured() {
         return !BuildConfig.POSTHOG_KEY.isEmpty();
@@ -63,6 +113,9 @@ final class Telemetry {
                     TelemetryStore s = store(app);
                     migrate(app, s);
                     s.append(s.day(now), event(app, line, s.timestamp(now)).toString());
+                    waiting = waiting < 0 ? s.count() : waiting + 1;
+                    waitingDays = s.days();
+                    changed();
                     // After a network failure, new lines wait for the backoff or for flush().
                     if (!sendScheduled && SystemClock.elapsedRealtime() >= retryAt) {
                         sendScheduled = true;
@@ -99,7 +152,20 @@ final class Telemetry {
 
                 @Override
                 public TelemetryStore.Outcome send(List<String> events) {
-                    return post(events);
+                    if (!sending) {
+                        sendDone = 0;
+                        sendTotal = Math.max(waiting, events.size());
+                        sending = true;
+                    }
+                    changed();
+                    TelemetryStore.Outcome outcome = post(events);
+                    if (outcome != TelemetryStore.Outcome.FAILED) {
+                        sendDone += events.size();
+                        sendTotal = Math.max(sendTotal, sendDone);
+                        if (waiting >= 0) waiting = Math.max(0, waiting - events.size());
+                    }
+                    changed();
+                    return outcome;
                 }
             }, s.day(System.currentTimeMillis()));
             if (!Prefs.telemetry(app)) deleteStored(app);
@@ -114,6 +180,18 @@ final class Telemetry {
             backoffMs = 0;
             retryAt = 0;
         }
+        if (sent > 0) {
+            lastSent = sent;
+            lastSentAt = System.currentTimeMillis();
+        }
+        // Lines dropped by the limits are not subtracted anywhere: an empty store puts the number right.
+        if (store != null) {
+            waitingDays = store.days();
+            if (waitingDays == 0) waiting = 0;
+        }
+        failed = sent < 0;
+        sending = false;
+        changed();
         return sent;
     }
 
@@ -245,6 +323,11 @@ final class Telemetry {
     }
 
     private static void deleteStored(Context app) {
+        waiting = 0;
+        waitingDays = 0;
+        failed = false;
+        lastSentAt = 0;
+        changed();
         store(app).deleteAll();
         new File(app.getFilesDir(), OLD_QUEUE).delete();
         new File(app.getFilesDir(), OLD_QUEUE + ".moving").delete();

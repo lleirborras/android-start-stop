@@ -55,6 +55,7 @@ public class PowerWatchTest {
                     !PowerWatch.startIsIgnitionOn(true, how, false, true));
         }
         check("broadcast start", !PowerWatch.startIsIgnitionOn(true, PowerWatch.BY_BROADCAST, false, false));
+        check("listener start", !PowerWatch.startIsIgnitionOn(true, PowerWatch.BY_LISTENER, false, false));
         check("start without a reason", !PowerWatch.startIsIgnitionOn(true, null, false, false));
         check("start with an unknown reason", !PowerWatch.startIsIgnitionOn(true, "by someone", false, false));
 

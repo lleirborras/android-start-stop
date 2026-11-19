@@ -19,9 +19,11 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.TimeZone;
 import java.util.TreeMap;
 import java.util.zip.GZIPInputStream;
@@ -177,6 +179,36 @@ class TelemetryStore {
             if (dayOf(name) != null) names.add(name);
         }
         return names;
+    }
+
+    /** Days that have lines stored. */
+    int days() {
+        Set<String> days = new HashSet<String>();
+        for (String name : names()) days.add(dayOf(name));
+        return days.size();
+    }
+
+    /** Lines stored and not sent yet. A file that cannot be read counts for what was read of it. */
+    int count() {
+        int n = 0;
+        for (String name : names()) {
+            try {
+                BufferedReader in = open(new File(dir, name));
+                if (in == null) continue;
+                try {
+                    String line;
+                    while ((line = readLine(in)) != null) {
+                        if (!line.isEmpty()) n++;
+                    }
+                } finally {
+                    in.close();
+                }
+            } catch (IOException | OutOfMemoryError e) {
+                warnings.warn("not counted " + name + ": " + e);
+            }
+        }
+        truncated = false;
+        return n;
     }
 
     /** Appends an event; compresses finished days and applies the limits when the day changed or enough was written. */

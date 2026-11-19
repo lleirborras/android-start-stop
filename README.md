@@ -34,9 +34,21 @@ While the state is unknown, **Started** and **Stopped** set it by hand from what
 
 ![Unknown state with the Started and Stopped buttons](docs/set-by-hand.png)
 
-In split screen the same screen is one scrolling column, here after a tap on **Stopped**:
+In split screen the same screen is one scrolling column:
 
 ![Split screen: one column](docs/split.png)
+
+In builds that can share diagnostics, the line under the log shows when log lines are being sent:
+
+![Line under the log: sending 2 lines](docs/diagnostics.png)
+
+A backlog stored while offline goes out in several requests, and the rule above the line fills as they go:
+
+![Line under the log: sending 505 of 1233 lines, bar partly filled](docs/progress.png)
+
+With no network it shows how many lines, from how many days, are stored for the next try:
+
+![Line under the log: send failed, 2466 lines from 3 days waiting](docs/waiting.png)
 
 ## What it does
 
@@ -52,12 +64,13 @@ In split screen the same screen is one scrolling column, here after a tap on **S
   - "Not connected to the car. Nothing sent." for a tap while the indicator next to the title says "NO LINK TO CAR".
 
   Taps are ignored while a command is pending, for 2 seconds after each command is sent, and while **Switch off at engine start** is sending ("Switching…"), so a double tap does not switch it straight back. When idle, the card shows the last switch sent in the current ignition cycle, for example "Last switch: 08:41, automatic".
+- **Background start**: off by default; the header shows **Background start: Off** or **On**. Tap it to open Android's notification access screen and switch on No Start-Stop there. Android then starts the app in the background when the head unit powers on, and again after the app was stopped, so **Switch off at engine start** can work when another app was on screen: it then sends after the next engine crank it sees. The app reads no notification; see [background start](#background-start).
 - **Switch off at engine start**: off by default. When on, the app sends one switch command each time the car starts. The car turns stop-start on at every engine start, so one switch turns it off. See [how it works and its limits](#switch-off-at-engine-start-how-and-limits).
 - **Record car data**: off by default. When on, the log also records the raw frames the CAN box passes on from the car, engine speed (rpm) and vehicle speed, battery voltage and the head unit's identity and configuration, to help find where the car reports the real stop-start state. This data may include vehicle details (for example the VIN, speed or position), so leave it off unless you are helping with that.
 - **Log**: the commands sent, the CAN box status frames, the CAN box function frame, what the automatic switch saw and did (ignition, engine starts, battery voltage), the assumed state, boot, screen, shutdown and network events, and any errors. See [Getting the log off the head unit](#getting-the-log-off-the-head-unit).
 - **Check for updates**: downloads and installs the latest release when you ask for it.
 - **Check for updates automatically**: on by default. About once a day, and after a boot once there is a connection, the app checks for a new release and shows a notification. It never installs by itself. See [Updating from the app](#updating-from-the-app).
-- **Share diagnostics**: asked on first launch, with a switch to change it later. Sends the app's log lines to the developer. Only in builds made with a PostHog key, such as releases. See [Diagnostics](#diagnostics).
+- **Share diagnostics**: asked on first launch, with a switch to change it later. Sends the app's log lines to the developer. The line under the log shows what it is doing: off, lines waiting, sending or sent. Only in builds made with a PostHog key, such as releases. See [Diagnostics](#diagnostics).
 
 There is no "keep it off" or lock option: the vendor app's "permanently closed" setting has no effect on this van, and stop-start is on again after every engine start whatever it is set to.
 
@@ -110,6 +123,17 @@ After that the app waits until a battery reading of 13.0 V or more arrives, at l
 - If the link to the car does not come up within 30 seconds, nothing is sent.
 - If the head unit refuses the command, nothing is sent and it is not retried until the next cycle. The main screen then says "Automatic switch failed. Tap to switch." until you switch from the screen.
 
+## Background start
+
+The head unit only reopens the app that was on screen at ignition off, and its wake broadcasts never reached this app on the van. So with another app on screen, such as the phone mirroring app, nothing starts No Start-Stop and no switch is sent.
+
+Android itself starts every app that has notification access, at power on and again after the app was stopped. **Background start** uses that: the app declares a notification listener whose only job is to start the background service of **Switch off at engine start**. It asks for no notification, reads none and stores none. Turn it on or off in Android's notification access screen, which the **Background start** control in the header opens.
+
+- It does nothing while **Switch off at engine start** is off.
+- A start by the listener never counts as ignition on by itself. Android binds the listener again seconds after the head unit stops the app at ignition off, so such a start says nothing about the ignition. A service started that way sends its switch after the next engine crank it sees (power state 9, then 6).
+- Android 10 and older do not start notification listeners on low-memory devices. There a tap on the control says "This head unit does not allow a background start."
+- In an emulator Android restarted the app within seconds of a forced stop and at boot. On the van it is not verified yet, and neither is whether the service then sees the crank: the log shows `listener: connected, asleep … s since boot` and `watch: service started (by the notification listener)` when the start works, then `auto: crank seen` when the crank is seen.
+
 ## The assumed stop-start state
 
 The car turns stop-start on at every engine start, and each switch command flips it. So the app assumes stop-start is on when a cycle starts (an ignition on or an engine start it noticed), and flips the assumed state for each switch it actually sent in that cycle, by a tap or automatically, and for each **Car shows the opposite** tap. A switch sent during an engine crank counts for that engine start. The assumed state survives the app being stopped in the middle of a drive. It is only shown and logged; it does not decide whether anything is sent.
@@ -143,12 +167,26 @@ It is not verified on the van yet. It is a model, not a reading from the car. It
 - Tested on a real Jumpy head unit (Android 10). The switch command works: every command that changes bit 0 flips stop-start, and the instrument cluster shows a message each time.
 - **Switch off at engine start** works on the van: it switched stop-start off at each of 3 engine starts tested. Not verified: whether the head unit restarts the app's background service when another app was on screen at ignition off.
 - The assumed stop-start state and **Car shows the opposite** are not verified on the van yet.
+- **Background start** is not verified on the van yet.
 - The car's real stop-start state is not readable through the settings frame. The app logs the function frame (`function …` lines), a candidate for it, and with **Record car data** on the other CAN box frames (`frame …` lines) so it can be looked for.
 - "Permanently closed" does nothing on this van.
 
 ## Diagnostics
 
 The first time a release build is opened it asks **Help fix problems?**, with **Share** and **Don't share**. Nothing is sent before you answer. If you choose **Share**, each line the app writes to its log is also sent to the developer's [PostHog](https://posthog.com) project, so problems can be diagnosed without copying the log file by hand. The **Share diagnostics** switch on the main screen changes your answer at any time. With **Record car data** on, the log also holds raw car data that may include vehicle details. Lines are uploaded in batches, a few seconds after they are logged.
+
+The line under the log on the main screen shows what the app is doing with them. It is only there in builds that can share diagnostics, and it cannot be tapped.
+
+| Line | Dot | Meaning |
+|---|---|---|
+| `Diagnostics off` | grey ring | Sharing is off. Nothing is stored for sending and nothing is sent. |
+| `Diagnostics on, nothing waiting` | green | Sharing is on. Nothing was sent since the app started. |
+| `3 lines waiting to send` | grey | Lines are stored and go out in the next batch. |
+| `Sending 3 lines…` | green, pulsing | A request to PostHog is on its way. |
+| `Sending: 500 of 1240 lines` | green, pulsing | A backlog, for example older days stored while offline, goes out in requests of up to 500 lines. The rule above the line fills from left to right as they go. |
+| `Sent 3 lines at 14:32` | green | The last batch went out. Shown for 8 seconds. |
+| `All sent at 14:32` | green | Nothing is waiting; the time is that of the last batch. |
+| `Send failed, 1240 lines from 3 days waiting` | amber | The last upload failed, for example with no network. The lines stay stored for the next try. The days are named when the lines are from more than one. |
 
 What is sent with each line:
 
@@ -191,7 +229,7 @@ Each line has a date and time. Lines to look for:
 - `assumed: on (ignition on)`, `assumed: on (engine start)`, `assumed: on (engine start, same cycle)`, `assumed: off (switch sent, automatic)`, `assumed: on (switch sent, tap)`, `assumed: on (reported wrong)`, `assumed: off (set by hand)`, `assumed: unknown (ignition off)`, `assumed: unknown (automatic switch off)`, `assumed: unknown (no power messages)`, `assumed: unknown (link silent)`, `assumed: unknown (watch service not started)`: each event that sets the assumed state and why, with the state after it. An event that leaves the state as it was, such as an engine start right after an ignition on, still gets its line (at most 60 lines per 24 hours).
 - `report: car shows ON, app assumed OFF, wake 5 (ignition on), 1 switch sent, 0 reports, cycle 312 s old, last switch 300 s ago (automatic), battery 14.85 V, power state 6`: a **Car shows the opposite** tap, written before the shown state flips. `cycle N s old` counts from the ignition on; after an engine start it reads `engine start N s ago` instead. A battery or power state value older than 10 seconds gets its age, for example `battery 14.85 V 312 s ago`. Fields the app does not know are left out (at most 50 lines per 24 hours).
 - `auto: …`: what the automatic switch did, including why it sent or did not send and whether the CAN box echoed the command. `watch: …` lines come from the background service that waits for the engine.
-- `process started, pid …`, `wake <n> (<source>)`, `power state <n>` and `broadcast <action> (manifest|runtime), up … s`: what the app sees across ignition cycles, to learn how the head unit sleeps and wakes. `watch: service started (…)` says how the service was started (by the app, at boot, after update, by a broadcast or restarted by the system). Capped at 30 `wake`, 60 `power state`, 30 `broadcast` and 60 `auto: battery` lines per 24 hours; the other `auto:` and `watch:` lines are capped too.
+- `process started, pid …`, `wake <n> (<source>)`, `power state <n>` and `broadcast <action> (manifest|runtime), up … s`: what the app sees across ignition cycles, to learn how the head unit sleeps and wakes. `watch: service started (…)` says how the service was started (by the app, at boot, after update, by a broadcast, by the notification listener or restarted by the system). `listener: connected, asleep … s since boot, …` (the head unit's total sleep time, to tell a start after a wake from one right after the app was stopped) and `listener: disconnected`: Android bound or released the [background start](#background-start) listener (at most 40 lines per 24 hours). `background start on` / `off` and `background start: opened notification access settings`: the notification access as the screen last saw it, and a tap on the control. Capped at 30 `wake`, 60 `power state`, 30 `broadcast` and 60 `auto: battery` lines per 24 hours; the other `auto:` and `watch:` lines are capped too.
 - `screen off, up … s` / `screen on, up … s`, `network up (…)` / `network down`: while the app is open, at most 50 network lines each time the app starts.
 - `shutdown, up … s`: the head unit shut down cleanly. Android 9 and later only tell the app while it is running (open or in the background), so on those a missing line does not prove a power cut.
 
