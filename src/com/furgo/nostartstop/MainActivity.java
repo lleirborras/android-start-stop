@@ -63,7 +63,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private static final int MAX_LOG = 50;
     private static final long REQUERY_MS = 5000;
     private static final long STALE_MS = 12000;
-    private static final long NOTE_MS = 3000, ANSWER_MS = 3000, REVERT_MS = 4000;
+    private static final long NOTE_MS = 3000, REVERT_MS = 4000;
     private static final long SHARE_SENT_MS = 8000;
 
     private static final int LINK_WAITING = 0, LINK_LIVE = 1, LINK_DOWN = -1;
@@ -76,12 +76,8 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private boolean opened;
     private int link = LINK_WAITING;
     private long lastFrameAt;
-    // A tap first waits for a fresh status frame to pick the bit, then for the echo of the command.
-    // After any send the button stays busy for HOLD_MS, so a bounce or double tap cannot flip stop-start back.
-    private static final int IDLE = 0, AWAIT_FRAME = 1, AWAIT_ECHO = 2, HOLD = 3;
-    private static final long HOLD_MS = 2000;
-    private int phase = IDLE;
-    private long sentAt;
+    private static final long HOLD_MS = ManualSwitch.HOLD_MS;
+    private final ManualSwitch manual = new ManualSwitch();
     private String result = "";    // outcome of the last switch command
     private int resultColor = MUTED;
     private String note;           // replaces the result line for a few seconds
@@ -137,27 +133,13 @@ public class MainActivity extends Activity implements CanBox.Listener {
         }
     };
 
-    private final Runnable noFrame = new Runnable() {
+    private final Runnable phaseTimeout = new Runnable() {
         @Override
         public void run() {
-            phase = IDLE;
-            showResult("No answer from the car. Nothing sent.", WARN);
-        }
-    };
-
-    private final Runnable settle = new Runnable() {
-        @Override
-        public void run() {
-            phase = IDLE;
-            showSent();
-        }
-    };
-
-    private final Runnable noAnswer = new Runnable() {
-        @Override
-        public void run() {
-            phase = IDLE;
-            showResult("No answer from the car.", WARN);
+            int outcome = manual.timeout();
+            if (outcome == ManualSwitch.NO_FRAME) showResult("No answer from the car. Nothing sent.", WARN);
+            else if (outcome == ManualSwitch.NO_ANSWER) showResult("No answer from the car.", WARN);
+            else if (outcome == ManualSwitch.SENT) showSent();
         }
     };
 
@@ -372,7 +354,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         opened = box.open();
         if (!opened) link = LINK_DOWN;
         // A brief overlay (reverse camera, volume panel) must not cut the hold short.
-        if (sentAt != 0 && SystemClock.elapsedRealtime() < sentAt + HOLD_MS) hold();
+        if (manual.resume(SystemClock.elapsedRealtime())) hold();
         else render();
         if (opened) box.query();
         handler.postDelayed(requery, REQUERY_MS);
@@ -389,9 +371,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     @Override
     protected void onPause() {
         handler.removeCallbacks(requery);
-        handler.removeCallbacks(noFrame);
-        handler.removeCallbacks(noAnswer);
-        handler.removeCallbacks(settle);
+        handler.removeCallbacks(phaseTimeout);
         BootService.onRunningChanged = null;
         Prefs.onAssumedChanged = null;
         UpdateJob.onResult = null;
@@ -399,7 +379,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         shareLive = false;
         handler.removeCallbacks(shareChanged);
         stopSharePulse();
-        phase = IDLE;
+        manual.pause();
         box.close();
         opened = false;
         super.onPause();
@@ -409,12 +389,12 @@ public class MainActivity extends Activity implements CanBox.Listener {
     public void onEcho(boolean echo) {
         link = LINK_LIVE;
         lastFrameAt = SystemClock.elapsedRealtime();
-        if (phase == AWAIT_FRAME) {
-            handler.removeCallbacks(noFrame);
-            phase = IDLE;
+        int action = manual.frame(echo);
+        if (action == ManualSwitch.SEND) {
+            handler.removeCallbacks(phaseTimeout);
             send();
-        } else if (phase == AWAIT_ECHO && echo) {
-            handler.removeCallbacks(noAnswer);
+        } else if (action == ManualSwitch.CONFIRMED) {
+            handler.removeCallbacks(phaseTimeout);
             hold();
         } else {
             render();
@@ -433,20 +413,17 @@ public class MainActivity extends Activity implements CanBox.Listener {
             return;
         }
         Prefs.recordSwitch(this, false);
-        sentAt = SystemClock.elapsedRealtime();
-        if (bit == 0) {
-            // A cleared echo looks the same as no answer, so it cannot confirm this command.
+        if (manual.sent(bit, SystemClock.elapsedRealtime()) == ManualSwitch.HOLD) {
             hold();
             return;
         }
-        phase = AWAIT_ECHO;
-        handler.postDelayed(noAnswer, ANSWER_MS);
+        handler.postDelayed(phaseTimeout, ManualSwitch.ANSWER_MS);
         render();
     }
 
+    /** Runs the timer of a hold the phase machine has just entered. */
     private void hold() {
-        phase = HOLD;
-        handler.postDelayed(settle, Math.max(0, sentAt + HOLD_MS - SystemClock.elapsedRealtime()));
+        handler.postDelayed(phaseTimeout, manual.holdLeft(SystemClock.elapsedRealtime()));
         render();
     }
 
@@ -495,18 +472,17 @@ public class MainActivity extends Activity implements CanBox.Listener {
     }
 
     private void onSwitchTap() {
-        // A second command while one is pending would flip stop-start straight back.
-        if (phase != IDLE || BootService.running) return;
-        if (link == LINK_DOWN) {
+        int action = manual.tap(BootService.running, link == LINK_DOWN);
+        if (action == ManualSwitch.NOTHING) return;
+        if (action == ManualSwitch.NO_LINK) {
             flash("Not connected to the car. Nothing sent.");
             return;
         }
         note = null;
         handler.removeCallbacks(clearNote);
         result = "";
-        phase = AWAIT_FRAME;
         box.query();
-        handler.postDelayed(noFrame, ANSWER_MS);
+        handler.postDelayed(phaseTimeout, ManualSwitch.ANSWER_MS);
         render();
     }
 
@@ -852,7 +828,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         } else if (bootBusy) {
             feedback.setText("Switching…");
             feedback.setTextColor(MUTED);
-        } else if (result.isEmpty() && phase != IDLE) {
+        } else if (result.isEmpty() && manual.pending()) {
             feedback.setText("");
         } else if (result.isEmpty() && link == LINK_DOWN) {
             feedback.setText("This head unit did not let the app reach the car.");
@@ -868,7 +844,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
             feedback.setTextColor(resultColor);
         }
 
-        boolean pending = phase != IDLE;
+        boolean pending = manual.pending();
         boolean usable = !pending && !bootBusy && link != LINK_DOWN;
         switchButton.setText(pending ? "Sending…" : "Switch stop-start");
         switchButton.setTextColor(usable ? TEXT : MUTED);
@@ -916,7 +892,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     /** Sets the unknown state to what the user reads on the instrument cluster. Sends nothing to the car. */
     private void onSetTap(int state) {
         long now = SystemClock.elapsedRealtime();
-        if (now < reportedAt + HOLD_MS || phase != IDLE || BootService.running) return;
+        if (now < reportedAt + HOLD_MS || manual.pending() || BootService.running) return;
         if (!Prefs.setAssumedByHand(this, state)) return;
         // The row turns into "Car shows the opposite": a second tap in the same place must not flip it.
         reportedAt = now;
@@ -928,7 +904,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private void onWrongTap() {
         long now = SystemClock.elapsedRealtime();
         // A double tap would flip it straight back.
-        if (now < reportedAt + HOLD_MS || phase != IDLE || BootService.running) return;
+        if (now < reportedAt + HOLD_MS || manual.pending() || BootService.running) return;
         int result = Prefs.reportAssumedWrong(this, WatchService.seenCentivolts, WatchService.seenCentivoltsAt,
                 WatchService.seenPowerState, WatchService.seenPowerStateAt);
         if (result == Prefs.REPORT_REFUSED) return;
