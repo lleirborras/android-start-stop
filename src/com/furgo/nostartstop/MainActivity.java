@@ -40,9 +40,7 @@ import android.widget.TextView;
 import java.net.ConnectException;
 import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
-import java.text.SimpleDateFormat;
 import java.util.ArrayDeque;
-import java.util.Date;
 import java.util.Locale;
 
 public class MainActivity extends Activity implements CanBox.Listener {
@@ -451,11 +449,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     }
 
     private static String clock() {
-        return clock(System.currentTimeMillis());
-    }
-
-    private static String clock(long wallMs) {
-        return new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date(wallMs));
+        return Feedback.clock(System.currentTimeMillis());
     }
 
     private void showResult(String text, int color) {
@@ -730,11 +724,11 @@ public class MainActivity extends Activity implements CanBox.Listener {
         } else if (sentAt > 0) {
             long age = System.currentTimeMillis() - sentAt;
             if (age >= 0 && age < SHARE_SENT_MS) {
-                s = "Sent " + lines(Telemetry.lastSent) + " at " + clock(sentAt);
+                s = "Sent " + lines(Telemetry.lastSent) + " at " + Feedback.clock(sentAt);
                 color = TEXT;
                 if (shareLive) handler.postDelayed(shareChanged, SHARE_SENT_MS - age);
             } else {
-                s = "All sent at " + clock(sentAt);
+                s = "All sent at " + Feedback.clock(sentAt);
             }
         } else {
             s = n < 0 ? "Diagnostics on" : "Diagnostics on, nothing waiting";
@@ -822,26 +816,11 @@ public class MainActivity extends Activity implements CanBox.Listener {
 
         boolean bootBusy = BootService.running;
         long last = Prefs.lastSwitchAt(this);
-        if (note != null) {
-            feedback.setText(note);
-            feedback.setTextColor(WARN);
-        } else if (bootBusy) {
-            feedback.setText("Switching…");
-            feedback.setTextColor(MUTED);
-        } else if (result.isEmpty() && manual.pending()) {
-            feedback.setText("");
-        } else if (result.isEmpty() && link == LINK_DOWN) {
-            feedback.setText("This head unit did not let the app reach the car.");
-            feedback.setTextColor(MUTED);
-        } else if (result.isEmpty() && Prefs.bootSwitchFailed(this)) {
-            feedback.setText("Automatic switch failed. Tap to switch.");
-            feedback.setTextColor(WARN);
-        } else if (result.isEmpty() && last != 0) {
-            feedback.setText("Last switch: " + clock(last) + (Prefs.lastSwitchAtBoot(this) ? ", automatic" : ""));
-            feedback.setTextColor(MUTED);
-        } else {
-            feedback.setText(result);
-            feedback.setTextColor(resultColor);
+        Feedback f = Feedback.of(note, bootBusy, result, manual.pending(), link == LINK_DOWN,
+                Prefs.bootSwitchFailed(this), last, Prefs.lastSwitchAtBoot(this));
+        feedback.setText(f.text);
+        if (f.color != Feedback.KEEP) {
+            feedback.setTextColor(f.color == Feedback.WARN ? WARN : f.color == Feedback.MUTED ? MUTED : resultColor);
         }
 
         boolean pending = manual.pending();
