@@ -18,7 +18,10 @@ final class PowerWatch {
 
     /** Why the watch service was started; also used in its log line. */
     static final String BY_APP = "by the app", AT_BOOT = "at boot", AFTER_UPDATE = "after update",
-            RESTARTED = "restarted by the system", BY_BROADCAST = "by a broadcast";
+            RESTARTED = "restarted by the system", BY_BROADCAST = "by a broadcast",
+            BY_LISTENER = "by the notification listener";
+    // Not BY_LISTENER: Android binds the listener again seconds after the head unit stops the app at ignition off,
+    // which would look like an ignition on. A service started that way arms on the next crank it sees.
     private static final List<String> WAKE_REASONS = Arrays.asList(BY_APP, AT_BOOT, AFTER_UPDATE, RESTARTED);
 
     private boolean cranking;

@@ -84,10 +84,13 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private float density;
     private TextView linkView;
     private TextView updateView;
+    private TextView startView;      // "Background start: On/Off", opens Android's notification access screen
     private boolean updateBusy;
     private String updateLabel;      // what the update button shows, kept across a rebuild of the screen
     private int updateColor;
     private boolean updatePrimary;
+    private AlertDialog startDialog;
+    private Boolean startShown;      // the background start state last drawn, to log a change made in Settings
     private Updater.Release available;   // non-null once a newer release was found
     private Toggle bootSwitch;
     private boolean askingAboutDiagnostics;
@@ -311,6 +314,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     protected void onDestroy() {
         watch.stop();
         handler.removeCallbacks(relayout);
+        if (startDialog != null) startDialog.dismiss();
         super.onDestroy();
     }
 
@@ -616,6 +620,37 @@ public class MainActivity extends Activity implements CanBox.Listener {
         setTelemetry(!Prefs.telemetry(this));
     }
 
+    /** Explains the notification access the background start needs, then opens Android's screen for it. */
+    private void onStartTap() {
+        if (!StartListener.available(this)) {
+            flash("This head unit does not allow a background start.");
+            return;
+        }
+        boolean on = StartListener.enabled(this);
+        startDialog = new AlertDialog.Builder(this)
+                .setTitle(on ? "Background start is on" : "Start with the head unit?")
+                .setMessage("Android can start this app in the background when the head unit powers on or wakes, "
+                        + "so Switch off at engine start also works when another app was on screen.\n\n"
+                        + "It uses Android's notification access, because Android starts apps that have it. "
+                        + "This app does not read any notification.\n\n"
+                        + (on ? "To turn it off, switch off No Start-Stop on the next screen."
+                        : "On the next screen, switch on No Start-Stop."))
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Open settings", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        try {
+                            startActivity(new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"));
+                            onLog("background start: opened notification access settings");
+                        } catch (RuntimeException e) {
+                            onLog("background start: no notification access settings: " + e);
+                            flash("This head unit has no notification access screen.");
+                        }
+                    }
+                })
+                .show();
+    }
+
     /** Asked once, on the first launch of a build that can share diagnostics. Nothing is sent before an answer. */
     private void askAboutDiagnostics() {
         if (!Telemetry.configured() || Prefs.telemetryAnswered(this) || askingAboutDiagnostics) return;
@@ -808,6 +843,13 @@ public class MainActivity extends Activity implements CanBox.Listener {
     }
 
     private void renderBoot() {
+        boolean startOn = StartListener.enabled(this);
+        if (startShown == null || startOn != startShown) {
+            if (startShown != null) onLog(startOn ? "background start on" : "background start off");
+            startShown = startOn;
+        }
+        startView.setText("Background start: " + (startOn ? "On" : "Off"));
+        startView.setTextColor(startOn ? TEXT : MUTED);
         renderSwitch(bootSwitch, Prefs.applyAtBoot(this));
         renderSwitch(captureSwitch, Prefs.captureFrames(this));
         if (telemetrySwitch != null) renderSwitch(telemetrySwitch, Prefs.telemetry(this));
@@ -962,6 +1004,16 @@ public class MainActivity extends Activity implements CanBox.Listener {
                 onUpdateClick();
             }
         });
+        startView = text("", 14, MUTED, true);
+        startView.setGravity(Gravity.CENTER);
+        startView.setPadding(dp(20), 0, dp(20), 0);
+        startView.setBackgroundDrawable(pressable(0, NEUTRAL_PRESSED, 0));
+        startView.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                onStartTap();
+            }
+        });
         linkView = text("", 14, MUTED, true);
         LinearLayout.LayoutParams updateLp = new LinearLayout.LayoutParams(-2, dp(36));
         if (narrow) {
@@ -971,7 +1023,12 @@ public class MainActivity extends Activity implements CanBox.Listener {
             second.addView(linkView, new LinearLayout.LayoutParams(0, -2, 1f));
             second.addView(updateView, updateLp);
             left.addView(second, new LinearLayout.LayoutParams(-1, -2));
+            LinearLayout third = new LinearLayout(this);
+            third.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
+            third.addView(startView, new LinearLayout.LayoutParams(-2, dp(36)));
+            left.addView(third, new LinearLayout.LayoutParams(-1, -2));
         } else {
+            header.addView(startView, new LinearLayout.LayoutParams(-2, dp(36)));
             updateLp.rightMargin = dp(24);
             header.addView(updateView, updateLp);
             header.addView(linkView);
