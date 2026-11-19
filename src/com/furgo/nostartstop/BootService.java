@@ -105,8 +105,17 @@ public class BootService extends Service implements CanBox.Listener {
     public int onStartCommand(Intent intent, int flags, int startId) {
         startForeground(1, buildNotification());
         if (canBox != null) {
-            onLog("already running, start request dropped");
-            return START_NOT_STICKY;
+            if (!done || cycle.equals(Prefs.currentCycle(this))) {
+                onLog("already running, start request dropped");
+                return START_NOT_STICKY;
+            }
+            // finish() ran and only the wait for the last answers is left: a request for a newer cycle starts over.
+            handler.removeCallbacks(stop);
+            canBox.close();
+            sent = false;
+            done = false;
+            sentAt = 0;
+            sentBit = -1;
         }
         // The cycle this switch belongs to, even if a new one starts while it is being sent.
         cycle = Prefs.currentCycle(this);
