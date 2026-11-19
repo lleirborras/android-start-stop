@@ -1,5 +1,7 @@
 # No Start-Stop
 
+By Lleïr Borràs.
+
 <img src="res/mipmap-xxxhdpi/ic_launcher.png" alt="App icon" width="96" align="right">
 
 Android app for Topway head units (TS18 and similar) that switches the PSA engine stop-start feature off through the Raise CAN box, the same way the built-in "Original Car" settings app does.
@@ -50,7 +52,7 @@ With no network it shows how many lines, from how many days, are stored for the 
 
 ![Line under the log: send failed, 2466 lines from 3 days waiting](docs/waiting.png)
 
-**Help** in the header opens a screen that explains the stop-start card, **Background start**, the diagnostics line and what to check when something is wrong:
+**Help** in the header opens a screen that explains each control, the diagnostics line, the log, updates and what to check when something is wrong:
 
 ![Help screen](docs/help.png)
 
@@ -58,7 +60,7 @@ With no network it shows how many lines, from how many days, are stored for the 
 
 - **Switch stop-start**: one button that sends one switch command to the car. The command is a toggle: each tap turns stop-start off if it was on, and on if it was off.
 - **Assumed state**: the car does not report whether stop-start is on or off, so the card shows the state the app assumes, as a large **OFF** (white), **ON** (green) or **UNKNOWN** (grey). Beside the word is the stop-start symbol, the "A" in a circular arrow: struck through for OFF, plain for ON, replaced by a dashed ring with "?" for UNKNOWN. OFF and ON carry the word "assumed"; the card says it is not read from the car. The instrument cluster shows a message when stop-start is switched off or on; look there to be sure. See [the assumed state](#the-assumed-stop-start-state).
-- **Help**: opens a screen, readable with no network, that explains the stop-start card and its buttons, **Background start** and how to check that it works, each state of the diagnostics line (only in builds that can share diagnostics), and what to do about the Play Protect prompt, no link, no answer from the car and no switch at engine start.
+- **Help**: opens a screen, readable with no network, that explains the stop-start card and its buttons, **Switch off at engine start**, **Background start** and how to check that it works, each state of the diagnostics line and what **Share diagnostics** sends (both only in builds that can share diagnostics), the log and where its file is, updates, and what to do about the Play Protect prompt, no link, no answer from the car and no switch at engine start. A **This head unit** card shows the app version, the Android version, the model, the display and whether background start is on.
 - **Split screen**: in a window narrower than 900 dp the screen is one scrolling column: header, stop-start card with its buttons below the text, one setting per row, then the log.
 - **Started** / **Stopped**: shown while the state is UNKNOWN. Read the instrument cluster and tap **Started** if stop-start is on, **Stopped** if it is off. They carry the colours of the state they set: **Started** green like ON, **Stopped** white like OFF. The card then shows that state as assumed and says "Set by hand. Nothing sent to the car." Greyed out while **Switch off at engine start** is off or its background service has no link to the head unit, because then nothing would end the state at the next ignition off.
 - **Car shows the opposite**: tap it when the instrument cluster disagrees with the assumed state. It writes one line to the log with what led to the assumed state and flips the shown state. It sends nothing to the car. While the state is unknown, **Started** and **Stopped** take its place. It is greyed out while a tap's command is being sent, while **Switch off at engine start** is sending ("Switching…"), and for 2 seconds after each report. The card then says "Noted in the log. Nothing sent to the car.", or, past the daily limit of report lines, "Changed, but not logged: too many reports today. Nothing sent to the car."

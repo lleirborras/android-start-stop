@@ -3,7 +3,9 @@ package com.furgo.nostartstop;
 import android.app.Activity;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.os.Build;
 import android.os.Bundle;
+import android.util.DisplayMetrics;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
@@ -67,8 +69,16 @@ public class HelpActivity extends Activity {
         LinearLayout first = column();
         LinearLayout second = narrow ? first : column();
         stateCard(first);
+        engineStart(first);
         backgroundStart(first);
-        if (Telemetry.configured()) diagnostics(second);
+        headUnit(first);
+        car(first);
+        if (Telemetry.configured()) {
+            diagnostics(second);
+            sharing(second);
+        }
+        logCard(second);
+        updates(second);
         troubleshooting(second);
 
         if (narrow) {
@@ -81,6 +91,14 @@ public class HelpActivity extends Activity {
             columns.addView(second, secondLp);
             page.addView(columns, new LinearLayout.LayoutParams(-1, -2));
         }
+
+        TextView by = text("No Start-Stop " + MainActivity.versionName(this) + ", by Lleïr Borràs\n"
+                + "github.com/lleirborras/android-start-stop", 14, MUTED, false);
+        by.setGravity(Gravity.CENTER);
+        by.setLineSpacing(0, 1.2f);
+        LinearLayout.LayoutParams byLp = new LinearLayout.LayoutParams(-1, -2);
+        byLp.topMargin = dp(20);
+        page.addView(by, byLp);
 
         final ScrollView scroll = new ScrollView(this);
         scroll.setBackgroundColor(BG);
@@ -120,6 +138,76 @@ public class HelpActivity extends Activity {
                 + "the shown state and writes a line to the log, up to a daily limit. Sends nothing to the car.");
     }
 
+    private void engineStart(LinearLayout column) {
+        LinearLayout card = card(column, "Switch off at engine start");
+        para(card, "The car turns stop-start on at every engine start. With this on, the app sends one switch after "
+                + "each engine start, which turns it off.");
+        item(card, "When it sends", "Once the engine runs: a battery reading of 13.0 V or more, at least 5 seconds "
+                + "after the start. One switch per engine start, and none if you already switched from the screen "
+                + "since that start. Nothing is sent if the engine is not seen running within 3 minutes.");
+        item(card, "The app must be running", "The head unit stops the app at ignition off. At ignition on it "
+                + "reopens only the app that was on screen. Leave this app on screen, or turn Background start on.");
+        item(card, "The notification", "While it is on, a background service follows the ignition and shows a "
+                + "silent notification, \"Watching for engine start\".");
+        item(card, "A battery charger", "A charger that holds the battery at 13.0 V or more with the engine off can "
+                + "make the app send one switch it should not.");
+        item(card, "\"Automatic switch failed. Tap to switch.\"", "The switch could not be sent: the head unit "
+                + "refused it, or there was no link to the car within 30 seconds. It is not tried again until the "
+                + "next engine start. The message stays until you switch from the screen.");
+    }
+
+    private void headUnit(LinearLayout column) {
+        LinearLayout card = card(column, "This head unit");
+        DisplayMetrics m = new DisplayMetrics();
+        getWindowManager().getDefaultDisplay().getRealMetrics(m);
+        item(card, "App version", MainActivity.versionName(this));
+        item(card, "Android", Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")");
+        item(card, "Model", Build.MODEL);
+        item(card, "Display", m.widthPixels + " x " + m.heightPixels + ", " + m.densityDpi + " dpi");
+        item(card, "Background start", !StartListener.available(this) ? "Not allowed by this head unit"
+                : StartListener.enabled(this) ? "On" : "Off");
+    }
+
+    private void car(LinearLayout column) {
+        LinearLayout card = card(column, "Nothing changes in the car");
+        para(card, "The app changes nothing in the car: no coding and no wiring. It sends the command the car's own "
+                + "settings menu sends. Turn Switch off at engine start off, or uninstall the app, and the car behaves as it "
+                + "left the factory.");
+    }
+
+    private void sharing(LinearLayout column) {
+        LinearLayout card = card(column, "What Share diagnostics sends");
+        para(card, "Nothing is sent before you answer the question on first launch, and nothing while the switch "
+                + "is off.");
+        item(card, "With each log line", "The line itself, the app version, the Android SDK level, the head unit's "
+                + "model name and a random id made for this install. The id is not tied to you or to the vehicle.");
+        item(card, "With Record car data on", "The log, and so what is sent, also holds raw car data that may "
+                + "include vehicle details.");
+        item(card, "Switching it off", "Discards the lines not sent yet and forgets the random id.");
+    }
+
+    private void logCard(LinearLayout column) {
+        LinearLayout card = card(column, "The log");
+        para(card, "The commands sent, the car's status frames, what the automatic switch saw and did, the assumed "
+                + "state, boot, screen, shutdown and network events, and errors.");
+        item(card, "Record car data", "Off by default. Also logs the raw frames from the car, engine and vehicle "
+                + "speed, battery voltage and the head unit's identity. This may include vehicle details such as "
+                + "the VIN. Leave it off unless you are asked for it.");
+        item(card, "The file", "Android/data/com.furgo.nostartstop/files/nostartstop.log on the head unit's "
+                + "internal storage. Copy it to a pendrive with the head unit's file manager.");
+    }
+
+    private void updates(LinearLayout column) {
+        LinearLayout card = card(column, "Updates");
+        item(card, "Check for updates", "Needs a network. The button turns into Install vX.Y.Z when a newer release "
+                + "exists, or says Up to date. Tap Install; Android asks you to confirm.");
+        item(card, "The first time", "Android says the app is not allowed to install unknown apps. Tap Settings, "
+                + "allow it for No Start-Stop, go back and tap Install again.");
+        item(card, "Check for updates automatically", "About once a day and after a boot, only with a network. It "
+                + "shows a notification and never downloads or installs by itself.");
+        item(card, "After an update", "The app closes. Open it again. Settings and the log are kept.");
+    }
+
     private void backgroundStart(LinearLayout column) {
         LinearLayout card = card(column, "Background start");
         para(card, "Lets Android start the app without its screen, when the head unit powers on and after it stopped "
@@ -133,6 +221,8 @@ public class HelpActivity extends Activity {
                 + "those lines the head unit does not restart the app: open the app before you drive.");
         item(card, "\"This head unit does not allow a background start.\"", "Android 10 and older do not give "
                 + "notification access on low-memory units.");
+        item(card, "Not verified on a real head unit yet", "It worked in an emulator. Some head units stop apps "
+                + "themselves and may not let Android start them again. \"This head unit\" below shows its Android version.");
     }
 
     private void diagnostics(LinearLayout column) {
