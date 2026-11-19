@@ -1,2 +1,5 @@
 build/
 .omc/
+.env
+.posthog/
+.claude/worktrees/
