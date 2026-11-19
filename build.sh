@@ -3,6 +3,13 @@
 set -eu
 cd "$(dirname "$0")"
 
+# d8 from build-tools 34.0.0 crashes on newer JDKs; .tool-versions pins 17.
+java_major=$(javac -version 2>&1 | sed -E 's/^javac ([0-9]+).*/\1/')
+if [ "$java_major" != 17 ]; then
+    echo "build.sh needs JDK 17, found javac $java_major (with asdf: asdf install)" >&2
+    exit 1
+fi
+
 SDK="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 BT="$SDK/build-tools/34.0.0"
 JAR="$SDK/platforms/android-34/android.jar"
