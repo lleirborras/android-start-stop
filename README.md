@@ -42,6 +42,10 @@ In builds that can share diagnostics, the line under the log shows when log line
 
 ![Line under the log: sending 2 lines](docs/diagnostics.png)
 
+A backlog stored while offline goes out in several requests, and the rule above the line fills as they go:
+
+![Line under the log: sending 505 of 1233 lines, bar partly filled](docs/progress.png)
+
 ## What it does
 
 - **Switch stop-start**: one button that sends one switch command to the car. The command is a toggle: each tap turns stop-start off if it was on, and on if it was off.
