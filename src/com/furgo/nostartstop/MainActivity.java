@@ -741,10 +741,10 @@ public class MainActivity extends Activity implements CanBox.Listener {
             color = TEXT;
             pulse = true;
         } else if (Telemetry.failed && n > 0) {
-            s = "Send failed, " + lines(n) + " waiting";
+            s = "Send failed, " + stored(n) + " waiting";
             dot = WARN;
         } else if (n > 0) {
-            s = lines(n) + " waiting to send";
+            s = stored(n) + " waiting to send";
             dot = MUTED;
         } else if (sentAt > 0) {
             long age = System.currentTimeMillis() - sentAt;
@@ -786,6 +786,12 @@ public class MainActivity extends Activity implements CanBox.Listener {
         sharePulse.cancel();
         sharePulse = null;
         shareDot.setAlpha(1f);
+    }
+
+    /** For example "1240 lines from 3 days". */
+    private static String stored(int n) {
+        int days = Telemetry.waitingDays;
+        return days > 1 ? lines(n) + " from " + days + " days" : lines(n);
     }
 
     private static String lines(int n) {

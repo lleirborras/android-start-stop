@@ -148,10 +148,12 @@ public class TelemetryStoreTest {
         check("merged", Arrays.asList("{\"a\":1}", "{\"a\":2}", "{\"a\":3}").equals(lines(gz)));
         check("today untouched", Collections.singletonList("{\"b\":1}").equals(lines(new File(dir, TODAY))));
         check("count, plain and compressed", s.count() == 4);
+        check("days", s.days() == 2);
 
         s.deleteAll();
         check("deleteAll removes the directory", !dir.exists());
         check("count of nothing", s.count() == 0);
+        check("no days", s.days() == 0);
     }
 
     private static void tidyOnlyWhenNeeded() throws IOException {

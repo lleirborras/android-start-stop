@@ -46,6 +46,10 @@ A backlog stored while offline goes out in several requests, and the rule above 
 
 ![Line under the log: sending 505 of 1233 lines, bar partly filled](docs/progress.png)
 
+With no network it shows how many lines, from how many days, are stored for the next try:
+
+![Line under the log: send failed, 2466 lines from 3 days waiting](docs/waiting.png)
+
 ## What it does
 
 - **Switch stop-start**: one button that sends one switch command to the car. The command is a toggle: each tap turns stop-start off if it was on, and on if it was off.
@@ -182,7 +186,7 @@ The line under the log on the main screen shows what the app is doing with them.
 | `Sending: 500 of 1240 lines` | green, pulsing | A backlog, for example older days stored while offline, goes out in requests of up to 500 lines. The rule above the line fills from left to right as they go. |
 | `Sent 3 lines at 14:32` | green | The last batch went out. Shown for 8 seconds. |
 | `All sent at 14:32` | green | Nothing is waiting; the time is that of the last batch. |
-| `Send failed, 3 lines waiting` | amber | The last upload failed, for example with no network. The lines stay stored for the next try. |
+| `Send failed, 1240 lines from 3 days waiting` | amber | The last upload failed, for example with no network. The lines stay stored for the next try. The days are named when the lines are from more than one. |
 
 What is sent with each line:
 

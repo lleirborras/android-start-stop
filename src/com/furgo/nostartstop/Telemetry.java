@@ -47,6 +47,8 @@ final class Telemetry {
     // What the screen shows about sending. Written on the worker thread, read on the main thread.
     /** Lines stored and not sent yet, or -1 before they were counted. */
     static volatile int waiting = -1;
+    /** Days those lines are from. */
+    static volatile int waitingDays;
     /** A request is on its way. */
     static volatile boolean sending;
     /** While sending: the lines that were waiting when this send began, and how many of them went so far. */
@@ -81,6 +83,7 @@ final class Telemetry {
                 if (waiting >= 0) return;
                 try {
                     waiting = store(app).count();
+                    waitingDays = store(app).days();
                     changed();
                 } catch (Exception e) {
                     Log.w(TAG, "telemetry: " + e);
@@ -111,6 +114,7 @@ final class Telemetry {
                     migrate(app, s);
                     s.append(s.day(now), event(app, line, s.timestamp(now)).toString());
                     waiting = waiting < 0 ? s.count() : waiting + 1;
+                    waitingDays = s.days();
                     changed();
                     // After a network failure, new lines wait for the backoff or for flush().
                     if (!sendScheduled && SystemClock.elapsedRealtime() >= retryAt) {
@@ -181,7 +185,10 @@ final class Telemetry {
             lastSentAt = System.currentTimeMillis();
         }
         // Lines dropped by the limits are not subtracted anywhere: an empty store puts the number right.
-        if (store != null && store.names().isEmpty()) waiting = 0;
+        if (store != null) {
+            waitingDays = store.days();
+            if (waitingDays == 0) waiting = 0;
+        }
         failed = sent < 0;
         sending = false;
         changed();
@@ -317,6 +324,7 @@ final class Telemetry {
 
     private static void deleteStored(Context app) {
         waiting = 0;
+        waitingDays = 0;
         failed = false;
         lastSentAt = 0;
         changed();
