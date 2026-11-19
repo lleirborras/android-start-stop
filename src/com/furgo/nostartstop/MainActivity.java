@@ -62,7 +62,6 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private static final long REQUERY_MS = 5000;
     private static final long STALE_MS = 12000;
     private static final long NOTE_MS = 3000, REVERT_MS = 4000;
-    private static final long SHARE_SENT_MS = 8000;
 
     private static final int LINK_WAITING = 0, LINK_LIVE = 1, LINK_DOWN = -1;
 
@@ -701,40 +700,16 @@ public class MainActivity extends Activity implements CanBox.Listener {
         handler.removeCallbacks(shareChanged);
         int n = Telemetry.waiting;
         long sentAt = Telemetry.lastSentAt;
-        String s;
-        int color = MUTED, dot = ACCENT;
-        boolean pulse = false;
-        float fill = 0;
-        if (!Prefs.telemetry(this)) {
-            s = "Diagnostics off";
-            dot = 0;
-        } else if (Telemetry.sending) {
-            int done = Telemetry.sendDone, total = Telemetry.sendTotal;
-            s = done > 0 && total > done ? "Sending: " + done + " of " + lines(total)
-                    : n > 0 ? "Sending " + lines(n) + "…" : "Sending…";
-            fill = total > 0 ? Math.min(1f, (float) done / total) : 0;
-            color = TEXT;
-            pulse = true;
-        } else if (Telemetry.failed && n > 0) {
-            s = "Send failed, " + stored(n) + " waiting";
-            dot = WARN;
-        } else if (n > 0) {
-            s = stored(n) + " waiting to send";
-            dot = MUTED;
-        } else if (sentAt > 0) {
-            long age = System.currentTimeMillis() - sentAt;
-            if (age >= 0 && age < SHARE_SENT_MS) {
-                s = "Sent " + lines(Telemetry.lastSent) + " at " + Feedback.clock(sentAt);
-                color = TEXT;
-                if (shareLive) handler.postDelayed(shareChanged, SHARE_SENT_MS - age);
-            } else {
-                s = "All sent at " + Feedback.clock(sentAt);
-            }
-        } else {
-            s = n < 0 ? "Diagnostics on" : "Diagnostics on, nothing waiting";
-        }
-        shareText.setText(s);
-        shareText.setTextColor(color);
+        ShareStatus st = ShareStatus.of(Prefs.telemetry(this), Telemetry.sending, Telemetry.sendDone,
+                Telemetry.sendTotal, Telemetry.failed, n, Telemetry.waitingDays, Telemetry.lastSent, sentAt,
+                System.currentTimeMillis());
+        if (st.recheckMs >= 0 && shareLive) handler.postDelayed(shareChanged, st.recheckMs);
+        int dot = st.dot == ShareStatus.RING ? 0 : st.dot == ShareStatus.FAILED ? WARN
+                : st.dot == ShareStatus.WAITING ? MUTED : ACCENT;
+        boolean pulse = st.pulse;
+        float fill = st.fill;
+        shareText.setText(st.text);
+        shareText.setTextColor(st.bright ? TEXT : MUTED);
         if (((LinearLayout.LayoutParams) shareFill.getLayoutParams()).weight != fill) {
             shareFill.setLayoutParams(new LinearLayout.LayoutParams(0, -1, fill));
             shareRest.setLayoutParams(new LinearLayout.LayoutParams(0, -1, 1 - fill));
@@ -761,16 +736,6 @@ public class MainActivity extends Activity implements CanBox.Listener {
         sharePulse.cancel();
         sharePulse = null;
         shareDot.setAlpha(1f);
-    }
-
-    /** For example "1240 lines from 3 days". */
-    private static String stored(int n) {
-        int days = Telemetry.waitingDays;
-        return days > 1 ? lines(n) + " from " + days + " days" : lines(n);
-    }
-
-    private static String lines(int n) {
-        return n == 1 ? "1 line" : n + " lines";
     }
 
     /** Adds a tappable setting card with a drawn switch to a horizontal row and returns the switch. */
