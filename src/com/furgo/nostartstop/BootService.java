@@ -15,14 +15,7 @@ import android.os.SystemClock;
  * Sends exactly one stop-start switch per ignition cycle, then stops. Started by {@link WatchService} once the engine
  * runs. The car turns stop-start on at every engine start, so one switch turns it off; a second one would turn it back on.
  */
-public class BootService extends Service implements CanBox.Listener {
-    private static final long OPEN_RETRY_MS = 2_000;
-    private static final long OPEN_TIMEOUT_MS = 30_000;
-    private static final long STATUS_WAIT_MS = 5_000;
-    private static final long ECHO_WAIT_MS = 3_000;
-    // CanBox asks for frame 57 again 1.5 s and 5 s after a switch; keep the link open for the answers.
-    private static final long FUNCTION_WAIT_MS = 6_000;
-
+public class BootService extends Service implements CanBox.Listener, BootFlow.Shell {
     /** True while the service is working; the main screen does not send meanwhile. Main thread only. */
     static boolean running;
     /** Set by the main screen while it is shown, to redraw when {@link #running} changes. */
@@ -31,103 +24,25 @@ public class BootService extends Service implements CanBox.Listener {
     private static final LogBudget LINES = new LogBudget(200);
 
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private final BootFlow flow = new BootFlow(this);
+    // Indexed by the timer itself, so in the order of their values.
+    private final Runnable[] timers = {timer(BootFlow.OPEN_TICK), timer(BootFlow.SEND_ONCE), timer(BootFlow.NO_ECHO),
+            timer(BootFlow.STOP)};
     private CanBox canBox;
-    private String cycle;
-    private long startedAt;
-    private boolean sent;
-    private boolean done;
-    private long sentAt;
-    private int sentBit = -1;
 
-    private final Runnable openTick = new Runnable() {
-        @Override
-        public void run() {
-            // The MCU link may not be up yet this early in boot or right after a wake.
-            if (canBox.open()) {
-                canBox.query();
-                handler.postDelayed(sendOnce, STATUS_WAIT_MS);
-                return;
+    private Runnable timer(final int which) {
+        return new Runnable() {
+            @Override
+            public void run() {
+                flow.onTimer(which);
             }
-            if (SystemClock.elapsedRealtime() - startedAt >= OPEN_TIMEOUT_MS) {
-                onLog("no link to the car after " + OPEN_TIMEOUT_MS / 1000 + " s, nothing sent");
-                Prefs.setBootSwitchFailed(BootService.this, cycle);
-                finish();
-                return;
-            }
-            handler.postDelayed(this, OPEN_RETRY_MS);
-        }
-    };
-
-    private final Runnable sendOnce = new Runnable() {
-        @Override
-        public void run() {
-            if (sent) return;
-            sent = true;
-            handler.removeCallbacks(this);
-            if (!cycle.equals(Prefs.currentCycle(BootService.this))) {
-                onLog("cycle changed, nothing sent");
-                finish();
-                return;
-            }
-            if (alreadySwitched()) {
-                finish();
-                return;
-            }
-            Prefs.markBootSwitch(BootService.this, cycle);
-            sentBit = canBox.toggle();
-            if (sentBit >= 0) sentAt = SystemClock.elapsedRealtime();
-            if (sentBit < 0) {
-                Prefs.setBootSwitchFailed(BootService.this, cycle);
-                onLog("switch failed, nothing sent");
-                finish();
-                return;
-            }
-            Prefs.recordSwitch(BootService.this, true, cycle);
-            if (sentBit == 0) {
-                // A cleared echo looks the same as no answer, so it cannot confirm this command.
-                onLog("sent with bit 0, which the echo cannot confirm, done");
-                finish();
-                return;
-            }
-            handler.postDelayed(noEcho, ECHO_WAIT_MS);
-        }
-    };
-
-    private final Runnable noEcho = new Runnable() {
-        @Override
-        public void run() {
-            onLog("echo bit did not change within " + ECHO_WAIT_MS / 1000 + " s, done");
-            finish();
-        }
-    };
+        };
+    }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         startForeground(1, buildNotification());
-        if (canBox != null) {
-            if (!done || cycle.equals(Prefs.currentCycle(this))) {
-                onLog("already running, start request dropped");
-                return START_NOT_STICKY;
-            }
-            // finish() ran and only the wait for the last answers is left: a request for a newer cycle starts over.
-            handler.removeCallbacks(stop);
-            canBox.close();
-            sent = false;
-            done = false;
-            sentAt = 0;
-            sentBit = -1;
-        }
-        // The cycle this switch belongs to, even if a new one starts while it is being sent.
-        cycle = Prefs.currentCycle(this);
-        canBox = new CanBox(this);
-        onLog("service started, " + DeviceWatch.facts(this));
-        if (alreadySwitched()) {
-            finish();
-            return START_NOT_STICKY;
-        }
-        setRunning(true);
-        startedAt = SystemClock.elapsedRealtime();
-        handler.post(openTick);
+        flow.start();
         return START_NOT_STICKY;
     }
 
@@ -146,14 +61,7 @@ public class BootService extends Service implements CanBox.Listener {
 
     @Override
     public void onEcho(boolean echo) {
-        if (done) return;
-        if (!sent) {
-            onLog("status received, echo bit " + (echo ? 1 : 0));
-            sendOnce.run();
-        } else if (sentBit == 1 && echo) {
-            onLog("echo bit changed to " + sentBit + ", done");
-            finish();
-        }
+        flow.onEcho(echo);
     }
 
     @Override
@@ -161,18 +69,104 @@ public class BootService extends Service implements CanBox.Listener {
         if (LINES.take(SystemClock.elapsedRealtime())) LogFile.append(this, "auto: " + line);
     }
 
-    /** A second switch in the same ignition cycle would turn stop-start back on, whoever sent the first. */
-    private boolean alreadySwitched() {
-        if (Prefs.bootSwitchDone(this, cycle)) {
-            onLog("already switched during this ignition cycle, nothing sent");
-            return true;
-        }
-        if (Prefs.lastSwitchAt(this, cycle) != 0) {
-            Prefs.markBootSwitch(this, cycle);
-            onLog("already switched from the screen during this ignition cycle, nothing sent");
-            return true;
-        }
-        return false;
+    @Override
+    public long now() {
+        return SystemClock.elapsedRealtime();
+    }
+
+    @Override
+    public String currentCycle() {
+        return Prefs.currentCycle(this);
+    }
+
+    @Override
+    public boolean bootSwitchDone(String cycle) {
+        return Prefs.bootSwitchDone(this, cycle);
+    }
+
+    @Override
+    public long lastSwitchAt(String cycle) {
+        return Prefs.lastSwitchAt(this, cycle);
+    }
+
+    @Override
+    public void markBootSwitch(String cycle) {
+        Prefs.markBootSwitch(this, cycle);
+    }
+
+    @Override
+    public void setBootSwitchFailed(String cycle) {
+        Prefs.setBootSwitchFailed(this, cycle);
+    }
+
+    @Override
+    public void recordSwitch(String cycle) {
+        Prefs.recordSwitch(this, true, cycle);
+    }
+
+    @Override
+    public String deviceFacts() {
+        return DeviceWatch.facts(this);
+    }
+
+    @Override
+    public void newLink() {
+        canBox = new CanBox(this);
+    }
+
+    @Override
+    public boolean openLink() {
+        return canBox.open();
+    }
+
+    @Override
+    public void query() {
+        canBox.query();
+    }
+
+    @Override
+    public int toggle() {
+        return canBox.toggle();
+    }
+
+    @Override
+    public void closeLink() {
+        canBox.close();
+    }
+
+    @Override
+    public void post(int timer) {
+        handler.post(timers[timer]);
+    }
+
+    @Override
+    public void postDelayed(int timer, long ms) {
+        handler.postDelayed(timers[timer], ms);
+    }
+
+    @Override
+    public void cancel(int timer) {
+        handler.removeCallbacks(timers[timer]);
+    }
+
+    @Override
+    public void cancelAll() {
+        handler.removeCallbacksAndMessages(null);
+    }
+
+    @Override
+    public void running(boolean on) {
+        setRunning(on);
+    }
+
+    @Override
+    public void endForeground() {
+        stopForeground(true);
+    }
+
+    @Override
+    public void endService() {
+        stopSelf();
     }
 
     private static void setRunning(boolean on) {
@@ -180,27 +174,6 @@ public class BootService extends Service implements CanBox.Listener {
         running = on;
         if (onRunningChanged != null) onRunningChanged.run();
     }
-
-    private void finish() {
-        done = true;
-        setRunning(false);
-        stopForeground(true);
-        handler.removeCallbacksAndMessages(null);
-        long left = sentAt == 0 ? 0 : sentAt + FUNCTION_WAIT_MS - SystemClock.elapsedRealtime();
-        if (left <= 0) {
-            stop.run();
-            return;
-        }
-        handler.postDelayed(stop, left);
-    }
-
-    private final Runnable stop = new Runnable() {
-        @Override
-        public void run() {
-            canBox.close();
-            stopSelf();
-        }
-    };
 
     private Notification buildNotification() {
         Notification.Builder b;
