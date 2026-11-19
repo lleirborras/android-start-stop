@@ -381,14 +381,22 @@ class TelemetryStore {
         appendedSinceTidy = 0;
         try {
             rotate(today);
+        } catch (IOException e) {
+            warnings.warn("" + e);
+        }
+        try {
             enforceLimits(today);
         } catch (IOException e) {
             warnings.warn("" + e);
         }
     }
 
-    /** Compresses every plain day file except today's, behind the lines of an existing compressed file for that day. */
+    /**
+     * Compresses every plain day file except today's, behind the lines of an existing compressed file for that day.
+     * A day that fails stays plain for the next time; the first failure is thrown once the other days are done.
+     */
     void rotate(String today) throws IOException {
+        IOException failure = null;
         for (String name : names()) {
             if (name.endsWith(GZ) || name.equals(today)) continue;
             File plain = new File(dir, name);
@@ -411,11 +419,15 @@ class TelemetryStore {
                 drop(gz);
                 // The plain lines get their own try next time, without the old compressed ones.
                 continue;
+            } catch (IOException e) {
+                if (failure == null) failure = e;
+                continue;
             } finally {
                 merged.delete();
             }
             drop(plain);
         }
+        if (failure != null) throw failure;
     }
 
     private void copyLines(File src, Writer w) throws IOException {
