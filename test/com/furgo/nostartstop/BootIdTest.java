@@ -13,7 +13,16 @@ public class BootIdTest {
         same("same boot, 2 s drift", BootId.of(-1, boot + 60_000, 60_000), BootId.of(-1, boot + 62_000, 60_000));
         differ("a boot a minute later", BootId.of(-1, boot + 60_000, 60_000), BootId.of(-1, boot + 120_000, 60_000));
 
-        same("facts", BootId.facts(7, 42_900), "boot count 7, up 42 s");
+        // Without a boot count: the id stored earlier in this boot survives a clock jump, but not a reboot.
+        String stored = BootId.of(-1, boot + 60_000, 60_000);
+        String jumped = BootId.of(-1, boot + 86_400_000 + 120_000, 120_000);
+        differ("a clock jump changes the computed id", stored, jumped);
+        same("clock jump, same boot", BootId.keep(stored, 60_000, jumped, 120_000), stored);
+        same("same uptime", BootId.keep(stored, 60_000, jumped, 60_000), stored);
+        same("uptime went back: reboot", BootId.keep(stored, 60_000, jumped, 59_999), jumped);
+        same("nothing stored", BootId.keep(null, 0, jumped, 120_000), jumped);
+
+        same("facts",BootId.facts(7, 42_900), "boot count 7, up 42 s");
         same("facts without a boot count", BootId.facts(-1, 5_000), "boot count unknown, up 5 s");
         same("facts first boot", BootId.facts(0, 999), "boot count 0, up 0 s");
         same("up", BootId.up(3_600_000), "up 3600 s");

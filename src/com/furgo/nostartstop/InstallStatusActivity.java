@@ -20,14 +20,14 @@ public class InstallStatusActivity extends Activity {
 
     private void handle(Intent intent) {
         int session = intent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1);
-        if (session == -1 || session != Updater.pendingSession) return;
+        if (session == -1 || session != Prefs.pendingSession(this)) return;
         int status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE);
         if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
             Intent confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT);
             if (confirm != null) startActivity(confirm);
             return;
         }
-        Updater.pendingSession = -1;
+        Prefs.setPendingSession(this, -1);
         if (status != PackageInstaller.STATUS_SUCCESS) {
             LogFile.append(this, "install failed (" + status + "): "
                     + printable(intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)));

@@ -37,7 +37,12 @@ final class Prefs {
     private static final LogBudget REPORT_LINES = new LogBudget(50);
     /** Set by the main screen while it is shown, to redraw when the assumed state changes. Main thread only. */
     static Runnable onAssumedChanged;
+    private static final String BOOT_ID = "boot_id";
+    private static final String BOOT_ID_SEEN = "boot_id_seen";
+    private static final long BOOT_SEEN_EVERY_MS = 60_000;
     private static String currentBoot;
+    private static boolean bootStored;
+    private static long bootSeenAt;
     private static final String INSTALL_ID = "install_id";
 
     static boolean applyAtBoot(Context c) {
@@ -48,12 +53,27 @@ final class Prefs {
         c.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean(APPLY_AT_BOOT, on).apply();
     }
 
-    /** Read once per process: a reboot always starts a new process. */
+    /**
+     * Decided once per process: a reboot always starts a new process. Without a boot count the id is stored, so a
+     * later process of the same boot gets the same one, see {@link BootId#keep}.
+     */
     static synchronized String currentBoot(Context c) {
+        long elapsed = SystemClock.elapsedRealtime();
         if (currentBoot == null) {
             int count = Build.VERSION.SDK_INT >= 24
                     ? Settings.Global.getInt(c.getContentResolver(), Settings.Global.BOOT_COUNT, -1) : -1;
-            currentBoot = BootId.of(count, System.currentTimeMillis(), SystemClock.elapsedRealtime());
+            currentBoot = BootId.of(count, System.currentTimeMillis(), elapsed);
+            bootStored = count < 0;
+            if (bootStored) {
+                SharedPreferences p = prefs(c);
+                currentBoot = BootId.keep(p.getString(BOOT_ID, null), p.getLong(BOOT_ID_SEEN, 0), currentBoot, elapsed);
+                bootSeenAt = elapsed - BOOT_SEEN_EVERY_MS;
+            }
+        }
+        // The later the stored uptime, the fewer reboots can be taken for the same boot.
+        if (bootStored && elapsed - bootSeenAt >= BOOT_SEEN_EVERY_MS) {
+            bootSeenAt = elapsed;
+            prefs(c).edit().putString(BOOT_ID, currentBoot).putLong(BOOT_ID_SEEN, elapsed).apply();
         }
         return currentBoot;
     }
@@ -336,6 +356,7 @@ final class Prefs {
     private static final String UPDATE_CHECKED_AT = "update_checked_at";
     private static final String NOTIFIED_TAG = "notified_tag";
     private static final String UPDATE_FAILURE = "update_failure";
+    private static final String PENDING_SESSION = "pending_session";
 
     /** On by default: the check only asks GitHub for the latest release and never installs anything by itself. */
     static boolean autoUpdate(Context c) {
@@ -380,5 +401,15 @@ final class Prefs {
 
     static void setUpdateFailure(Context c, String reason) {
         prefs(c).edit().putString(UPDATE_FAILURE, reason).apply();
+    }
+
+    /** Id of the install session this app committed and has no result for yet, or -1. */
+    static int pendingSession(Context c) {
+        return prefs(c).getInt(PENDING_SESSION, -1);
+    }
+
+    /** Written at once: the installer may answer after this process is gone. */
+    static void setPendingSession(Context c, int session) {
+        prefs(c).edit().putInt(PENDING_SESSION, session).commit();
     }
 }

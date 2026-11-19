@@ -331,7 +331,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     @Override
     protected void onDestroy() {
         watch.stop();
-        handler.removeCallbacks(relayout);
+        handler.removeCallbacksAndMessages(null);
         if (startDialog != null) startDialog.dismiss();
         super.onDestroy();
     }
@@ -542,6 +542,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     }
 
     private void onLatest(Updater.Release latest) {
+        if (isDestroyed()) return;
         updateBusy = false;
         UpdateJob.remember(this, latest.tag);
         if (Version.isNewer(latest.tag, versionName())) {
@@ -562,6 +563,10 @@ public class MainActivity extends Activity implements CanBox.Listener {
         handler.post(new Runnable() {
             @Override
             public void run() {
+                if (isDestroyed()) {
+                    LogFile.append(getApplicationContext(), logLine);
+                    return;
+                }
                 updateBusy = false;
                 // After a failure the found release stays, so the button offers the install again.
                 if (done) available = null;
