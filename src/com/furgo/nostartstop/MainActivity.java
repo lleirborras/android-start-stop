@@ -25,6 +25,7 @@ import android.text.style.RelativeSizeSpan;
 import android.util.DisplayMetrics;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.Window;
 import android.widget.FrameLayout;
@@ -83,6 +84,9 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private TextView linkView;
     private TextView updateView;
     private boolean updateBusy;
+    private String updateLabel;      // what the update button shows, kept across a rebuild of the screen
+    private int updateColor;
+    private boolean updatePrimary;
     private Updater.Release available;   // non-null once a newer release was found
     private Toggle bootSwitch;
     private boolean askingAboutDiagnostics;
@@ -99,7 +103,13 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private StateBadge badge;
     private LinearLayout stateCard;
     private TextView wrongButton;
+    private LinearLayout setRow;      // shown instead of wrongButton while the state is unknown
+    private TextView setOnButton, setOffButton;
     private long reportedAt = -HOLD_MS;
+    /** Below this width (split screen) the screen is one scrolling column. */
+    private static final int NARROW_DP = 900;
+    private boolean narrow;
+    private View rootView;
 
     private final Runnable requery = new Runnable() {
         @Override
@@ -149,6 +159,18 @@ public class MainActivity extends Activity implements CanBox.Listener {
         public void run() {
             log.clear();
             log.addAll(LogFile.tail(MainActivity.this, MAX_LOG));
+            renderLog();
+            render();
+        }
+    };
+
+    private final Runnable relayout = new Runnable() {
+        @Override
+        public void run() {
+            boolean n = rootView.getWidth() < dp(NARROW_DP);
+            if (n == narrow) return;
+            narrow = n;
+            setContentView(buildUi());
             renderLog();
             render();
         }
@@ -274,6 +296,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         density = getResources().getDisplayMetrics().density;
         box = new CanBox(this);
+        narrow = getResources().getConfiguration().screenWidthDp < NARROW_DP;
         setContentView(buildUi());
         LogFile.append(this, "app opened, version " + versionName() + ", android " + Build.VERSION.RELEASE
                 + " (sdk " + Build.VERSION.SDK_INT + "), " + Build.MODEL + ", " + display() + ", "
@@ -286,6 +309,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     @Override
     protected void onDestroy() {
         watch.stop();
+        handler.removeCallbacks(relayout);
         super.onDestroy();
     }
 
@@ -538,6 +562,16 @@ public class MainActivity extends Activity implements CanBox.Listener {
 
     private void showUpdate(String label, int color, boolean primary) {
         handler.removeCallbacks(revertUpdate);
+        updateLabel = label;
+        updateColor = color;
+        updatePrimary = primary;
+        drawUpdate();
+    }
+
+    private void drawUpdate() {
+        String label = updateLabel;
+        int color = updateColor;
+        boolean primary = updatePrimary;
         updateView.setText(label);
         updateView.setTextColor(color);
         LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) updateView.getLayoutParams();
@@ -712,14 +746,34 @@ public class MainActivity extends Activity implements CanBox.Listener {
         assumedHint.setText(assumed == AssumedState.ON && usable ? "Not read from the car. Tap Switch to turn it off."
                 : assumed != AssumedState.UNKNOWN ? "Not read from the car. Check the instrument cluster."
                 : !Prefs.applyAtBoot(this) ? "Only followed while Switch off at engine start is on. Check the instrument cluster."
-                : "Not followed since the last ignition off. Check the instrument cluster.");
-        boolean canReport = assumed != AssumedState.UNKNOWN && !pending && !bootBusy
-                && SystemClock.elapsedRealtime() >= reportedAt + HOLD_MS;
-        wrongButton.setEnabled(canReport);
-        wrongButton.setTextColor(canReport ? TEXT : 0xFF5C6676);
-        wrongButton.setBackgroundDrawable(canReport ? outlined()
-                : dashed());
+                : !Prefs.canSetAssumed(this) ? "The app cannot follow the ignition right now. Check the instrument cluster."
+                : "Not followed since the last ignition off. Check the instrument cluster, then tap Started (on) or Stopped (off).");
+        boolean unknown = assumed == AssumedState.UNKNOWN;
+        boolean free = !pending && !bootBusy && SystemClock.elapsedRealtime() >= reportedAt + HOLD_MS;
+        wrongButton.setVisibility(unknown ? View.GONE : View.VISIBLE);
+        setRow.setVisibility(unknown ? View.VISIBLE : View.GONE);
+        renderOutlined(wrongButton, !unknown && free);
+        boolean canSet = unknown && free && Prefs.canSetAssumed(this);
+        renderOutlined(setOnButton, canSet);
+        renderOutlined(setOffButton, canSet);
         renderBoot();
+    }
+
+    private void renderOutlined(TextView button, boolean enabled) {
+        button.setEnabled(enabled);
+        button.setTextColor(enabled ? TEXT : 0xFF5C6676);
+        button.setBackgroundDrawable(enabled ? outlined() : dashed());
+    }
+
+    /** Sets the unknown state to what the user reads on the instrument cluster. Sends nothing to the car. */
+    private void onSetTap(int state) {
+        long now = SystemClock.elapsedRealtime();
+        if (now < reportedAt + HOLD_MS || phase != IDLE || BootService.running) return;
+        if (!Prefs.setAssumedByHand(this, state)) return;
+        // The row turns into "Car shows the opposite": a second tap in the same place must not flip it.
+        reportedAt = now;
+        handler.postDelayed(rerender, HOLD_MS);
+        flash("Set by hand. Nothing sent to the car.");
     }
 
     /** Logs what led to the shown state and flips it. Sends nothing to the car. */
@@ -771,11 +825,6 @@ public class MainActivity extends Activity implements CanBox.Listener {
     }
 
     private View buildUi() {
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.HORIZONTAL);
-        root.setBackgroundColor(BG);
-        root.setPadding(dp(32), dp(8), dp(32), dp(8));
-
         LinearLayout left = new LinearLayout(this);
         left.setOrientation(LinearLayout.VERTICAL);
         // The switch card takes the space left over, but never less than its content: on a short screen the column
@@ -783,44 +832,16 @@ public class MainActivity extends Activity implements CanBox.Listener {
         ScrollView leftScroll = new ScrollView(this);
         leftScroll.setFillViewport(true);
         leftScroll.addView(left, new FrameLayout.LayoutParams(-1, -2));
-        root.addView(leftScroll, new LinearLayout.LayoutParams(0, -1, 3f));
 
-        LinearLayout header = new LinearLayout(this);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setMinimumHeight(dp(44));
-        TextView title = text("NO START-STOP", 22, TEXT, true);
-        title.setLetterSpacing(0.12f);
-        header.addView(title);
-        String v = versionName();
-        // Release builds are named like "0.3.0"; local builds are "dev".
-        TextView version = text(Character.isDigit(v.charAt(0)) ? "v" + v : v, 14, MUTED, false);
-        LinearLayout.LayoutParams versionLp = new LinearLayout.LayoutParams(0, -2, 1f);
-        versionLp.leftMargin = dp(12);
-        header.addView(version, versionLp);
-        updateView = text("", 14, MUTED, true);
-        updateView.setGravity(Gravity.CENTER);
-        updateView.setPadding(dp(20), 0, dp(20), 0);
-        updateView.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                onUpdateClick();
-            }
-        });
-        LinearLayout.LayoutParams updateLp = new LinearLayout.LayoutParams(-2, dp(36));
-        updateLp.rightMargin = dp(24);
-        header.addView(updateView, updateLp);
-        showIdleUpdate();
-        linkView = text("", 14, MUTED, true);
-        header.addView(linkView);
-        left.addView(header, new LinearLayout.LayoutParams(-1, -2));
+        addHeader(left);
 
-        LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, 0, 1f);
+        LinearLayout.LayoutParams cardLp = narrow ? new LinearLayout.LayoutParams(-1, -2)
+                : new LinearLayout.LayoutParams(-1, 0, 1f);
         cardLp.topMargin = dp(8);
         left.addView(switchCard(), cardLp);
 
-        LinearLayout settings = new LinearLayout(this);
-        settings.setOrientation(LinearLayout.HORIZONTAL);
-        bootSwitch = addSetting(settings, "Switch off at engine start",
+        LinearLayout row = settingsRow(left);
+        bootSwitch = addSetting(row, "Switch off at engine start",
                 "One switch each time the car starts.",
                 new View.OnClickListener() {
                     @Override
@@ -829,7 +850,8 @@ public class MainActivity extends Activity implements CanBox.Listener {
                     }
                 });
         if (Telemetry.configured()) {
-            telemetrySwitch = addSetting(settings, "Share diagnostics",
+            if (narrow) row = settingsRow(left);
+            telemetrySwitch = addSetting(row, "Share diagnostics",
                     "Sends this app's log to the developer.",
                     new View.OnClickListener() {
                         @Override
@@ -838,12 +860,8 @@ public class MainActivity extends Activity implements CanBox.Listener {
                         }
                     });
         }
-        LinearLayout.LayoutParams settingsLp = new LinearLayout.LayoutParams(-1, -2);
-        settingsLp.topMargin = dp(8);
-        left.addView(settings, settingsLp);
-
-        LinearLayout capture = new LinearLayout(this);
-        captureSwitch = addSetting(capture, "Record car data",
+        row = settingsRow(left);
+        captureSwitch = addSetting(row, "Record car data",
                 "Logs raw car data. May include vehicle details.",
                 new View.OnClickListener() {
                     @Override
@@ -851,7 +869,8 @@ public class MainActivity extends Activity implements CanBox.Listener {
                         toggleCapture();
                     }
                 });
-        autoUpdateSwitch = addSetting(capture, "Check for updates automatically",
+        if (narrow) row = settingsRow(left);
+        autoUpdateSwitch = addSetting(row, "Check for updates automatically",
                 "Once a day. Never installs by itself.",
                 new View.OnClickListener() {
                     @Override
@@ -859,9 +878,6 @@ public class MainActivity extends Activity implements CanBox.Listener {
                         toggleAutoUpdate();
                     }
                 });
-        LinearLayout.LayoutParams captureLp = new LinearLayout.LayoutParams(-1, -2);
-        captureLp.topMargin = dp(8);
-        left.addView(capture, captureLp);
 
         LinearLayout logCard = new LinearLayout(this);
         logCard.setOrientation(LinearLayout.VERTICAL);
@@ -875,25 +891,111 @@ public class MainActivity extends Activity implements CanBox.Listener {
         logView.setTypeface(Typeface.MONOSPACE);
         logView.setLineSpacing(0, 1.2f);
         logScroll.addView(logView);
+        if (narrow) {
+            // Inside the scrolling column: without this the column takes the drag and the log cannot be scrolled.
+            logScroll.setOnTouchListener(new View.OnTouchListener() {
+                @Override
+                public boolean onTouch(View v, MotionEvent e) {
+                    v.getParent().requestDisallowInterceptTouchEvent(true);
+                    return false;
+                }
+            });
+        }
         LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(-1, 0, 1f);
         scrollLp.topMargin = dp(8);
         logCard.addView(logScroll, scrollLp);
-        LinearLayout.LayoutParams logLp = new LinearLayout.LayoutParams(0, -1, 1f);
-        logLp.leftMargin = dp(24);
-        root.addView(logCard, logLp);
 
+        LinearLayout root = new LinearLayout(this);
+        root.setBackgroundColor(BG);
+        if (narrow) {
+            root.setPadding(dp(16), dp(8), dp(16), dp(8));
+            LinearLayout.LayoutParams logLp = new LinearLayout.LayoutParams(-1, dp(200));
+            logLp.topMargin = dp(8);
+            left.addView(logCard, logLp);
+            root.addView(leftScroll, new LinearLayout.LayoutParams(-1, -1));
+        } else {
+            root.setOrientation(LinearLayout.HORIZONTAL);
+            root.setPadding(dp(32), dp(8), dp(32), dp(8));
+            root.addView(leftScroll, new LinearLayout.LayoutParams(0, -1, 3f));
+            LinearLayout.LayoutParams logLp = new LinearLayout.LayoutParams(0, -1, 1f);
+            logLp.leftMargin = dp(24);
+            root.addView(logCard, logLp);
+        }
+        // The window's real width decides: split screen does not always come with a new configuration.
+        root.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+            @Override
+            public void onLayoutChange(View v, int l, int t, int r, int b, int ol, int ot, int or, int ob) {
+                if (r > l && (r - l < dp(NARROW_DP)) != narrow) {
+                    handler.removeCallbacks(relayout);
+                    handler.post(relayout);
+                }
+            }
+        });
+        rootView = root;
         return root;
+    }
+
+    /** One row when wide; when narrow the update button and the link state get a row of their own. */
+    private void addHeader(LinearLayout left) {
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setMinimumHeight(dp(44));
+        TextView title = text("NO START-STOP", 22, TEXT, true);
+        title.setLetterSpacing(0.12f);
+        header.addView(title);
+        String v = versionName();
+        // Release builds are named like "0.3.0"; local builds are "dev".
+        TextView version = text(Character.isDigit(v.charAt(0)) ? "v" + v : v, 14, MUTED, false);
+        LinearLayout.LayoutParams versionLp = new LinearLayout.LayoutParams(0, -2, 1f);
+        versionLp.leftMargin = dp(12);
+        header.addView(version, versionLp);
+        left.addView(header, new LinearLayout.LayoutParams(-1, -2));
+
+        updateView = text("", 14, MUTED, true);
+        updateView.setGravity(Gravity.CENTER);
+        updateView.setPadding(dp(20), 0, dp(20), 0);
+        updateView.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                onUpdateClick();
+            }
+        });
+        linkView = text("", 14, MUTED, true);
+        LinearLayout.LayoutParams updateLp = new LinearLayout.LayoutParams(-2, dp(36));
+        if (narrow) {
+            LinearLayout second = new LinearLayout(this);
+            second.setGravity(Gravity.CENTER_VERTICAL);
+            second.setMinimumHeight(dp(44));
+            second.addView(linkView, new LinearLayout.LayoutParams(0, -2, 1f));
+            second.addView(updateView, updateLp);
+            left.addView(second, new LinearLayout.LayoutParams(-1, -2));
+        } else {
+            updateLp.rightMargin = dp(24);
+            header.addView(updateView, updateLp);
+            header.addView(linkView);
+        }
+        if (updateLabel == null) showIdleUpdate();
+        else drawUpdate();
+    }
+
+    private LinearLayout settingsRow(LinearLayout left) {
+        LinearLayout row = new LinearLayout(this);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.topMargin = dp(8);
+        left.addView(row, lp);
+        return row;
     }
 
     private View switchCard() {
         LinearLayout box = new LinearLayout(this);
         stateCard = box;
-        box.setOrientation(LinearLayout.HORIZONTAL);
-        box.setPadding(dp(24), dp(12), dp(20), dp(12));
+        box.setOrientation(narrow ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+        box.setPadding(dp(narrow ? 16 : 24), dp(12), dp(narrow ? 16 : 20), dp(12));
 
         LinearLayout words = new LinearLayout(this);
         words.setOrientation(LinearLayout.VERTICAL);
-        box.addView(words, new LinearLayout.LayoutParams(0, -1, 1.4f));
+        box.addView(words, narrow ? new LinearLayout.LayoutParams(-1, -2)
+                : new LinearLayout.LayoutParams(0, -1, 1.4f));
 
         LinearLayout head = new LinearLayout(this);
         head.setGravity(Gravity.CENTER_VERTICAL);
@@ -927,7 +1029,8 @@ public class MainActivity extends Activity implements CanBox.Listener {
 
         feedback = text("", 18, MUTED, true);
         feedback.setGravity(Gravity.BOTTOM);
-        LinearLayout.LayoutParams feedbackLp = new LinearLayout.LayoutParams(-1, 0, 1f);
+        LinearLayout.LayoutParams feedbackLp = narrow ? new LinearLayout.LayoutParams(-1, -2)
+                : new LinearLayout.LayoutParams(-1, 0, 1f);
         feedbackLp.topMargin = dp(4);
         words.addView(feedback, feedbackLp);
 
@@ -943,7 +1046,8 @@ public class MainActivity extends Activity implements CanBox.Listener {
                 onSwitchTap();
             }
         });
-        actions.addView(switchButton, new LinearLayout.LayoutParams(-1, 0, 1f));
+        actions.addView(switchButton, narrow ? new LinearLayout.LayoutParams(-1, dp(64))
+                : new LinearLayout.LayoutParams(-1, 0, 1f));
         wrongButton = text("Car shows the opposite", 16, MUTED, true);
         wrongButton.setGravity(Gravity.CENTER);
         wrongButton.setOnClickListener(new View.OnClickListener() {
@@ -955,10 +1059,40 @@ public class MainActivity extends Activity implements CanBox.Listener {
         LinearLayout.LayoutParams wrongLp = new LinearLayout.LayoutParams(-1, dp(48));
         wrongLp.topMargin = dp(8);
         actions.addView(wrongButton, wrongLp);
-        LinearLayout.LayoutParams actionsLp = new LinearLayout.LayoutParams(0, -1, 1f);
-        actionsLp.leftMargin = dp(24);
-        box.addView(actions, actionsLp);
+
+        setRow = new LinearLayout(this);
+        setOnButton = setButton("Started", AssumedState.ON);
+        setOffButton = setButton("Stopped", AssumedState.OFF);
+        setRow.addView(setOnButton, new LinearLayout.LayoutParams(0, -1, 1f));
+        LinearLayout.LayoutParams offLp = new LinearLayout.LayoutParams(0, -1, 1f);
+        offLp.leftMargin = dp(8);
+        setRow.addView(setOffButton, offLp);
+        LinearLayout.LayoutParams setLp = new LinearLayout.LayoutParams(-1, dp(48));
+        setLp.topMargin = dp(8);
+        actions.addView(setRow, setLp);
+
+        if (narrow) {
+            LinearLayout.LayoutParams actionsLp = new LinearLayout.LayoutParams(-1, -2);
+            actionsLp.topMargin = dp(12);
+            box.addView(actions, actionsLp);
+        } else {
+            LinearLayout.LayoutParams actionsLp = new LinearLayout.LayoutParams(0, -1, 1f);
+            actionsLp.leftMargin = dp(24);
+            box.addView(actions, actionsLp);
+        }
         return box;
+    }
+
+    private TextView setButton(String label, final int state) {
+        TextView b = text(label, 16, MUTED, true);
+        b.setGravity(Gravity.CENTER);
+        b.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                onSetTap(state);
+            }
+        });
+        return b;
     }
 
     private TextView text(String s, float sp, int color, boolean bold) {

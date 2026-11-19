@@ -32,6 +32,7 @@ final class Prefs {
     private static final String ASSUMED_ENGINE_START = "assumed_engine_start";
     private static final String ASSUMED_SWITCHES = "assumed_switches";
     private static final String ASSUMED_REPORTS = "assumed_reports";
+    private static final String ASSUMED_BASE = "assumed_base";
     private static final LogBudget ASSUMED_LINES = new LogBudget(60);
     private static final LogBudget REPORT_LINES = new LogBudget(50);
     /** Set by the main screen while it is shown, to redraw when the assumed state changes. Main thread only. */
@@ -153,6 +154,25 @@ final class Prefs {
         return logged ? REPORT_LOGGED : REPORT_NOT_LOGGED;
     }
 
+    /** True while the watch service follows the ignition, so a state set by hand ends at the next ignition off. */
+    static boolean canSetAssumed(Context c) {
+        return applyAtBoot(c) && WatchService.following;
+    }
+
+    /** The user sets the state from the instrument cluster while it is unknown. Sends nothing to the car. */
+    static boolean setAssumedByHand(Context c, int state) {
+        synchronized (Prefs.class) {
+            SharedPreferences p = prefs(c);
+            AssumedState m = loadAssumed(p);
+            if (!m.setByHand(currentCycle(c), canSetAssumed(c), currentWake(c), state, SystemClock.elapsedRealtime())) {
+                return false;
+            }
+            saveAssumed(p.edit(), m).commit();
+        }
+        assumedChanged(c, AssumedState.change(state, "set by hand"));
+        return true;
+    }
+
     /** Logs one assumed-state event and redraws the screen. Never called with the Prefs lock held. */
     private static void assumedChanged(Context c, String change) {
         if (ASSUMED_LINES.take(SystemClock.elapsedRealtime())) LogFile.append(c, change);
@@ -174,6 +194,7 @@ final class Prefs {
         m.engineStart = p.getBoolean(ASSUMED_ENGINE_START, false);
         m.switches = p.getInt(ASSUMED_SWITCHES, 0);
         m.reports = p.getInt(ASSUMED_REPORTS, 0);
+        m.base = p.getInt(ASSUMED_BASE, AssumedState.ON);
         return m;
     }
 
@@ -185,7 +206,8 @@ final class Prefs {
                 .putLong(ASSUMED_START_AT, m.startAt)
                 .putBoolean(ASSUMED_ENGINE_START, m.engineStart)
                 .putInt(ASSUMED_SWITCHES, m.switches)
-                .putInt(ASSUMED_REPORTS, m.reports);
+                .putInt(ASSUMED_REPORTS, m.reports)
+                .putInt(ASSUMED_BASE, m.base);
     }
 
     /** Written at once: the head unit kills the app a few seconds after ignition off. */
