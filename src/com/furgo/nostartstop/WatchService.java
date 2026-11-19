@@ -51,6 +51,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
     private long lastReopenAt = -MAX_REOPEN_MS;
     private long reopenEvery = SILENT_MS;
     private boolean quietReopen;
+    private boolean gaveUp;
     private int lastPowerState = -1;
     private long armedAt;
     private boolean offSeenHere;
@@ -83,11 +84,14 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
                 linkOpen = true;
                 following = true;
                 quietReopen = false;
+                gaveUp = false;
                 lastMessageAt = SystemClock.elapsedRealtime();
                 return;
             }
             if (openAttempt >= OPEN_BACKOFF_MS.length) {
                 openAttempt = -1;
+                if (gaveUp) return;
+                gaveUp = true;
                 watchLog("no power messages from the head unit (" + canBox.openFailure() + "), nothing will be sent");
                 Prefs.assumedEnd(WatchService.this, "no power messages");
                 return;
@@ -111,6 +115,10 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
                 if (!quietReopen) LogFile.append(WatchService.this, "watch: link silent, reopened");
                 Prefs.assumedEnd(WatchService.this, "link silent");
                 ensureOpen();
+            } else if (!linkOpen && openAttempt < 0) {
+                // Past the backoff, so openTick tries once and does not reschedule itself.
+                openAttempt = OPEN_BACKOFF_MS.length;
+                handler.post(openTick);
             }
             handler.postDelayed(this, SILENT_MS);
         }
