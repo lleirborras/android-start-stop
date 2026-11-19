@@ -59,6 +59,23 @@ public class PowerWatchTest {
         check("start without a reason", !PowerWatch.startIsIgnitionOn(true, null, false, false));
         check("start with an unknown reason", !PowerWatch.startIsIgnitionOn(true, "by someone", false, false));
 
+        // The service's own ignition off blocks a start only until the app would have been stopped, or until a crank.
+        p = new PowerWatch();
+        check("no ignition off seen yet", !p.offSeenHere(0));
+        p.onState(1, 100_000);
+        check("start right after state 1", p.offSeenHere(100_000));
+        check("start 3 s after state 1", p.offSeenHere(103_000));
+        check("start just inside the hold", p.offSeenHere(100_000 + PowerWatch.OFF_HOLD_MS - 1));
+        p.onState(6, 110_000);
+        check("a 6 does not end the hold", p.offSeenHere(111_000));
+        check("start after the head unit slept", !p.offSeenHere(100_000 + PowerWatch.OFF_HOLD_MS));
+        check("process outlived the sleep: the start is an ignition on", PowerWatch.startIsIgnitionOn(true,
+                PowerWatch.BY_APP, false, p.offSeenHere(100_000 + 8 * 3_600_000L)));
+        p.onState(1, 200_000);
+        check("a second ignition off holds again", p.offSeenHere(201_000));
+        p.onState(9, 202_000);
+        check("a crank ends the hold", !p.offSeenHere(203_000));
+
         System.out.println("PowerWatchTest passed");
     }
 
