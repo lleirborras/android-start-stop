@@ -4,14 +4,16 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * Reads the head unit's power state (message 514 arg1) as measured on the van: 1 at ignition off, 9 while the engine
- * cranks, then 6 a few seconds later. The unit also answers 6 every time the link is opened, so 6 alone means nothing.
+ * Reads the head unit's power state (message 514 arg1) as measured on the van: 1 at ignition off, 4 as it goes to
+ * sleep, 5 as it wakes at ignition on, 9 while the engine cranks, then 6 a few seconds later. The unit also answers 6
+ * every time the link is opened, so 6 alone means nothing. A crank during the wake is not reported as a 9.
  */
 final class PowerWatch {
     static final int STATE_OFF = 1;
+    static final int STATE_WAKING = 5;
     static final int STATE_AWAKE = 6;
     static final int STATE_CRANK = 9;
-    static final int NONE = 0, IGNITION_OFF = 1, CRANK_END = 2;
+    static final int NONE = 0, IGNITION_OFF = 1, CRANK_END = 2, WAKING = 3;
     /** A 6 this long after the last 9 is not the end of that crank. */
     static final long MAX_CRANK_MS = 30_000;
     static final long CRANK_DEDUPE_MS = 5_000;
@@ -23,7 +25,7 @@ final class PowerWatch {
             RESTARTED = "restarted by the system", BY_BROADCAST = "by a broadcast",
             BY_LISTENER = "by the notification listener";
     // Not BY_LISTENER: Android binds the listener again seconds after the head unit stops the app at ignition off,
-    // which would look like an ignition on. A service started that way arms on the next crank it sees.
+    // which would look like an ignition on. A service started that way arms on the head unit's wake (5) or on the next crank it sees.
     private static final List<String> WAKE_REASONS = Arrays.asList(BY_APP, AT_BOOT, AFTER_UPDATE, RESTARTED);
 
     private boolean cranking;
@@ -46,6 +48,10 @@ final class PowerWatch {
             crankAt = now;
             return NONE;
         }
+        if (state == STATE_WAKING) {
+            offSeen = false;
+            return WAKING;
+        }
         if (state != STATE_AWAKE || !cranking) return NONE;
         cranking = false;
         if (now < crankAt || now - crankAt > MAX_CRANK_MS) return NONE;
@@ -61,7 +67,7 @@ final class PowerWatch {
     }
 
     /**
-     * Whether this watch saw the ignition go off and the app is still about to be stopped. Not after a crank, and not
+     * Whether this watch saw the ignition go off and the app is still about to be stopped. Not after a crank or a wake, and not
      * once OFF_HOLD_MS have passed: a process that outlives the head unit's sleep is started again at ignition on.
      * A 6 does not end it, since the unit answers 6 to any open of the link.
      */
