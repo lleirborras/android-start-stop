@@ -27,7 +27,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
     static boolean ignitionOffNow;
     /** This process has the power messages open, so an ignition off or engine start will be seen. Main thread only. */
     static boolean following;
-    /** The last power state and battery reading this process saw, or -1, for the "Car shows the opposite" report. */
+    /** The last power state and battery reading this process saw, or -1, for the "Car shows the other state" report. */
     static int seenPowerState = -1, seenCentivolts = -1;
     static long seenPowerStateAt, seenCentivoltsAt;
     private static final int NOTIFICATION_ID = 3;
@@ -164,6 +164,12 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
                 lastMessageAt = SystemClock.elapsedRealtime();
                 return;
             }
+            // The head unit is set up for another car: retrying cannot help, and the reason is already logged.
+            if (canBox.unsupported() != null) {
+                openAttempt = -1;
+                Prefs.assumedEnd(WatchService.this, "car not supported");
+                return;
+            }
             if (openAttempt >= OPEN_BACKOFF_MS.length) {
                 openAttempt = -1;
                 if (gaveUp) return;
@@ -180,7 +186,9 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
         @Override
         public void run() {
             long now = SystemClock.elapsedRealtime();
-            if (linkOpen && now - lastMessageAt >= SILENT_MS && now - lastReopenAt >= reopenEvery) {
+            // The beta link reports only changes, so its silence means nothing.
+            boolean quietLink = canBox.usesOtherLink();
+            if (linkOpen && !quietLink && now - lastMessageAt >= SILENT_MS && now - lastReopenAt >= reopenEvery) {
                 lastReopenAt = now;
                 reopenEvery = Math.min(reopenEvery * 2, MAX_REOPEN_MS);
                 canBox.close();
@@ -191,7 +199,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
                 if (!quietReopen) LogFile.append(WatchService.this, "watch: link silent, reopened");
                 Prefs.assumedEnd(WatchService.this, "link silent");
                 ensureOpen();
-            } else if (!linkOpen && openAttempt < 0) {
+            } else if (!linkOpen && openAttempt < 0 && canBox.unsupported() == null) {
                 // Past the backoff, so openTick tries once and does not reschedule itself.
                 openAttempt = OPEN_BACKOFF_MS.length;
                 handler.post(openTick);
@@ -272,6 +280,21 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
                     + " s after arming");
         }
         decisions.onBattery(centivolts, lastMessageAt);
+    }
+
+    @Override
+    public void onIgnition(boolean on) {
+        heard();
+        watchLog(on ? "ignition on (head unit)" : "ignition off (head unit)");
+        if (on) decisions.onIgnitionOn("ignition on reported by the head unit", canBox.engineSignal());
+        else decisions.onPowerState(PowerWatch.STATE_OFF, lastMessageAt);
+    }
+
+    @Override
+    public void onEngineRunning(String why, boolean afterStop) {
+        heard();
+        if (afterStop) decisions.onEngineStart(why, lastMessageAt);
+        else decisions.onRunning(why, lastMessageAt);
     }
 
     @Override

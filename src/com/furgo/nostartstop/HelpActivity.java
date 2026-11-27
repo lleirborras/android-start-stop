@@ -69,6 +69,7 @@ public class HelpActivity extends Activity {
         LinearLayout first = column();
         LinearLayout second = narrow ? first : column();
         stateCard(first);
+        carSetup(first);
         engineStart(first);
         backgroundStart(first);
         headUnit(first);
@@ -124,9 +125,11 @@ public class HelpActivity extends Activity {
     private void stateCard(LinearLayout column) {
         LinearLayout card = card(column, "Stop-start card");
         para(card, "The car does not report whether stop-start is on. The app works it out: the car turns stop-start on "
-                + "at every engine start, and each switch sent flips it. That is why the card says \"assumed\". "
+                + "at every engine start, and each switch sent flips it. That is why the card tags it ASSUMED. "
                 + "The instrument cluster is always right.");
-        item(card, "ON / OFF", "What the app assumes.");
+        item(card, "ON / OFF", "With a tag under the word. ASSUMED: what the app works out. FROM THE CAR: read back "
+                + "from the car (beta profiles). SENT: a switch went out while the app did not follow the ignition, "
+                + "so the card shows what that switch implies until the next ignition off.");
         item(card, "UNKNOWN", "The app did not follow the ignition: Switch off at engine start is off, the ignition "
                 + "was switched off, the head unit restarted, or the app gets no power messages from the head unit.");
         item(card, "Switch stop-start", "Sends one switch to the car, the same command as the car's own menu. Check "
@@ -134,8 +137,21 @@ public class HelpActivity extends Activity {
         item(card, "Started / Stopped", "Shown while the state is unknown. Tap what the instrument cluster shows: "
                 + "Started if stop-start is on, Stopped if it is off. Sends nothing to the car. Greyed out while the app "
                 + "cannot follow the ignition.");
-        item(card, "Car shows the opposite", "Tap it when the instrument cluster disagrees with the card. It flips "
+        item(card, "Car shows the other state", "Tap it when the instrument cluster disagrees with the card. It flips "
                 + "the shown state and writes a line to the log, up to a daily limit. Sends nothing to the car.");
+    }
+
+    private void carSetup(LinearLayout column) {
+        LinearLayout card = card(column, "Your car");
+        para(card, "The app sends nothing to the car until you confirm which car it is. It asks once after it is "
+                + "installed or updated, and again when the head unit's CAN box setting changes.");
+        item(card, "SET UP YOUR CAR", "Shown at the top until you confirm; tap it to open the car setup. The switch "
+                + "button is grey and nothing is sent, also not at engine start.");
+        item(card, "My car is not listed", "Confirm: send nothing. The app sends nothing and shows CAR NOT SUPPORTED.");
+        item(card, "Not now", "Closes the setup and sends nothing. The top keeps saying SET UP YOUR CAR.");
+        item(card, "Settings", "Opens from the top of the main screen. Its CAR section shows the car the head unit "
+                + "reports and the one you confirmed, with Change car. Background start, the update checks, Share diagnostics, "
+                + "Record car data and the beta switches are there too.");
     }
 
     private void engineStart(LinearLayout column) {
@@ -189,21 +205,34 @@ public class HelpActivity extends Activity {
     private void logCard(LinearLayout column) {
         LinearLayout card = card(column, "The log");
         para(card, "The commands sent, the car's status frames, what the automatic switch saw and did, the assumed "
-                + "state, boot, screen, shutdown and network events, and errors.");
+                + "state, boot, screen, shutdown and network events, and errors. On a narrow screen it is folded: tap "
+                + "LOG to open it.");
         item(card, "Record car data", "Off by default. Also logs the raw frames from the car, engine and vehicle "
                 + "speed, battery voltage and the head unit's identity. This may include vehicle details such as "
                 + "the VIN. Leave it off unless you are asked for it.");
         item(card, "Beta: reach the car without adb", "Off by default. Some head units block the link to the car "
-                + "for apps that are not part of the system, and the card says NO LINK TO CAR. This asks Android "
+                + "for apps that are not part of the system, and the card says NOT CONNECTED. This asks Android "
                 + "to lift that block for this app only. The log says if it failed.");
+        item(card, "Beta: FYT and Microntek head units", "Off by default. For head units that are not Topway, such "
+                + "as Teyes, Joying or Dasaita, with a PSA car and a Raise CAN box. The app sends nothing if the head "
+                + "unit is set up for another car or box. At engine start it waits for the engine speed. Microntek "
+                + "gives none, so there it never switches by itself unless the guess below is on.");
+        item(card, "Beta: guess the engine start", "Off by default. Where the head unit gives no engine speed, "
+                + "the engine is taken as running 15 s after ignition on. A switch sent before the engine runs is "
+                + "undone by the start.");
+        item(card, "Beta: other cars", "Off by default. On Topway head units set up for VW MQB on a Hiworld or "
+                + "Raise box, Honda on Hiworld, Haval on Raise, or PSA on a Simple Soft, Binary or LuZheng box, the app uses that car's own command and reads the "
+                + "setting back. At engine start it always sends off; a tap sends the opposite of what the car "
+                + "reports, and the card shows the state the car reports. Read from the head unit maker's app, not "
+                + "tested on these cars.");
         item(card, "The file", "Android/data/com.furgo.nostartstop/files/nostartstop.log on the head unit's "
                 + "internal storage. Copy it to a pendrive with the head unit's file manager.");
     }
 
     private void updates(LinearLayout column) {
         LinearLayout card = card(column, "Updates");
-        item(card, "Check for updates", "Needs a network. The button turns into Install vX.Y.Z when a newer release "
-                + "exists, or says Up to date. Tap Install; Android asks you to confirm.");
+        item(card, "Check for updates now", "In Settings. Needs a network. It turns into Install vX.Y.Z when a newer "
+                + "release exists, or says Up to date. Tap Install; Android asks you to confirm.");
         item(card, "The first time", "Android says the app is not allowed to install unknown apps. Tap Settings, "
                 + "allow it for No Start-Stop, go back and tap Install again.");
         item(card, "Check for updates automatically", "About once a day and after a boot, only with a network. It "
@@ -215,7 +244,7 @@ public class HelpActivity extends Activity {
         LinearLayout card = card(column, "Background start");
         para(card, "Lets Android start the app without its screen, when the head unit powers on and after it stopped "
                 + "the app. Switch off at engine start then also works when another app was on screen.");
-        item(card, "Turn it on", "Tap Background start at the top, then Open settings, and allow notification access "
+        item(card, "Turn it on", "Tap Background start in Settings, then Open settings, and allow notification access "
                 + "for No Start-Stop. The app reads no notification; Android starts apps that have this access.");
         item(card, "What it does then", "A start in the background sends nothing by itself. The app sends its "
                 + "switch once the head unit wakes at the next ignition on and the engine runs, if Android kept the app "
@@ -252,7 +281,7 @@ public class HelpActivity extends Activity {
         item(card, "\"This app may be harmful\" when installing or updating", "Google Play Protect shows this for "
                 + "apps it does not know; this one is not on Google Play. Tap Install anyway. If an update stopped "
                 + "there, tap Install again. To stop the prompt, turn off Scan apps with Play Protect in the Play Store.");
-        item(card, "NO LINK TO CAR", "The app cannot reach the head unit's car interface. The switch button is grey "
+        item(card, "NOT CONNECTED", "The app cannot reach the head unit's car interface. The switch button is grey "
                 + "and nothing is sent. It only works on Topway head units.");
         item(card, "\"No answer from the car.\"", "The switch was sent but not confirmed within 3 seconds. Check the "
                 + "instrument cluster before you tap again: it may have worked. With \"Nothing sent.\" after it, "
@@ -260,7 +289,7 @@ public class HelpActivity extends Activity {
         item(card, "Nothing happens at engine start", "Check that Switch off at engine start is on, and that the app "
                 + "was running: open it once and leave it on screen when you switch the ignition off, or turn "
                 + "Background start on. The log shows \"wake\" and \"auto:\" lines when the app saw the engine start.");
-        item(card, "Stop-start is on though the card says OFF", "Tap Car shows the opposite, then Switch stop-start "
+        item(card, "Stop-start is on though the card says OFF", "Tap Car shows the other state, then Switch stop-start "
                 + "once.");
     }
 
