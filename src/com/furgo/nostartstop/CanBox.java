@@ -122,6 +122,11 @@ final class CanBox {
         return tw == null && Prefs.otherUnits(context) ? OtherLink.refusedAtOpen : null;
     }
 
+    /** Beta link only: whether it can report the engine running. */
+    boolean engineSignal() {
+        return other == null || other.engineSignal();
+    }
+
     /** False while the beta link cannot send yet; the TWUtil link is always ready once open. */
     boolean ready() {
         return other == null || other.ready();

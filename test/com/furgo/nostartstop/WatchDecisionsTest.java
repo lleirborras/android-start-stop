@@ -380,20 +380,41 @@ public class WatchDecisionsTest {
     private static void headUnitReportsIgnitionAndRpm() {
         fresh();
         s.now = 1_000;
-        d.onIgnitionOn("ignition on reported by the head unit");
+        d.onIgnitionOn("ignition on reported by the head unit", true);
         did("ignition on without an off before it", "offNow false");
         check("nothing pending", !d.armed());
         state("ignition off", 1, 2_000, "offNow true", "event OFF_SEEN", "assumed end ignition off", "cancel");
         s.now = 3_000;
-        d.onIgnitionOn("ignition on reported by the head unit");
+        d.onIgnitionOn("ignition on reported by the head unit", true);
         did("ignition on right after the off still counts", armed("ignition on reported by the head unit",
                 "offNow false", "wake ignition on reported by the head unit IGNITION_ON_CYCLE"));
         s.now = 4_000;
-        d.onIgnitionOn("ignition on reported by the head unit");
+        d.onIgnitionOn("ignition on reported by the head unit", true);
         did("a second ignition on while pending", "offNow false");
         s.now = 3_000 + SETTLE;
         d.onRunning("rpm 820", s.now);
         did("rpm fires", "cancel", "log: engine running (rpm 820), switching", "event FIRED", "send");
+
+        // Microntek without the guess: a cycle starts, but nothing will say the engine runs.
+        fresh();
+        s.flag = true;
+        s.now = 1_000;
+        d.onIgnitionOn("ignition on reported by the head unit", false);
+        did("no engine signal", "offNow false", "wake ignition on reported by the head unit IGNITION_ON_CYCLE",
+                "log: no engine signal on this head unit, nothing sent; turn on Beta: guess the engine start to switch "
+                        + "anyway");
+        s.now = 2_000;
+        d.onIgnitionOn("ignition on reported by the head unit", false);
+        did("said once per cycle", "offNow false");
+        tick("no tick fires it", 1_000 + SETTLE, NOTHING);
+        state("ignition off", 1, 10_000, "offNow true", "event OFF_SEEN", "assumed end ignition off", "cancel",
+                "log: ignition off, nothing sent");
+        s.now = 20_000;
+        d.onIgnitionOn("ignition on reported by the head unit", false);
+        did("said again in the next cycle", "offNow false",
+                "wake ignition on reported by the head unit IGNITION_ON_CYCLE",
+                "log: no engine signal on this head unit, nothing sent; turn on Beta: guess the engine start to switch "
+                        + "anyway");
     }
 
     private static void fresh() {

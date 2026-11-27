@@ -38,6 +38,11 @@ abstract class OtherLink {
     /** Returns -2 when the link is not ready yet, -1 when refused or failed: nothing was sent then. */
     abstract int write(int cmd, byte[] data);
 
+    /** Watch mode: whether the engine running can be reported at all, by rpm or by the opt-in guess. */
+    boolean engineSignal() {
+        return true;
+    }
+
     /** Whether a write can be attempted now; until then it returns -2. */
     boolean ready() {
         return true;
@@ -144,9 +149,9 @@ abstract class OtherLink {
             power = state;
             if (state.equals("power_on")) {
                 sink.ignition(true);
-                // Microntek gives no engine signal: guess.
+                // Microntek gives no engine signal: guess, if the user asked for it.
                 handler.removeCallbacks(guess);
-                handler.postDelayed(guess, GUESS_MS);
+                if (Prefs.engineGuess(context)) handler.postDelayed(guess, GUESS_MS);
             } else if (state.equals("power_off") || state.equals("acc_off") || state.equals("sleep")) {
                 handler.removeCallbacks(guess);
                 sink.ignition(false);
@@ -226,6 +231,11 @@ abstract class OtherLink {
         }
 
         @Override
+        boolean engineSignal() {
+            return Prefs.engineGuess(context);
+        }
+
+        @Override
         String name() {
             return "Microntek";
         }
@@ -294,7 +304,7 @@ abstract class OtherLink {
                     public void run() {
                         handler.removeCallbacks(guess);
                         if (on) {
-                            if (!rpmWorks) handler.postDelayed(guess, GUESS_MS);
+                            if (!rpmWorks && Prefs.engineGuess(context)) handler.postDelayed(guess, GUESS_MS);
                         } else {
                             running = false;
                         }

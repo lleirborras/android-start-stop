@@ -279,7 +279,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
     public void onIgnition(boolean on) {
         heard();
         watchLog(on ? "ignition on (head unit)" : "ignition off (head unit)");
-        if (on) decisions.onIgnitionOn("ignition on reported by the head unit");
+        if (on) decisions.onIgnitionOn("ignition on reported by the head unit", canBox.engineSignal());
         else decisions.onPowerState(PowerWatch.STATE_OFF, lastMessageAt);
     }
 

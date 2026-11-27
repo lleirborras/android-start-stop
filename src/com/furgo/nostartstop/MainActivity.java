@@ -97,6 +97,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private Toggle autoUpdateSwitch;
     private Toggle withoutAdbSwitch;
     private Toggle otherUnitsSwitch;
+    private Toggle engineGuessSwitch;
     private TextView logView;
     private TextView shareText;      // null when the build has no PostHog key
     private View shareDot;
@@ -656,6 +657,13 @@ public class MainActivity extends Activity implements CanBox.Listener {
         render();
     }
 
+    private void toggleEngineGuess() {
+        boolean on = !Prefs.engineGuess(this);
+        Prefs.setEngineGuess(this, on);
+        onLog(on ? "beta: engine guess on" : "beta: engine guess off");
+        renderBoot();
+    }
+
     private void toggleTelemetry() {
         setTelemetry(!Prefs.telemetry(this));
     }
@@ -934,6 +942,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         renderSwitch(autoUpdateSwitch, Prefs.autoUpdate(this));
         renderSwitch(withoutAdbSwitch, Prefs.withoutAdb(this));
         renderSwitch(otherUnitsSwitch, Prefs.otherUnits(this));
+        renderSwitch(engineGuessSwitch, Prefs.engineGuess(this));
     }
 
     private void renderSwitch(Toggle t, boolean on) {
@@ -1018,6 +1027,15 @@ public class MainActivity extends Activity implements CanBox.Listener {
                     @Override
                     public void onClick(View v) {
                         toggleOtherUnits();
+                    }
+                });
+        row = settingsRow(left);
+        engineGuessSwitch = addSetting(row, "Beta: guess the engine start",
+                "Switch 15 s after ignition on when the head unit gives no engine speed.",
+                new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        toggleEngineGuess();
                     }
                 });
 

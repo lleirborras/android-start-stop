@@ -63,14 +63,21 @@ final class WatchDecisions {
 
     /**
      * Beta head units report the ignition themselves, so unlike {@link #onStart} no hold after ignition off applies.
-     * Starts a cycle only after an ignition off, and not while a switch is pending.
+     * Starts a cycle only after an ignition off, and not while a switch is pending. Without engineSignal nothing
+     * will report the engine running, so nothing is sent.
      */
-    void onIgnitionOn(String source) {
+    void onIgnitionOn(String source, boolean engineSignal) {
         shell.ignitionOffNow(false);
         if (!shell.ignitionOff() || auto.armed()) return;
         shell.newWake(source, WakeRules.IGNITION_ON_CYCLE);
         auto.arm(shell.now(), false);
-        armed(source);
+        if (engineSignal) {
+            armed(source);
+            return;
+        }
+        // Still armed, so a repeated ignition on does not start another cycle.
+        shell.autoLog("no engine signal on this head unit, nothing sent; turn on Beta: guess the engine start to "
+                + "switch anyway");
     }
 
     void onPowerState(int state, long at) {
