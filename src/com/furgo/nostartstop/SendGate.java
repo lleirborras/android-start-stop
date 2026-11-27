@@ -24,7 +24,7 @@ final class SendGate {
 
     static final class Verdict {
         final int result;
-        /** Which rule decided, for the log: "car setup", "watch", "car app", "FYT", ... Null for SEND. */
+        /** Which rule decided, for the log: "car setup", "watch", "PSA", "beta: FYT", ... Null for SEND. */
         final String rule;
         /** Why, for the log and the CAR NOT SUPPORTED state; null for SEND. */
         final String why;
@@ -103,8 +103,10 @@ final class SendGate {
         if (psa != null && psaBytes(kind, s)) return new Verdict(REFUSE, "PSA", psa);
         if (other && s.link != Detection.Platform.NONE) {
             String car = carRefusal(s.link, s.car);
-            if (OtherUnits.NOT_IDENTIFIED.equals(car)) return new Verdict(NOT_READY, s.link.name(), car);
-            if (car != null) return new Verdict(REFUSE, s.link.name(), car);
+            // "beta: " first: the main screen redraws on those log lines.
+            String rule = "beta: " + (s.link == Detection.Platform.FYT ? "FYT" : "Microntek");
+            if (OtherUnits.NOT_IDENTIFIED.equals(car)) return new Verdict(NOT_READY, rule, car);
+            if (car != null) return new Verdict(REFUSE, rule, car);
         }
         return SENT;
     }

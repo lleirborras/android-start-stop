@@ -158,12 +158,12 @@ public class SendGateTest {
         for (Kind k : new Kind[]{Kind.OTHER_SET, Kind.OTHER_QUERY}) {
             check("FYT 339 " + k, van.fyt("339").on(k), SEND, null);
             check("FYT 339 variant " + k, van.fyt(String.valueOf((5 << 16) | 339)).on(k), SEND, null);
-            check("FYT other car " + k, van.fyt("281").on(k), REFUSE, "FYT");
-            check("FYT unknown " + k, van.fyt(null).on(k), NOT_READY, "FYT");
+            check("FYT other car " + k, van.fyt("281").on(k), REFUSE, "beta: FYT");
+            check("FYT unknown " + k, van.fyt(null).on(k), NOT_READY, "beta: FYT");
             check("Microntek 50 " + k, van.microntek("50").on(k), SEND, null);
             check("Microntek 50 spaces " + k, van.microntek(" 50\n").on(k), SEND, null);
-            check("Microntek other box " + k, van.microntek("59").on(k), REFUSE, "MICRONTEK");
-            check("Microntek unknown " + k, van.microntek(null).on(k), REFUSE, "MICRONTEK");
+            check("Microntek other box " + k, van.microntek("59").on(k), REFUSE, "beta: Microntek");
+            check("Microntek unknown " + k, van.microntek(null).on(k), REFUSE, "beta: Microntek");
         }
         check("FYT reason", van.fyt("281").on(Kind.OTHER_SET).why, "canbus id 281 is not PSA with a Raise box (339)");
         check("Microntek reason", van.microntek("59").on(Kind.OTHER_SET).why,
