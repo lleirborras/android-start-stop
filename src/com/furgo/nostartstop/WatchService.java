@@ -27,7 +27,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
     static boolean ignitionOffNow;
     /** This process has the power messages open, so an ignition off or engine start will be seen. Main thread only. */
     static boolean following;
-    /** The last power state and battery reading this process saw, or -1, for the "Car shows the opposite" report. */
+    /** The last power state and battery reading this process saw, or -1, for the "Car shows the other state" report. */
     static int seenPowerState = -1, seenCentivolts = -1;
     static long seenPowerStateAt, seenCentivoltsAt;
     private static final int NOTIFICATION_ID = 3;

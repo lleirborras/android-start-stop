@@ -10,6 +10,8 @@ final class OtherUnits {
     static final int FYT_PSA_RAISE = 339;
     /** Microntek CAN box type (cfg_canbus) of PSA with a Raise box. */
     static final String MICRONTEK_PSA_RAISE = "50";
+    /** FYT before the service reports the car: not a refusal, the link is not ready yet. */
+    static final String NOT_IDENTIFIED = "car not identified yet";
 
     /** Raise wire frame FD, length, command, data, checksum; the checksum is the low byte of the sum after FD. */
     static byte[] fdFrame(int cmd, byte[] data) {
@@ -63,7 +65,7 @@ final class OtherUnits {
 
     /** Why a stop-start command must not be sent for this FYT canbus id, or null when it may. */
     static String fytRefusal(int canbusId) {
-        if (canbusId < 0) return "car not identified yet";
+        if (canbusId < 0) return NOT_IDENTIFIED;
         int box = canbusId & 0xFFFF;
         return box == FYT_PSA_RAISE ? null : "canbus id " + box + " is not PSA with a Raise box (" + FYT_PSA_RAISE + ")";
     }
