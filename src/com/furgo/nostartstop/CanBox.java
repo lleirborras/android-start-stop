@@ -425,6 +425,12 @@ final class CanBox {
             log("not open, nothing sent");
             return -1;
         }
+        // Checked here too, not only at open: no PSA command leaves for a box that would read it as something else.
+        String refusal = psaRefusal();
+        if (refusal != null) {
+            log(refusal + ", nothing sent");
+            return -1;
+        }
         int bit = Protocol.toggleValue(lastFrame);
         int rc = write(Protocol.CMD_SET, Protocol.set(bit));
         if (rc < 0) {
