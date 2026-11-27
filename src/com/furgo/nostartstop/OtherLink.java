@@ -6,6 +6,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
+import android.content.pm.ApplicationInfo;
 import android.os.Binder;
 import android.os.Handler;
 import android.os.IBinder;
@@ -52,15 +53,22 @@ abstract class OtherLink {
      * the ignition and the engine through the sink.
      */
     static OtherLink open(Context c, Sink sink, boolean watch) {
-        if (installed(c, Microntek.PACKAGE)) return Microntek.open(c, sink, watch);
-        if (installed(c, Fyt.PACKAGE)) return Fyt.open(c, sink, watch);
+        boolean microntek = installed(c, Microntek.PACKAGE);
+        boolean fyt = installed(c, Fyt.PACKAGE);
+        if (microntek && fyt) {
+            if (!bothLogged) sink.log("beta: both FYT and Microntek found, nothing will be sent");
+            bothLogged = true;
+            return null;
+        }
+        if (microntek) return Microntek.open(c, sink, watch);
+        if (fyt) return Fyt.open(c, sink, watch);
         if (!noServiceLogged) sink.log("beta: no FYT or Microntek CAN service on this head unit");
         noServiceLogged = true;
         return null;
     }
 
     // Open is retried every few seconds at boot; the reason is the same each time.
-    private static boolean noServiceLogged;
+    private static boolean noServiceLogged, bothLogged;
 
     private static String versionName(Context c, String pkg) {
         try {
@@ -70,10 +78,11 @@ abstract class OtherLink {
         }
     }
 
+    /** Only as part of the system: a sideloaded copy of a vendor app does not make this that head unit. */
     private static boolean installed(Context c, String pkg) {
         try {
-            c.getPackageManager().getPackageInfo(pkg, 0);
-            return true;
+            int flags = c.getPackageManager().getApplicationInfo(pkg, 0).flags;
+            return (flags & (ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0;
         } catch (Throwable e) {
             return false;
         }
