@@ -34,9 +34,6 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
-import java.net.ConnectException;
-import java.net.SocketTimeoutException;
-import java.net.UnknownHostException;
 import java.util.ArrayDeque;
 import java.util.Locale;
 
@@ -58,7 +55,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private static final int MAX_LOG = 50;
     private static final long REQUERY_MS = 5000;
     private static final long STALE_MS = 12000;
-    private static final long NOTE_MS = 3000, REVERT_MS = 4000;
+    private static final long NOTE_MS = 3000;
 
     private static final int LINK_WAITING = 0, LINK_LIVE = 1, LINK_DOWN = -1;
 
@@ -78,15 +75,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
 
     private float density;
     private TextView linkView;
-    private TextView updateView;
-    private TextView startView;      // "Background start: On/Off", opens Android's notification access screen
-    private boolean updateBusy;
-    private String updateLabel;      // what the update button shows, kept across a rebuild of the screen
-    private int updateColor;
-    private boolean updatePrimary;
-    private AlertDialog startDialog;
-    private Boolean startShown;      // the background start state last drawn, to log a change made in Settings
-    private Updater.Release available;   // non-null once a newer release was found
+    private Boolean startShown;      // the background start state last seen, to log a change made in Settings
     private Toggle bootSwitch;
     private boolean askingAboutDiagnostics;
     private boolean fromOwnScreen;   // back from a screen of this app: the car setup is not opened again
@@ -184,20 +173,12 @@ public class MainActivity extends Activity implements CanBox.Listener {
         }
     };
 
-    private final Runnable revertUpdate = new Runnable() {
-        @Override
-        public void run() {
-            showIdleUpdate();
-        }
-    };
-
     private final Runnable jobDone = new Runnable() {
         @Override
         public void run() {
             log.clear();
             log.addAll(LogFile.tail(MainActivity.this, MAX_LOG));
             renderLog();
-            showStoredUpdate();
         }
     };
 
@@ -310,7 +291,6 @@ public class MainActivity extends Activity implements CanBox.Listener {
     protected void onDestroy() {
         watch.stop();
         handler.removeCallbacksAndMessages(null);
-        if (startDialog != null) startDialog.dismiss();
         super.onDestroy();
     }
 
@@ -364,7 +344,8 @@ public class MainActivity extends Activity implements CanBox.Listener {
         shareLive = true;
         Telemetry.refresh(this);
         renderShare();
-        showStoredUpdate();
+        // Settings offers the install; here only a notification for a release that is no longer newer goes.
+        if (UpdateCheck.offerable(Prefs.latestTag(this), versionName()) == null) UpdateJob.cancelNotification(this);
         UpdateJob.schedule(this, true);
     }
 
@@ -487,114 +468,6 @@ public class MainActivity extends Activity implements CanBox.Listener {
         render();
     }
 
-    private void onUpdateClick() {
-        if (updateBusy) return;
-        updateBusy = true;
-        final Updater.Release found = available;
-        handler.removeCallbacks(revertUpdate);
-        showUpdate(found == null || found.apkUrl == null ? "Checking…" : "Downloading " + found.tag + "…", MUTED, false);
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    if (found == null || found.apkUrl == null) {
-                        final Updater.Release latest = Updater.latest();
-                        handler.post(new Runnable() {
-                            @Override
-                            public void run() {
-                                onLatest(latest);
-                            }
-                        });
-                    } else {
-                        Updater.install(getApplicationContext(), found);
-                        finishUpdate("download done, waiting for Android's install prompt", "Waiting for Android…", TEXT, true);
-                    }
-                } catch (final Throwable e) {
-                    boolean offline = e instanceof UnknownHostException || e instanceof ConnectException
-                            || e instanceof SocketTimeoutException;
-                    finishUpdate("update failed: " + e, offline ? "No internet" : "Update failed", WARN, false);
-                }
-            }
-        }).start();
-    }
-
-    private void onLatest(Updater.Release latest) {
-        if (isDestroyed()) return;
-        updateBusy = false;
-        UpdateJob.remember(this, latest.tag);
-        if (Version.isNewer(latest.tag, versionName())) {
-            boolean installNow = available != null && available.tag.equals(latest.tag);
-            available = latest;
-            onLog("update available: " + latest.tag);
-            showIdleUpdate();
-            if (installNow) onUpdateClick();
-        } else {
-            available = null;
-            onLog("no update: latest release is " + latest.tag + ", installed is " + versionName());
-            showUpdate("Up to date", TEXT, false);
-            handler.postDelayed(revertUpdate, REVERT_MS);
-        }
-    }
-
-    private void finishUpdate(final String logLine, final String label, final int color, final boolean done) {
-        handler.post(new Runnable() {
-            @Override
-            public void run() {
-                if (isDestroyed()) {
-                    LogFile.append(getApplicationContext(), logLine);
-                    return;
-                }
-                updateBusy = false;
-                // After a failure the found release stays, so the button offers the install again.
-                if (done) available = null;
-                onLog(logLine);
-                showUpdate(label, color, false);
-                handler.postDelayed(revertUpdate, REVERT_MS);
-            }
-        });
-    }
-
-    /** Offers the release found by the background check, if it is still newer than the installed version. */
-    private void showStoredUpdate() {
-        if (updateBusy) return;
-        String installed = versionName();
-        if (available != null && !Version.isNewer(available.tag, installed)) available = null;
-        String tag = UpdateCheck.offerable(Prefs.latestTag(this), installed);
-        if (tag == null) UpdateJob.cancelNotification(this);
-        // Its APK URL is not stored: tapping Install fetches the release again.
-        if (tag != null && (available == null || Version.isNewer(tag, available.tag))) {
-            available = new Updater.Release(tag, null);
-        }
-        showIdleUpdate();
-    }
-
-    private void showIdleUpdate() {
-        if (available != null) showUpdate("Install " + available.tag, TEXT, true);
-        else showUpdate("Check for updates", MUTED, false);
-    }
-
-    private void showUpdate(String label, int color, boolean primary) {
-        handler.removeCallbacks(revertUpdate);
-        updateLabel = label;
-        updateColor = color;
-        updatePrimary = primary;
-        drawUpdate();
-    }
-
-    private void drawUpdate() {
-        String label = updateLabel;
-        int color = updateColor;
-        boolean primary = updatePrimary;
-        updateView.setText(label);
-        updateView.setTextColor(color);
-        LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) updateView.getLayoutParams();
-        lp.height = dp(primary ? 44 : 36);
-        updateView.setLayoutParams(lp);
-        updateView.setBackgroundDrawable(primary
-                ? pressable(PRIMARY, PRIMARY_PRESSED, 0)
-                : pressable(0, NEUTRAL_PRESSED, 0));
-    }
-
     private void toggleBoot() {
         boolean on = !Prefs.applyAtBoot(this);
         Prefs.setApplyAtBoot(this, on);
@@ -611,37 +484,6 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private void openOwn(Class<? extends Activity> screen) {
         fromOwnScreen = true;
         startActivity(new Intent(this, screen));
-    }
-
-    /** Explains the notification access the background start needs, then opens Android's screen for it. */
-    private void onStartTap() {
-        if (!StartListener.available(this)) {
-            flash("This head unit does not allow a background start.");
-            return;
-        }
-        boolean on = StartListener.enabled(this);
-        startDialog = new AlertDialog.Builder(this)
-                .setTitle(on ? "Background start is on" : "Start with the head unit?")
-                .setMessage("Android can start this app in the background when the head unit powers on or wakes, "
-                        + "so Switch off at engine start also works when another app was on screen.\n\n"
-                        + "It uses Android's notification access, because Android starts apps that have it. "
-                        + "This app does not read any notification.\n\n"
-                        + (on ? "To turn it off, switch off No Start-Stop on the next screen."
-                        : "On the next screen, switch on No Start-Stop."))
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Open settings", new DialogInterface.OnClickListener() {
-                    @Override
-                    public void onClick(DialogInterface dialog, int which) {
-                        try {
-                            startActivity(new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"));
-                            onLog("background start: opened notification access settings");
-                        } catch (RuntimeException e) {
-                            onLog("background start: no notification access settings: " + e);
-                            flash("This head unit has no notification access screen.");
-                        }
-                    }
-                })
-                .show();
     }
 
     /** Asked once, on the first launch of a build that can share diagnostics. Nothing is sent before an answer. */
@@ -779,6 +621,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         linkView.setText(setup ? "○  SET UP YOUR CAR" : unsupported ? "○  CAR NOT SUPPORTED" : shown == LINK_LIVE ? "●  CONNECTED TO CAR"
                 : shown == LINK_DOWN ? "○  NO LINK TO CAR" : "○  CONNECTING…");
         linkView.setTextColor(shown == LINK_LIVE ? ACCENT : shown == LINK_DOWN ? LINK_BAD : MUTED);
+        linkView.setClickable(false);
 
         boolean bootBusy = BootService.running;
         long last = Prefs.lastSwitchAt(this);
@@ -886,8 +729,6 @@ public class MainActivity extends Activity implements CanBox.Listener {
             if (startShown != null) onLog(startOn ? "background start on" : "background start off");
             startShown = startOn;
         }
-        startView.setText("Background start: " + (startOn ? "On" : "Off"));
-        startView.setTextColor(startOn ? TEXT : MUTED);
         renderSwitch(bootSwitch, Prefs.applyAtBoot(this));
     }
 
@@ -1010,92 +851,81 @@ public class MainActivity extends Activity implements CanBox.Listener {
         return root;
     }
 
-    /** One row when wide; when narrow the update button and the link state get a row of their own. */
+    /** One row when wide; when narrow the title and the link state, then the version, Help and Settings. */
     private void addHeader(LinearLayout left) {
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setMinimumHeight(dp(44));
+        header.setMinimumHeight(dp(48));
         TextView title = text("NO START-STOP", 22, TEXT, true);
         title.setLetterSpacing(0.12f);
+        title.setSingleLine(true);
         header.addView(title);
         String v = versionName();
         // Release builds are named like "0.3.0"; local builds are "dev".
         LinearLayout about = new LinearLayout(this);
         about.setOrientation(LinearLayout.VERTICAL);
-        about.addView(text(Character.isDigit(v.charAt(0)) ? "v" + v : v, 14, MUTED, false));
+        TextView version = text(Character.isDigit(v.charAt(0)) ? "v" + v : v, 14, MUTED, false);
+        version.setSingleLine(true);
+        about.addView(version);
         TextView by = text("by Lleïr Borràs", 12, MUTED, false);
         by.setSingleLine(true);
         by.setEllipsize(TextUtils.TruncateAt.END);
         about.addView(by);
-        LinearLayout.LayoutParams versionLp = new LinearLayout.LayoutParams(0, -2, 1f);
-        versionLp.leftMargin = dp(12);
-        header.addView(about, versionLp);
-        left.addView(header, new LinearLayout.LayoutParams(-1, -2));
 
-        updateView = text("", 14, MUTED, true);
-        updateView.setGravity(Gravity.CENTER);
-        updateView.setPadding(dp(20), 0, dp(20), 0);
-        updateView.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                onUpdateClick();
-            }
-        });
-        startView = text("", 14, MUTED, true);
-        startView.setGravity(Gravity.CENTER);
-        startView.setPadding(dp(20), 0, dp(20), 0);
-        startView.setBackgroundDrawable(pressable(0, NEUTRAL_PRESSED, 0));
-        startView.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                onStartTap();
-            }
-        });
-        TextView helpView = text("Help", 14, TEXT, true);
-        helpView.setGravity(Gravity.CENTER);
-        helpView.setPadding(dp(20), 0, dp(20), 0);
-        helpView.setBackgroundDrawable(pressable(0, NEUTRAL_PRESSED, 0));
+        TextView helpView = headerLink("Help");
         helpView.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 openOwn(HelpActivity.class);
             }
         });
-        TextView settingsView = text("Settings", 14, TEXT, true);
-        settingsView.setGravity(Gravity.CENTER);
-        settingsView.setPadding(dp(20), 0, dp(20), 0);
-        settingsView.setBackgroundDrawable(pressable(0, NEUTRAL_PRESSED, 0));
+        TextView settingsView = headerLink("Settings");
         settingsView.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 openOwn(SettingsActivity.class);
             }
         });
-        linkView = text("", 14, MUTED, true);
-        LinearLayout.LayoutParams updateLp = new LinearLayout.LayoutParams(-2, dp(36));
+        linkView = text("", 16, MUTED, true);
+        linkView.setSingleLine(true);
+        linkView.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
+        linkView.setPadding(dp(12), 0, dp(12), 0);
+        linkView.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                if (CanBox.setupDecision(MainActivity.this) == CarSetup.ASK) openOwn(SetupActivity.class);
+            }
+        });
+        LinearLayout.LayoutParams aboutLp = new LinearLayout.LayoutParams(0, -2, 1f);
+        aboutLp.leftMargin = dp(12);
         if (narrow) {
+            header.addView(linkView, new LinearLayout.LayoutParams(0, dp(48), 1f));
+            left.addView(header, new LinearLayout.LayoutParams(-1, -2));
             LinearLayout second = new LinearLayout(this);
             second.setGravity(Gravity.CENTER_VERTICAL);
-            second.setMinimumHeight(dp(44));
-            second.addView(linkView, new LinearLayout.LayoutParams(0, -2, 1f));
-            second.addView(updateView, updateLp);
+            aboutLp.leftMargin = 0;
+            second.addView(about, aboutLp);
+            second.addView(helpView, new LinearLayout.LayoutParams(-2, dp(48)));
+            second.addView(settingsView, new LinearLayout.LayoutParams(-2, dp(48)));
             left.addView(second, new LinearLayout.LayoutParams(-1, -2));
-            LinearLayout third = new LinearLayout(this);
-            third.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
-            third.addView(helpView, new LinearLayout.LayoutParams(-2, dp(36)));
-            third.addView(settingsView, new LinearLayout.LayoutParams(-2, dp(36)));
-            third.addView(startView, new LinearLayout.LayoutParams(-2, dp(36)));
-            left.addView(third, new LinearLayout.LayoutParams(-1, -2));
         } else {
-            header.addView(helpView, new LinearLayout.LayoutParams(-2, dp(36)));
-            header.addView(settingsView, new LinearLayout.LayoutParams(-2, dp(36)));
-            header.addView(startView, new LinearLayout.LayoutParams(-2, dp(36)));
-            updateLp.rightMargin = dp(24);
-            header.addView(updateView, updateLp);
-            header.addView(linkView);
+            header.addView(about, aboutLp);
+            header.addView(helpView, new LinearLayout.LayoutParams(-2, dp(48)));
+            header.addView(settingsView, new LinearLayout.LayoutParams(-2, dp(48)));
+            LinearLayout.LayoutParams linkLp = new LinearLayout.LayoutParams(-2, dp(48));
+            linkLp.leftMargin = dp(12);
+            header.addView(linkView, linkLp);
+            left.addView(header, new LinearLayout.LayoutParams(-1, -2));
         }
-        if (updateLabel == null) showIdleUpdate();
-        else drawUpdate();
+    }
+
+    private TextView headerLink(String label) {
+        TextView v = text(label, 16, TEXT, true);
+        v.setGravity(Gravity.CENTER);
+        v.setPadding(dp(20), 0, dp(20), 0);
+        v.setMinHeight(dp(48));
+        v.setBackgroundDrawable(pressable(0, NEUTRAL_PRESSED, 0));
+        return v;
     }
 
     private LinearLayout settingsRow(LinearLayout left) {
