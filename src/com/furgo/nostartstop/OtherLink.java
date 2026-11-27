@@ -37,7 +37,10 @@ abstract class OtherLink {
     static final long GUESS_MS = 15_000;
     static final String GUESS = "assumed, " + GUESS_MS / 1000 + " s after ignition on";
 
-    /** Returns -2 when the link is not ready yet, -1 when refused or failed: nothing was sent then. */
+    /**
+     * Only after {@link SendGate} let it through, see CanBox.write. Returns -2 when the link is not ready yet, -1 when
+     * it failed: nothing was sent then.
+     */
     abstract int write(int cmd, byte[] data);
 
     /** Watch mode: whether the engine running can be reported at all, by rpm or by the opt-in guess. */
@@ -62,12 +65,6 @@ abstract class OtherLink {
     /** Right before a send: reads the car again where it can change without a reopen. */
     void refreshCar() {
     }
-
-    /** Why the head unit's car or CAN box is not supported, once known, or null. */
-    abstract String unsupported();
-
-    /** The car refusal of the last Microntek open, which leaves no link to ask. Main thread. */
-    static String refusedAtOpen;
 
     /**
      * The link for this head unit, or null after logging why there is none. With watch it only reads, and reports
@@ -109,8 +106,6 @@ abstract class OtherLink {
         private final Sink sink;
         private final boolean watch;
         private final Handler handler = new Handler(Looper.getMainLooper());
-        // Each refusal is logged once per process: open is retried, and every write checks again.
-        private static String openRefusalLogged, writeRefusalLogged;
         // cfg_canbus, as last read.
         private volatile String type;
         private String power;
@@ -128,7 +123,7 @@ abstract class OtherLink {
             }
         };
         // The vendor broadcast has no permission, so any app could fake a status frame. It can only fool the
-        // confirmation: what is sent still depends on cfg_canbus.
+        // confirmation: what is sent still depends on cfg_canbus, which the send gate checks.
         private final BroadcastReceiver receiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context c, Intent intent) {
@@ -161,16 +156,8 @@ abstract class OtherLink {
         }
 
         static OtherLink open(Context c, Sink sink, boolean watch) {
-            String type = carParameter("cfg_canbus=");
-            String refusal = OtherUnits.microntekRefusal(type);
-            if (refusal != null) {
-                if (!refusal.equals(openRefusalLogged)) sink.log("beta: Microntek " + refusal + ", nothing will be sent");
-                openRefusalLogged = refusal;
-                if (type != null) refusedAtOpen = refusal;
-                return null;
-            }
-            refusedAtOpen = null;
-            Microntek m = new Microntek(c, sink, watch, type);
+            // CanBox closes it again when the send gate refuses this CAN box type.
+            Microntek m = new Microntek(c, sink, watch, carParameter("cfg_canbus="));
             if (watch) m.handler.post(m.poll);
             else m.context.registerReceiver(m.receiver, new IntentFilter(SYNC));
             return m;
@@ -208,14 +195,6 @@ abstract class OtherLink {
         @Override
         int write(int cmd, byte[] data) {
             if (watch) return -1;
-            // The CAN box type may have been changed in the vendor settings since the open.
-            refreshCar();
-            String r = OtherUnits.microntekRefusal(type);
-            if (r != null) {
-                if (!r.equals(writeRefusalLogged)) sink.log("beta: Microntek " + r + ", nothing sent");
-                writeRefusalLogged = r;
-                return -1;
-            }
             byte[] frame = OtherUnits.fdFrame(cmd, OtherUnits.microntekData(cmd, data));
             context.sendBroadcast(new Intent(SEND).putExtra(SEND_KEY, frame));
             return 0;
@@ -251,16 +230,12 @@ abstract class OtherLink {
             return type;
         }
 
+        /** The CAN box type may have been changed in the vendor settings since the open. */
         @Override
         void refreshCar() {
             type = carParameter("cfg_canbus=");
         }
 
-        @Override
-        String unsupported() {
-            String t = type;
-            return t == null ? null : OtherUnits.microntekRefusal(t);
-        }
     }
 
     /**
@@ -292,7 +267,6 @@ abstract class OtherLink {
         // Last status bit published under statusCode, -1 before the first.
         private volatile int status = -1;
         private volatile boolean closed;
-        private volatile boolean refusalLogged;
         private final boolean watch;
         private volatile IBinder main;
         private final Handler handler = new Handler(Looper.getMainLooper());
@@ -374,7 +348,7 @@ abstract class OtherLink {
                 } else if (update == statusCode && statusCode >= 0) {
                     status = ints[0] & 1;
                     // On another car the status is not ours: it must not show the link as working.
-                    if (unsupported() != null) return true;
+                    if (SendGate.unsupported(Detection.Platform.FYT, car()) != null) return true;
                     sink.frame(Protocol.STATUS_SETTINGS, OtherUnits.fytStatusFrame(status));
                 }
                 return true;
@@ -465,7 +439,6 @@ abstract class OtherLink {
             main = null;
             canbusId = -1;
             status = -1;
-            refusalLogged = false;
         }
 
         private Fyt(Context c, Sink sink, boolean watch) {
@@ -512,23 +485,18 @@ abstract class OtherLink {
         int write(int cmd, byte[] data) {
             if (watch) return -1;
             IBinder m = module;
-            // Until the service reports the car, its handler does not exist and drops every command silently.
-            if (m == null || canbusId < 0) return -2;
+            // Until the service reports the car, its handler does not exist and drops every command silently: the
+            // send gate waits for the canbus id.
+            if (m == null) return -2;
             try {
                 if (cmd == Protocol.CMD_QUERY && data.length > 0 && data[0] == Protocol.STATUS_SETTINGS) {
                     // No command asks for frame 0x38 again; answer with the last value the service published.
                     int s = status;
-                    if (s < 0 || unsupported() != null) return -1;
+                    if (s < 0) return -1;
                     sink.frame(Protocol.STATUS_SETTINGS, OtherUnits.fytStatusFrame(s));
                     return 0;
                 }
                 if (cmd != Protocol.CMD_SET || data.length != 2 || data[0] != 13) return -1;
-                String refusal = OtherUnits.fytRefusal(canbusId);
-                if (refusal != null) {
-                    if (!refusalLogged) sink.log("beta: FYT " + refusal + ", nothing sent");
-                    refusalLogged = true;
-                    return -1;
-                }
                 Parcel p = Parcel.obtain();
                 try {
                     p.writeInterfaceToken(MODULE);
@@ -587,9 +555,5 @@ abstract class OtherLink {
             return id < 0 ? null : String.valueOf(id);
         }
 
-        @Override
-        String unsupported() {
-            return canbusId < 0 ? null : OtherUnits.fytRefusal(canbusId);
-        }
     }
 }

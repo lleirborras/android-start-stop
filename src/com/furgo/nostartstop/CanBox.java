@@ -138,9 +138,9 @@ final class CanBox {
 
     /** Beta: why this head unit's car or CAN box is not supported, or null. */
     String unsupported() {
-        if (other != null) return other.unsupported();
+        if (other != null) return SendGate.unsupported(other.platform(), other.car());
         if (tw == null && refused != null) return refused;
-        return tw == null && Prefs.otherUnits(context) ? OtherLink.refusedAtOpen : null;
+        return tw == null && Prefs.otherUnits(context) ? otherRefused : null;
     }
 
     /** Beta link only: whether it can report the engine running. */
@@ -208,32 +208,17 @@ final class CanBox {
         }
     }
 
-    /** Why this unit gets no PSA commands, or null. See {@link CarProfile#psaRefusal}. */
-    String psaRefusal() {
-        return CarProfile.psaRefusal(DeviceWatch.vendorCarVersion(context));
-    }
-
     /** The car setup's decision for this head unit now, see {@link CarSetup#decide}. */
     static int setupDecision(Context c) {
         return CarSetup.decide(DeviceWatch.carDetection(c), Prefs.setupChoice(c), Prefs.setupDetection(c));
     }
 
     // Per process: each reason is logged once, not on every reopen of the screen.
-    private static String setupLogged;
-
-    /** Why the car setup lets nothing be sent, or null when it may. Every open and write to the CAN box asks. */
-    private String setupRefusal() {
-        String why = CarSetup.why(DeviceWatch.carDetection(context), Prefs.setupChoice(context),
-                Prefs.setupDetection(context));
-        if (why != null && !why.equals(setupLogged)) log("car setup: " + why + ", nothing will be sent");
-        setupLogged = why;
-        return why;
-    }
-
-    // The refusal is the same on every open of this process.
-    private static boolean refusalLogged;
+    private static String openLogged;
     // Set while open() refuses for the car setup or the profile, for the CAR NOT SUPPORTED state.
     private String refused;
+    // The car the last beta open refused, which leaves no link to ask.
+    private String otherRefused;
 
     /**
      * Call before {@link #open}. Then open() asks for the power messages only, without the CAN box, and does not log
@@ -251,22 +236,17 @@ final class CanBox {
     boolean open() {
         if (linked()) return true;
         refused = null;
+        // Early, for the screen: the gate as it would answer the first query. Each write asks it again. The watch
+        // service only listens to power messages and never writes to the CAN box.
         if (power == null) {
-            String setup = setupRefusal();
-            if (setup != null) {
-                if (setupDecision(context) == CarSetup.REFUSE) refused = setup;
+            SendGate.Verdict v = gate(SendGate.Kind.PSA_QUERY);
+            if (!v.send()) {
+                if (!v.why.equals(openLogged)) log(v.rule + ": " + v.why + ", nothing will be sent");
+                openLogged = v.why;
+                if (v.result == SendGate.REFUSE) refused = v.why;
                 return false;
             }
-        }
-        // The watch service only listens to power messages and never writes to the CAN box. A profile the beta
-        // drives gets its own commands instead.
-        boolean driven = Prefs.otherCars(context)
-                && CarProfile.forBeta(DeviceWatch.vendorCarVersion(context)) != null;
-        refused = power == null && !driven ? psaRefusal() : null;
-        if (refused != null) {
-            if (!refusalLogged) log(refused + ": its stop-start command differs, nothing will be sent");
-            refusalLogged = true;
-            return false;
+            openLogged = null;
         }
         extraIdsRefused = null;
         TWUtil t = captureFrames && power == null ? connect(ALL_IDS, true) : null;
@@ -312,6 +292,17 @@ final class CanBox {
         OtherLink o = OtherLink.open(context, DeviceWatch.detect(context), sink, power != null);
         sink.link = o;
         if (o == null) return false;
+        // Microntek reports its CAN box type at once; FYT only later, and its writes wait for it.
+        String car = o.car();
+        String why = SendGate.carRefusal(o.platform(), car);
+        if (why != null && !why.equals(OtherUnits.NOT_IDENTIFIED)) {
+            o.close();
+            if (!why.equals(openLogged)) log("beta: " + o.name() + " " + why + ", nothing will be sent");
+            openLogged = why;
+            if (car != null) otherRefused = why;
+            return false;
+        }
+        otherRefused = null;
         other = o;
         lastFrame = null;
         otherFrames.clear();
@@ -467,12 +458,6 @@ final class CanBox {
             log("not open, nothing sent");
             return -1;
         }
-        // Checked here too, not only at open: no PSA command leaves for a box that would read it as something else.
-        String refusal = psaRefusal();
-        if (refusal != null) {
-            log(refusal + ", nothing sent");
-            return -1;
-        }
         int bit = Protocol.toggleValue(lastFrame);
         int rc = write(SendGate.Kind.PSA_SET, Protocol.CMD_SET, Protocol.set(bit));
         if (rc < 0) {
@@ -579,7 +564,6 @@ final class CanBox {
      * is unused. Returns -2 when the link is not ready yet, -1 when nothing was sent.
      */
     private int write(SendGate.Kind kind, int cmd, byte[] data) {
-        if (power == null && setupRefusal() != null) return -1;
         if (other != null && kind != SendGate.Kind.UNIT_QUERY) {
             kind = kind == SendGate.Kind.PSA_SET || kind == SendGate.Kind.PROFILE_SET
                     ? SendGate.Kind.OTHER_SET : SendGate.Kind.OTHER_QUERY;

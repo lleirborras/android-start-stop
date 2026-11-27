@@ -5,7 +5,8 @@ package com.furgo.nostartstop;
  * for what the head unit reports now (its detection); a change of the head unit's setting asks again.
  * <p>
  * Detection: "topway:&lt;code&gt;" when the vendor car app names a profile, else "none". FYT and Microntek units
- * learn the car only once their link is open, so they are "none" here and keep their own checks.
+ * learn the car only once their link is open, so they are "none" here; {@link SendGate} checks the car their link
+ * reports.
  * Choice: "psa_raise", "profile:&lt;code&gt;" for a profile {@link CarProfile#forBeta} drives, or "not_listed".
  */
 final class CarSetup {
