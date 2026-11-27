@@ -30,8 +30,8 @@ final class CanBox {
         void onBattery(int centivolts);
         /** Beta FYT and Microntek units: the ignition as the head unit reports it. */
         void onIgnition(boolean on);
-        /** Beta FYT and Microntek units: the engine runs; why is for the log. */
-        void onEngineRunning(String why);
+        /** Beta FYT and Microntek units: the engine runs; why is for the log. afterStop: it was seen stopped before. */
+        void onEngineRunning(String why, boolean afterStop);
     }
 
     private static final String TAG = "NoStartStop";
@@ -177,11 +177,11 @@ final class CanBox {
         }
 
         @Override
-        public void engineRunning(final String why) {
+        public void engineRunning(final String why, final boolean afterStop) {
             handler.post(new Runnable() {
                 @Override
                 public void run() {
-                    if (current() && power != null) power.onEngineRunning(why);
+                    if (current() && power != null) power.onEngineRunning(why, afterStop);
                 }
             });
         }

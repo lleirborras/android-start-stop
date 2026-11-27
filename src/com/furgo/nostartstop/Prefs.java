@@ -16,6 +16,7 @@ final class Prefs {
     private static final String WITHOUT_ADB = "without_adb";
     private static final String OTHER_UNITS = "other_units";
     private static final String ENGINE_GUESS = "engine_guess";
+    private static final String FYT_RPM_WORKS = "fyt_rpm_works";
     private static final String BOOT_SWITCH_BOOT = "boot_switch_boot";
     private static final String LAST_SWITCH_AT = "last_switch_at";
     private static final String LAST_SWITCH_AT_BOOT = "last_switch_at_boot";
@@ -353,6 +354,15 @@ final class Prefs {
 
     static void setEngineGuess(Context c, boolean on) {
         prefs(c).edit().putBoolean(ENGINE_GUESS, on).apply();
+    }
+
+    /** The FYT head unit has reported an engine speed above 0 once, so it needs no guess. */
+    static boolean fytRpmWorks(Context c) {
+        return prefs(c).getBoolean(FYT_RPM_WORKS, false);
+    }
+
+    static void setFytRpmWorks(Context c) {
+        prefs(c).edit().putBoolean(FYT_RPM_WORKS, true).apply();
     }
 
     /** False until the user has answered the first-launch question with yes. */

@@ -27,8 +27,11 @@ abstract class OtherLink {
         void log(String line);
         /** Watch mode only: the ignition as the head unit reports it. */
         void ignition(boolean on);
-        /** Watch mode only: the engine runs; why is for the log. */
-        void engineRunning(String why);
+        /**
+         * Watch mode only: the engine runs; why is for the log. afterStop: the engine speed shows it running again
+         * after it was seen stopped, which may undo a switch sent before.
+         */
+        void engineRunning(String why, boolean afterStop);
     }
 
     /** Without an engine signal, the engine is taken as running this long after ignition on. A guess. */
@@ -123,7 +126,7 @@ abstract class OtherLink {
         private final Runnable guess = new Runnable() {
             @Override
             public void run() {
-                sink.engineRunning(GUESS);
+                sink.engineRunning(GUESS, false);
             }
         };
         // The vendor broadcast has no permission, so any app could fake a status frame. It can only fool the
@@ -279,13 +282,15 @@ abstract class OtherLink {
         private final boolean watch;
         private volatile IBinder main;
         private final Handler handler = new Handler(Looper.getMainLooper());
-        // Once this process has seen rpm above 0, the unit reports it and no guess is needed. Main thread.
-        private static boolean rpmWorks;
-        private boolean running;
+        // Main thread. stopped: rpm 0, or no rpm yet since the ignition on.
+        private boolean running, stopped;
+        private int lastRpm = -1;
+        // 1 on, 0 off, -1 not reported yet. Main thread.
+        private int acc = -1;
         private final Runnable guess = new Runnable() {
             @Override
             public void run() {
-                if (!rpmWorks) sink.engineRunning(GUESS);
+                if (!Prefs.fytRpmWorks(context)) sink.engineRunning(GUESS, false);
             }
         };
 
@@ -303,12 +308,29 @@ abstract class OtherLink {
                     @Override
                     public void run() {
                         handler.removeCallbacks(guess);
-                        if (on) {
-                            if (!rpmWorks && Prefs.engineGuess(context)) handler.postDelayed(guess, GUESS_MS);
-                        } else {
+                        boolean wasOff = acc == 0;
+                        acc = on ? 1 : 0;
+                        if (!on) {
                             running = false;
+                            // The next ignition on decides; an rpm from before this off must not count for it.
+                            stopped = false;
+                            lastRpm = -1;
+                            sink.ignition(false);
+                            return;
                         }
-                        sink.ignition(on);
+                        boolean rpmWorks = Prefs.fytRpmWorks(context);
+                        // ACC first heard here may be a restart mid-drive, its rpm still to come. Only without rpm
+                        // seen before could a guess have switched too early, and then the first rpm must re-arm.
+                        if (lastRpm <= 0 && (wasOff || !rpmWorks)) stopped = true;
+                        if (!rpmWorks && Prefs.engineGuess(context)) {
+                            handler.postDelayed(guess, GUESS_MS);
+                        }
+                        sink.ignition(true);
+                        // The engine speed can arrive before the ACC flag: the new cycle has not heard it yet.
+                        if (lastRpm > 0) {
+                            running = true;
+                            sink.engineRunning("rpm " + lastRpm, false);
+                        }
                     }
                 });
                 return true;
@@ -403,18 +425,26 @@ abstract class OtherLink {
         /** Main thread. The engine counts as running on the first rpm above 0 after a stop. */
         private void onRpm(int rpm) {
             if (closed || rpm < 0) return;
+            lastRpm = rpm;
             if (rpm == 0) {
                 running = false;
+                // With the ignition off, the next ignition on decides.
+                stopped = acc != 0;
                 return;
             }
-            rpmWorks = true;
+            if (!Prefs.fytRpmWorks(context)) Prefs.setFytRpmWorks(context);
             handler.removeCallbacks(guess);
             if (running) return;
             running = true;
-            sink.engineRunning("rpm " + rpm);
+            boolean afterStop = stopped;
+            stopped = false;
+            sink.engineRunning("rpm " + rpm, afterStop);
         }
 
         private void forget() {
+            // The first rpm after a reconnect is the engine as it is, not a start: it must not undo a switch.
+            running = false;
+            stopped = false;
             module = null;
             main = null;
             canbusId = -1;

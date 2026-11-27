@@ -115,6 +115,18 @@ final class WatchDecisions {
         act(auto.onRunning(why, at));
     }
 
+    /**
+     * Beta head units: the engine runs again by its speed after it was seen stopped. After a switch in this cycle it
+     * starts a new one, as a crank end does; otherwise it counts as {@link #onRunning}.
+     */
+    void onEngineStart(String why, long at) {
+        if (auto.onEngineStart(at, shell.lastSwitchElapsed())) {
+            shell.newWake("engine start", WakeRules.CRANK_CYCLE);
+            armed("engine start");
+        }
+        act(auto.onRunning(why, at));
+    }
+
     void onTick(long at) {
         act(auto.onTick(at));
     }

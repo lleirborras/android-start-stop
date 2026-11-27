@@ -88,6 +88,18 @@ final class AutoSwitch {
         return fresh;
     }
 
+    /**
+     * Beta head units: the engine speed shows the engine running again after it was seen stopped. Like a crank end
+     * after a switch in the current cycle (see {@link #onCrank}), that start undid the switch: arms with the 3-minute
+     * limit at at, and returns true for a new cycle. Otherwise changes nothing. Report the running through
+     * {@link #onRunning} after.
+     */
+    boolean onEngineStart(long at, long switchAt) {
+        if (switchAt < 0 || switchAt >= at) return false;
+        arm(at, true);
+        return true;
+    }
+
     /** Returns true if a switch was pending. Also forgets a crank in progress: state 1 ends it. */
     boolean disarm() {
         boolean was = armed;

@@ -284,9 +284,10 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
     }
 
     @Override
-    public void onEngineRunning(String why) {
+    public void onEngineRunning(String why, boolean afterStop) {
         heard();
-        decisions.onRunning(why, lastMessageAt);
+        if (afterStop) decisions.onEngineStart(why, lastMessageAt);
+        else decisions.onRunning(why, lastMessageAt);
     }
 
     @Override

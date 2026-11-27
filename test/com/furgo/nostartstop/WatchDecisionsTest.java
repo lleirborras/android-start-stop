@@ -123,6 +123,9 @@ public class WatchDecisionsTest {
         ignitionOffWhileWaitingForAnotherSwitch();
         crankWhileWaitingForAnotherSwitch();
         headUnitReportsIgnitionAndRpm();
+        rpmAfterAGuess();
+        stallAndRestart();
+        rpmStartWithoutASwitch();
         System.out.println("WatchDecisionsTest passed");
     }
 
@@ -415,6 +418,78 @@ public class WatchDecisionsTest {
                 "wake ignition on reported by the head unit IGNITION_ON_CYCLE",
                 "log: no engine signal on this head unit, nothing sent; turn on Beta: guess the engine start to switch "
                         + "anyway");
+    }
+
+    /** A guess fired before the engine ran; the crank undid the switch, and the real rpm that follows re-arms. */
+    private static void rpmAfterAGuess() {
+        fresh();
+        s.flag = true;
+        s.now = 1_000;
+        d.onIgnitionOn("ignition on reported by the head unit", true);
+        did("ignition on", armed("ignition on reported by the head unit", "offNow false",
+                "wake ignition on reported by the head unit IGNITION_ON_CYCLE"));
+        running("the guess fires", "assumed, 15 s after ignition on", 16_000, fire("assumed, 15 s after ignition on"));
+        s.switchSent(16_100);
+        engineStart("rpm after the crank: new cycle", "rpm 800", 30_000, armed("engine start",
+                "wake engine start CRANK_CYCLE"));
+        check("pending again", d.armed());
+        same("armed when the rpm was handled", d.armedAt(), 30_000 + skew);
+        tick("before the settle delay", 30_000 + SETTLE - 1, NOTHING);
+        tick("fires again on the rpm", 30_000 + SETTLE, fire("rpm 800"));
+        s.switchSent(30_000 + SETTLE + 100);
+        tick("the give-up tick", 30_000 + GIVE_UP, NOTHING);
+    }
+
+    /** The engine stalls and is restarted without an ignition off: the restart turned stop-start on again. */
+    private static void stallAndRestart() {
+        fresh();
+        s.flag = true;
+        s.now = 1_000;
+        d.onIgnitionOn("ignition on reported by the head unit", true);
+        s.did.clear();
+        engineStart("first start: no switch yet, so the same cycle", "rpm 800", 20_000, fire("rpm 800"));
+        s.switchSent(20_100);
+        engineStart("restart after the stall: new cycle", "rpm 900", 60_000, armed("engine start",
+                "wake engine start CRANK_CYCLE"));
+        tick("fires on the restart", 60_000 + SETTLE, fire("rpm 900"));
+        s.switchSent(60_000 + SETTLE + 100);
+        running("rpm keeps coming", "rpm 1500", 70_000, NOTHING);
+    }
+
+    private static void rpmStartWithoutASwitch() {
+        fresh();
+        engineStart("not armed, no switch in the cycle", "rpm 800", 5_000, NOTHING);
+        check("still nothing pending", !d.armed());
+
+        // Pending, but nothing sent yet: the rpm only counts as the engine running.
+        fresh();
+        s.flag = true;
+        s.now = 1_000;
+        d.onIgnitionOn("ignition on reported by the head unit", true);
+        s.did.clear();
+        engineStart("before the settle delay", "rpm 800", 2_000, NOTHING);
+        tick("at the settle delay", 1_000 + SETTLE, fire("rpm 800"));
+
+        // A switch sent after the rpm was heard does not make that rpm a new start.
+        fresh();
+        s.switchSent(5_000 + skew);
+        engineStart("switch at the time of the rpm", "rpm 800", 5_000 + skew, NOTHING);
+    }
+
+    private static String[] fire(String why) {
+        return new String[]{"cancel", "log: engine running (" + why + "), switching", "event FIRED", "send"};
+    }
+
+    private static void running(String name, String why, long at, String... expected) {
+        s.now = at + skew;
+        d.onRunning(why, at);
+        did(name, expected);
+    }
+
+    private static void engineStart(String name, String why, long at, String... expected) {
+        s.now = at + skew;
+        d.onEngineStart(why, at);
+        did(name, expected);
     }
 
     private static void fresh() {
