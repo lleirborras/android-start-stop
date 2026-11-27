@@ -112,6 +112,12 @@ final class CanBox {
         return other != null;
     }
 
+    /** Beta: why this head unit's car or CAN box is not supported, or null. */
+    String unsupported() {
+        if (other != null) return other.unsupported();
+        return tw == null && Prefs.otherUnits(context) ? OtherLink.refusedAtOpen : null;
+    }
+
     private boolean linked() {
         return tw != null || other != null;
     }

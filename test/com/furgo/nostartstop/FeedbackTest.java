@@ -41,6 +41,11 @@ public class FeedbackTest {
         is("no link over the rest", Feedback.of(null, false, "", false, true, true, AT_0841, true),
                 "This head unit did not let the app reach the car.", MUTED);
 
+        is("car not supported", Feedback.of(null, false, "", false, true, true, true, AT_0841, true),
+                "This car or CAN box is not supported.", MUTED);
+        is("result over car not supported", Feedback.of(null, false, RESULT_TEXT, false, true, true, false, 0, false),
+                RESULT_TEXT, RESULT);
+
         is("automatic switch failed", Feedback.of(null, false, "", false, false, true, 0, false),
                 "Automatic switch failed. Tap to switch.", WARN);
         is("failure over the last switch", Feedback.of(null, false, "", false, false, true, AT_0841, true),

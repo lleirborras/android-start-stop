@@ -435,6 +435,8 @@ public class MainActivity extends Activity implements CanBox.Listener {
         log.addLast(LogFile.append(this, line));
         while (log.size() > MAX_LOG) log.removeFirst();
         renderLog();
+        // The beta link learns the car only after it opens; the card must follow at once.
+        if (line.startsWith("beta: ")) render();
     }
 
     private void renderLog() {
@@ -813,13 +815,15 @@ public class MainActivity extends Activity implements CanBox.Listener {
     }
 
     private void render() {
-        linkView.setText(link == LINK_LIVE ? "●  CONNECTED TO CAR"
+        boolean unsupported = box.unsupported() != null;
+        if (unsupported) link = LINK_DOWN;
+        linkView.setText(unsupported ? "○  CAR NOT SUPPORTED" : link == LINK_LIVE ? "●  CONNECTED TO CAR"
                 : link == LINK_DOWN ? "○  NO LINK TO CAR" : "○  CONNECTING…");
         linkView.setTextColor(link == LINK_LIVE ? ACCENT : link == LINK_DOWN ? LINK_BAD : MUTED);
 
         boolean bootBusy = BootService.running;
         long last = Prefs.lastSwitchAt(this);
-        Feedback f = Feedback.of(note, bootBusy, result, manual.pending(), link == LINK_DOWN,
+        Feedback f = Feedback.of(note, bootBusy, result, manual.pending(), link == LINK_DOWN, unsupported,
                 Prefs.bootSwitchFailed(this), last, Prefs.lastSwitchAtBoot(this));
         feedback.setText(f.text);
         if (f.color != Feedback.KEEP) {

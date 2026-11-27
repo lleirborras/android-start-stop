@@ -31,6 +31,12 @@ abstract class OtherLink {
 
     abstract String name();
 
+    /** Why the head unit's car or CAN box is not supported, once known, or null. */
+    abstract String unsupported();
+
+    /** The car refusal of the last Microntek open, which leaves no link to ask. Main thread. */
+    static String refusedAtOpen;
+
     /** The link for this head unit, or null after logging why there is none. */
     static OtherLink open(Context c, Sink sink) {
         if (installed(c, Microntek.PACKAGE)) return Microntek.open(c, sink);
@@ -81,8 +87,10 @@ abstract class OtherLink {
             String refusal = OtherUnits.microntekRefusal(type);
             if (refusal != null) {
                 sink.log("beta: Microntek " + refusal + ", nothing will be sent");
+                if (type != null) refusedAtOpen = refusal;
                 return null;
             }
+            refusedAtOpen = null;
             Microntek m = new Microntek(c, sink);
             m.context.registerReceiver(m.receiver, new IntentFilter(SYNC));
             return m;
@@ -131,6 +139,11 @@ abstract class OtherLink {
         String name() {
             return "Microntek";
         }
+
+        @Override
+        String unsupported() {
+            return null;
+        }
     }
 
     /**
@@ -169,6 +182,8 @@ abstract class OtherLink {
                     canbusId = ints[0];
                 } else if (update == STATUS) {
                     status = ints[0] & 1;
+                    // On another car the status is not ours: it must not show the link as working.
+                    if (unsupported() != null) return true;
                     sink.frame(Protocol.STATUS_SETTINGS, OtherUnits.fytStatusFrame(status));
                 }
                 return true;
@@ -264,7 +279,7 @@ abstract class OtherLink {
                 if (cmd == Protocol.CMD_QUERY && data.length > 0 && data[0] == Protocol.STATUS_SETTINGS) {
                     // No command asks for frame 0x38 again; answer with the last value the service published.
                     int s = status;
-                    if (s < 0) return -1;
+                    if (s < 0 || unsupported() != null) return -1;
                     sink.frame(Protocol.STATUS_SETTINGS, OtherUnits.fytStatusFrame(s));
                     return 0;
                 }
@@ -311,6 +326,11 @@ abstract class OtherLink {
         @Override
         String name() {
             return "FYT";
+        }
+
+        @Override
+        String unsupported() {
+            return canbusId < 0 ? null : OtherUnits.fytRefusal(canbusId);
         }
     }
 }
