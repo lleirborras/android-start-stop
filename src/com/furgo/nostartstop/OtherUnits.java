@@ -43,7 +43,18 @@ final class OtherUnits {
         return d;
     }
 
-    /** FYT publishes only the bit (update code 168): a Topway-shaped status frame with it in byte 5, bit 6. */
+    /**
+     * The update code com.syu.ms publishes the stop-start bit under, by its versionName: 164 in the 2023 builds
+     * (2.23.x), 168 in 25.x and 26.x. -1 when unknown: another code may carry an unrelated byte.
+     */
+    static int fytStatusCode(String version) {
+        if (version == null) return -1;
+        if (version.startsWith("2.23.")) return 164;
+        if (version.startsWith("25.") || version.startsWith("26.")) return 168;
+        return -1;
+    }
+
+    /** FYT publishes only the bit (see {@link #fytStatusCode}): a Topway-shaped status frame with it in byte 5, bit 6. */
     static byte[] fytStatusFrame(int bit) {
         byte[] f = new byte[Protocol.MIN_STATUS_LENGTH];
         f[5] = (byte) ((bit & 1) << 6);

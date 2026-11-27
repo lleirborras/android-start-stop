@@ -161,6 +161,12 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
                 lastMessageAt = SystemClock.elapsedRealtime();
                 return;
             }
+            // The head unit is set up for another car: retrying cannot help, and the reason is already logged.
+            if (canBox.unsupported() != null) {
+                openAttempt = -1;
+                Prefs.assumedEnd(WatchService.this, "car not supported");
+                return;
+            }
             if (openAttempt >= OPEN_BACKOFF_MS.length) {
                 openAttempt = -1;
                 if (gaveUp) return;
@@ -190,7 +196,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
                 if (!quietReopen) LogFile.append(WatchService.this, "watch: link silent, reopened");
                 Prefs.assumedEnd(WatchService.this, "link silent");
                 ensureOpen();
-            } else if (!linkOpen && openAttempt < 0) {
+            } else if (!linkOpen && openAttempt < 0 && canBox.unsupported() == null) {
                 // Past the backoff, so openTick tries once and does not reschedule itself.
                 openAttempt = OPEN_BACKOFF_MS.length;
                 handler.post(openTick);
@@ -274,14 +280,15 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
     public void onIgnition(boolean on) {
         heard();
         watchLog(on ? "ignition on (head unit)" : "ignition off (head unit)");
-        if (on) decisions.onIgnitionOn("ignition on reported by the head unit");
+        if (on) decisions.onIgnitionOn("ignition on reported by the head unit", canBox.engineSignal());
         else decisions.onPowerState(PowerWatch.STATE_OFF, lastMessageAt);
     }
 
     @Override
-    public void onEngineRunning(String why) {
+    public void onEngineRunning(String why, boolean afterStop) {
         heard();
-        decisions.onRunning(why, lastMessageAt);
+        if (afterStop) decisions.onEngineStart(why, lastMessageAt);
+        else decisions.onRunning(why, lastMessageAt);
     }
 
     @Override

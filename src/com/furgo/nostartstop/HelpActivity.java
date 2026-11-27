@@ -198,8 +198,11 @@ public class HelpActivity extends Activity {
                 + "to lift that block for this app only. The log says if it failed.");
         item(card, "Beta: FYT and Microntek head units", "Off by default. For head units that are not Topway, such "
                 + "as Teyes, Joying or Dasaita, with a PSA car and a Raise CAN box. The app sends nothing if the head "
-                + "unit is set up for another car or box. At engine start it waits for the engine speed, or guesses "
-                + "15 s after ignition on where the head unit gives none.");
+                + "unit is set up for another car or box. At engine start it waits for the engine speed. Microntek "
+                + "gives none, so there it never switches by itself unless the guess below is on.");
+        item(card, "Beta: guess the engine start", "Off by default. Where the head unit gives no engine speed, "
+                + "the engine is taken as running 15 s after ignition on. A switch sent before the engine runs is "
+                + "undone by the start.");
         item(card, "Beta: other cars", "Off by default. On Topway head units set up for VW MQB on a Hiworld or "
                 + "Raise box, Honda on Hiworld, Haval on Raise, or PSA on a Simple Soft, Binary or LuZheng box, the app uses that car's own command and reads the "
                 + "setting back. At engine start it always sends off; a tap sends the opposite of what the car "
