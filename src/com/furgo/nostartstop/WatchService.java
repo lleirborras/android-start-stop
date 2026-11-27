@@ -17,8 +17,9 @@ import android.os.SystemClock;
 /**
  * Runs while the automatic switch is on. Watches the head unit's power state (message 514) and the battery voltage,
  * and after each new ignition cycle starts {@link BootService} once the engine runs. It never sends anything itself.
- * A cycle starts at ignition on (the first start after the unit reported ignition off, a boot included) and at each
- * engine start; broadcasts any app could send are only logged.
+ * A cycle starts at ignition on (the first start after the unit reported ignition off, a boot included, or the unit's
+ * wake seen by a service that outlived its sleep) and at each engine start; broadcasts any app could send are only
+ * logged.
  */
 public class WatchService extends Service implements CanBox.Listener, CanBox.PowerListener {
     private static final String EXTRA_HOW = "how";
@@ -213,7 +214,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
         String how = intent == null ? PowerWatch.RESTARTED : intent.getStringExtra(EXTRA_HOW);
         if (canBox == null) {
             watchLog("service started (" + (how == null ? "unknown" : how) + "), " + DeviceWatch.facts(this));
-            canBox = new CanBox(this);
+            canBox = new CanBox(this, this);
             canBox.watchPower(this);
             IntentFilter f = new IntentFilter();
             for (String a : WakeReceiver.RUNTIME_ACTIONS) f.addAction(a);

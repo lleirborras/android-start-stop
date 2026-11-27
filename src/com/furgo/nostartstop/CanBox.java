@@ -1,5 +1,6 @@
 package com.furgo.nostartstop;
 
+import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
@@ -45,6 +46,7 @@ final class CanBox {
     private static final short[] WATCH_IDS = {(short) Protocol.MSG_POWER_STATE, (short) Protocol.MSG_POWER};
     private static int instances;
 
+    private final Context context;
     private final Listener listener;
     // Set only for the watch service, which opens only the power messages and never sends.
     private PowerListener power;
@@ -94,9 +96,18 @@ final class CanBox {
         }
     };
 
-    CanBox(Listener listener) {
+    CanBox(Context context, Listener listener) {
+        this.context = context;
         this.listener = listener;
     }
+
+    /** Why this unit gets no PSA commands, or null. See {@link CarProfile#psaRefusal}. */
+    String psaRefusal() {
+        return CarProfile.psaRefusal(DeviceWatch.vendorCarVersion(context));
+    }
+
+    // The refusal is the same on every open of this process.
+    private static boolean refusalLogged;
 
     /**
      * Call before {@link #open}. Then open() asks for the power messages only, without the CAN box, and does not log
@@ -113,6 +124,13 @@ final class CanBox {
     /** With captureFrames set, also opens the engine and unit ids, falling back to the CAN box alone if they are refused. */
     boolean open() {
         if (tw != null) return true;
+        // The watch service only listens to power messages and never writes to the CAN box.
+        String refusal = power == null ? psaRefusal() : null;
+        if (refusal != null) {
+            if (!refusalLogged) log(refusal + ": its stop-start command differs, nothing will be sent");
+            refusalLogged = true;
+            return false;
+        }
         extraIdsRefused = null;
         TWUtil t = captureFrames && power == null ? connect(ALL_IDS, true) : null;
         extraIds = t != null;
@@ -239,6 +257,12 @@ final class CanBox {
     int toggle() {
         if (tw == null) {
             log("not open, nothing sent");
+            return -1;
+        }
+        // Checked here too, not only at open: no PSA command leaves for a box that would read it as something else.
+        String refusal = psaRefusal();
+        if (refusal != null) {
+            log(refusal + ", nothing sent");
             return -1;
         }
         int bit = Protocol.toggleValue(lastFrame);

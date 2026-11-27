@@ -63,13 +63,23 @@ final class WatchDecisions {
 
     void onPowerState(int state, long at) {
         int event = power.onState(state, at);
-        if (state == PowerWatch.STATE_AWAKE || state == PowerWatch.STATE_CRANK) shell.ignitionOffNow(false);
+        if (state == PowerWatch.STATE_AWAKE || state == PowerWatch.STATE_CRANK || state == PowerWatch.STATE_WAKING) {
+            shell.ignitionOffNow(false);
+        }
         if (event == PowerWatch.IGNITION_OFF) {
             shell.ignitionOffNow(true);
             shell.ignitionEvent(WakeRules.OFF_SEEN);
             shell.assumedEnd("ignition off");
             shell.cancelTicks();
             if (auto.disarm()) shell.autoLog("ignition off, nothing sent");
+        } else if (event == PowerWatch.WAKING) {
+            // A service that outlived the head unit's sleep gets no start at ignition on, and no 9 for a crank
+            // during the wake.
+            if (shell.ignitionOff() && !auto.armed()) {
+                shell.newWake("ignition on", WakeRules.IGNITION_ON_CYCLE);
+                auto.arm(shell.now(), false);
+                armed("ignition on");
+            }
         } else if (state == PowerWatch.STATE_CRANK) {
             auto.onCrankStart(at);
         } else if (event == PowerWatch.CRANK_END) {
