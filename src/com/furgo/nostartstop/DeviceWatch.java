@@ -81,7 +81,7 @@ final class DeviceWatch {
     }
 
     /** Only as part of the system: a sideloaded copy of a vendor app does not make this that head unit. */
-    static boolean installed(Context c, String pkg) {
+    private static boolean installed(Context c, String pkg) {
         try {
             int flags = c.getPackageManager().getApplicationInfo(pkg, 0).flags;
             return (flags & (ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0;
@@ -92,7 +92,7 @@ final class DeviceWatch {
 
     /** What the head unit reports for the car setup, see {@link CarSetup#detection}. */
     static String carDetection(Context c) {
-        return CarSetup.detection(vendorCarVersion(c));
+        return detect(c).carSetup();
     }
 
     private static String networkNow(Context c) {

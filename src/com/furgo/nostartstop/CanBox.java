@@ -309,7 +309,7 @@ final class CanBox {
     private boolean openOther() {
         if (!Prefs.otherUnits(context)) return false;
         LinkSink sink = new LinkSink();
-        OtherLink o = OtherLink.open(context, sink, power != null);
+        OtherLink o = OtherLink.open(context, DeviceWatch.detect(context), sink, power != null);
         sink.link = o;
         if (o == null) return false;
         other = o;

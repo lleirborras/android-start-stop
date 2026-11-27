@@ -6,7 +6,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
-import android.content.pm.ApplicationInfo;
 import android.os.Binder;
 import android.os.Handler;
 import android.os.IBinder;
@@ -74,16 +73,15 @@ abstract class OtherLink {
      * The link for this head unit, or null after logging why there is none. With watch it only reads, and reports
      * the ignition and the engine through the sink.
      */
-    static OtherLink open(Context c, Sink sink, boolean watch) {
-        boolean microntek = installed(c, Microntek.PACKAGE);
-        boolean fyt = installed(c, Fyt.PACKAGE);
-        if (microntek && fyt) {
+    static OtherLink open(Context c, Detection d, Sink sink, boolean watch) {
+        Detection.Platform p = d.otherPlatform();
+        if (p == Detection.Platform.AMBIGUOUS) {
             if (!bothLogged) sink.log("beta: both FYT and Microntek found, nothing will be sent");
             bothLogged = true;
             return null;
         }
-        if (microntek) return Microntek.open(c, sink, watch);
-        if (fyt) return Fyt.open(c, sink, watch);
+        if (p == Detection.Platform.MICRONTEK) return Microntek.open(c, sink, watch);
+        if (p == Detection.Platform.FYT) return Fyt.open(c, sink, watch);
         if (!noServiceLogged) sink.log("beta: no FYT or Microntek CAN service on this head unit");
         noServiceLogged = true;
         return null;
@@ -97,16 +95,6 @@ abstract class OtherLink {
             return c.getPackageManager().getPackageInfo(pkg, 0).versionName;
         } catch (Throwable e) {
             return null;
-        }
-    }
-
-    /** Only as part of the system: a sideloaded copy of a vendor app does not make this that head unit. */
-    private static boolean installed(Context c, String pkg) {
-        try {
-            int flags = c.getPackageManager().getApplicationInfo(pkg, 0).flags;
-            return (flags & (ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0;
-        } catch (Throwable e) {
-            return false;
         }
     }
 
