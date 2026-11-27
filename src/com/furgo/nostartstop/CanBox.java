@@ -119,6 +119,7 @@ final class CanBox {
     /** Beta: why this head unit's car or CAN box is not supported, or null. */
     String unsupported() {
         if (other != null) return other.unsupported();
+        if (tw == null && refused != null) return refused;
         return tw == null && Prefs.otherUnits(context) ? OtherLink.refusedAtOpen : null;
     }
 
@@ -187,6 +188,16 @@ final class CanBox {
         }
     }
 
+    /** Why this unit gets no PSA commands, or null. See {@link CarProfile#psaRefusal}. */
+    String psaRefusal() {
+        return CarProfile.psaRefusal(DeviceWatch.vendorCarVersion(context));
+    }
+
+    // The refusal is the same on every open of this process.
+    private static boolean refusalLogged;
+    // Set while open() refuses for the profile, for the CAR NOT SUPPORTED state.
+    private String refused;
+
     /**
      * Call before {@link #open}. Then open() asks for the power messages only, without the CAN box, and does not log
      * its failures: {@link #openFailure} has the last one.
@@ -202,6 +213,13 @@ final class CanBox {
     /** With captureFrames set, also opens the engine and unit ids, falling back to the CAN box alone if they are refused. */
     boolean open() {
         if (linked()) return true;
+        // The watch service only listens to power messages and never writes to the CAN box.
+        refused = power == null ? psaRefusal() : null;
+        if (refused != null) {
+            if (!refusalLogged) log(refused + ": its stop-start command differs, nothing will be sent");
+            refusalLogged = true;
+            return false;
+        }
         extraIdsRefused = null;
         TWUtil t = captureFrames && power == null ? connect(ALL_IDS, true) : null;
         extraIds = t != null;
@@ -349,6 +367,12 @@ final class CanBox {
     int toggle() {
         if (!linked()) {
             log("not open, nothing sent");
+            return -1;
+        }
+        // Checked here too, not only at open: no PSA command leaves for a box that would read it as something else.
+        String refusal = psaRefusal();
+        if (refusal != null) {
+            log(refusal + ", nothing sent");
             return -1;
         }
         int bit = Protocol.toggleValue(lastFrame);
