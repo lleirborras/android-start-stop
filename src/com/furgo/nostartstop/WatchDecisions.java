@@ -120,10 +120,14 @@ final class WatchDecisions {
      * starts a new one, as a crank end does; otherwise it counts as {@link #onRunning}.
      */
     void onEngineStart(String why, long at) {
-        if (auto.onEngineStart(at, shell.lastSwitchElapsed())) {
-            shell.newWake("engine start", WakeRules.CRANK_CYCLE);
-            armed("engine start");
+        // Beta head units have no crank state: an engine start seen in the engine speed counts as a crank end.
+        boolean fresh = auto.onCrank(at, shell.lastSwitchElapsed());
+        if (fresh) shell.newWake("engine start", WakeRules.CRANK_CYCLE);
+        else {
+            shell.ignitionEvent(WakeRules.CRANK_CYCLE);
+            shell.assumedEngineStart(auto.switchedDuringCrank());
         }
+        armed(fresh ? "engine start" : "engine start, same cycle");
         act(auto.onRunning(why, at));
     }
 

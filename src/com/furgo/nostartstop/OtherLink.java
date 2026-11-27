@@ -445,6 +445,8 @@ abstract class OtherLink {
             // The first rpm after a reconnect is the engine as it is, not a start: it must not undo a switch.
             running = false;
             stopped = false;
+            lastRpm = -1;
+            acc = -1;
             module = null;
             main = null;
             canbusId = -1;

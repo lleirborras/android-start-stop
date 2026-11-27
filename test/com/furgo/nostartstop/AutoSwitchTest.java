@@ -29,29 +29,6 @@ public class AutoSwitchTest {
         r.onCrankStart(30_000);
         same("signal during a crank waits", r.onRunning("rpm 900", 31_000), W);
 
-        // Beta: rpm after the engine was seen stopped. Only after a switch in the cycle is it a new engine start.
-        AutoSwitch e = new AutoSwitch();
-        check("no switch in the cycle: no new start", !e.onEngineStart(1_000, NONE));
-        check("no switch: not armed", !e.armed());
-        same("no switch: the rpm alone sends nothing", e.onRunning("rpm 800", 1_000), W);
-        check("switch at the rpm's time: no new start", !e.onEngineStart(2_000, 2_000));
-        check("switch before the rpm: new start", e.onEngineStart(3_000, 2_500));
-        check("armed", e.armed());
-        same("its rpm waits for the settle delay", e.onRunning("rpm 800", 3_000), W);
-        same("tick before 5 s", e.onTick(3_000 + SETTLE - 1), W);
-        same("fires 5 s after the rpm", e.onTick(3_000 + SETTLE), F);
-        check("why is the rpm", "rpm 800".equals(e.runningWhy()));
-        check("stall and restart: new start", e.onEngineStart(60_000, 8_100));
-        same("rpm from before the restart does not count", e.onTick(60_000 + SETTLE), W);
-        same("the restart's rpm counts", e.onRunning("rpm 900", 60_000), W);
-        same("fires on it", e.onTick(60_000 + SETTLE), F);
-        check("another restart", e.onEngineStart(70_000, 65_100));
-        same("give up 3 min after it without rpm", e.onTick(70_000 + GIVE_UP), G);
-        // Already pending (a tap switched meanwhile): re-armed with the 3-minute limit from the rpm.
-        e.arm(100_000, false);
-        check("pending, switch before: new start", e.onEngineStart(120_000, 110_000));
-        same("timed now", e.onTick(120_000 + GIVE_UP), G);
-
         // One reading of 13.0 V or more after arming fires once 5 s have passed.
         a.arm(0, true);
         same("13.38 V before 5 s waits", a.onBattery(1338, 1_000), W);

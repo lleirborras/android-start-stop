@@ -447,8 +447,10 @@ public class WatchDecisionsTest {
         s.now = 1_000;
         d.onIgnitionOn("ignition on reported by the head unit", true);
         s.did.clear();
-        engineStart("first start: no switch yet, so the same cycle", "rpm 800", 20_000, fire("rpm 800"));
-        s.switchSent(20_100);
+        engineStart("first start: no switch yet, so the same cycle", "rpm 800", 20_000,
+                armed("engine start, same cycle", "event CRANK_CYCLE", "assumed engine start false"));
+        tick("fires 5 s after the first start", 20_000 + SETTLE, fire("rpm 800"));
+        s.switchSent(20_000 + SETTLE + 100);
         engineStart("restart after the stall: new cycle", "rpm 900", 60_000, armed("engine start",
                 "wake engine start CRANK_CYCLE"));
         tick("fires on the restart", 60_000 + SETTLE, fire("rpm 900"));
@@ -456,24 +458,31 @@ public class WatchDecisionsTest {
         running("rpm keeps coming", "rpm 1500", 70_000, NOTHING);
     }
 
+    /** An engine start from the engine speed follows the crank end rules. */
     private static void rpmStartWithoutASwitch() {
+        // Nothing pending and no switch: a new cycle, like a crank seen without an ignition on before it.
         fresh();
-        engineStart("not armed, no switch in the cycle", "rpm 800", 5_000, NOTHING);
-        check("still nothing pending", !d.armed());
+        engineStart("not armed, no switch in the cycle", "rpm 800", 5_000,
+                armed("engine start", "wake engine start CRANK_CYCLE"));
+        check("pending", d.armed());
+        tick("fires 5 s after the start", 5_000 + SETTLE, fire("rpm 800"));
 
-        // Pending, but nothing sent yet: the rpm only counts as the engine running.
+        // Pending, nothing sent yet: the same cycle, re-armed from the start.
         fresh();
         s.flag = true;
         s.now = 1_000;
         d.onIgnitionOn("ignition on reported by the head unit", true);
         s.did.clear();
-        engineStart("before the settle delay", "rpm 800", 2_000, NOTHING);
-        tick("at the settle delay", 1_000 + SETTLE, fire("rpm 800"));
+        engineStart("pending", "rpm 800", 2_000,
+                armed("engine start, same cycle", "event CRANK_CYCLE", "assumed engine start false"));
+        tick("at the settle delay from the start", 2_000 + SETTLE, fire("rpm 800"));
 
-        // A switch sent after the rpm was heard does not make that rpm a new start.
+        // A switch at the time of the rpm belongs to this start: the same cycle, which BootFlow then refuses to
+        // switch a second time.
         fresh();
         s.switchSent(5_000 + skew);
-        engineStart("switch at the time of the rpm", "rpm 800", 5_000 + skew, NOTHING);
+        engineStart("switch at the time of the rpm", "rpm 800", 5_000 + skew,
+                armed("engine start, same cycle", "event CRANK_CYCLE", "assumed engine start true"));
     }
 
     private static String[] fire(String why) {
