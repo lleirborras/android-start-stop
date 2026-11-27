@@ -6,7 +6,7 @@ Only the Raise PSA command (`961`) is tested on a car. Every other row is read f
 
 ## Results
 
-Scanned 2026-11-27: 802 vendor APKs (442 `com.tw.car` builds plus themes, info apps and services). 11 profiles have a stop-start setting. All send on message 1281, the same message the app uses for PSA: `write(1281, cmd, length, data)`.
+Scanned 2026-11-27: 911 vendor APKs (440 `com.tw.car` builds plus themes, info apps and services). 11 profiles have a stop-start setting. All send on message 1281, the same message the app uses for PSA: `write(1281, cmd, length, data)`.
 
 | Build | CAN box / make | Selections | Setting | Command | Value |
 |---|---|---|---|---|---|
@@ -39,8 +39,24 @@ Notes:
 - `961` and `964` toggle; the others take an explicit on/off value and may not need the echo logic in `Protocol.toggleValue`.
 - Three settings could keep stop-start off with nothing sent at each start, if the car honours them: the Jeep power-on default and both Vito "Remember Engine Start-Stop" settings.
 - The Vito settings are read-modify-write: sending them with the other bits wrong changes other car settings. They need the status frame decoded first.
-- The status frame that reports each setting back is not decoded yet, except where noted.
 - Builds `00_*` and `01_*` are the same profile for two head unit platforms. Their commands match, except that `00_11` has no stop-start setting.
+
+## Reading the setting back
+
+Where the vendor app shows the current value, it reads it from a status frame on message 1281 (`arg1` is the frame id):
+
+| Build | Frame | Bit |
+|---|---|---|
+| `961` | 56 | none: `byte[5]` bit 6 only echoes the last command, see README |
+| `96` | 56 | `byte[4]` bit 6 |
+| `114` | 69 | `byte[6]` bit 4 |
+| `111` | 64, when `byte[0]` is 16 | `byte[2]` bit 7 |
+| `274` | 105 | `byte[0]` bit 3 |
+| `880` on/off | 33, when `byte[0]` is 112 | `byte[2]` bit 7 |
+| `880` power-on default | when `byte[0]` is 64; frame id unclear in the decompile | `byte[3]` bit 2 |
+| `41F` | 45 | `byte[0]` bit 4 (also the source of the other bits to send) |
+
+Not found for `11`, `964`, `F91` and `F94`. A readback that follows the setting would let the app confirm a switch, which the PSA echo cannot.
 
 Left out, because they do not switch stop-start:
 - Honda `22A`, `211`, `218`, `238`, `27`, `270`, `271`: "Automatic start and stop indication" only turns a display on or off.
