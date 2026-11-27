@@ -92,12 +92,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private Updater.Release available;   // non-null once a newer release was found
     private Toggle bootSwitch;
     private boolean askingAboutDiagnostics;
-    private Toggle telemetrySwitch;   // null when the build has no PostHog key
-    private Toggle captureSwitch;
-    private Toggle autoUpdateSwitch;
-    private Toggle withoutAdbSwitch;
-    private Toggle otherUnitsSwitch;
-    private Toggle otherCarsSwitch;
+    private boolean fromOwnScreen;   // back from a screen of this app: the car setup is not opened again
     private TextView logView;
     private TextView shareText;      // null when the build has no PostHog key
     private View shareDot;
@@ -359,6 +354,10 @@ public class MainActivity extends Activity implements CanBox.Listener {
         if (opened) box.query();
         handler.postDelayed(requery, REQUERY_MS);
         askAboutDiagnostics();
+        // Once per return to the app: backing out of the setup must not open it again at once.
+        boolean askSetup = !fromOwnScreen && CanBox.setupDecision(this) == CarSetup.ASK;
+        fromOwnScreen = false;
+        if (askSetup) openOwn(SetupActivity.class);
         UpdateJob.onResult = jobDone;
         Telemetry.onChange = shareChanged;
         shareLive = true;
@@ -473,7 +472,8 @@ public class MainActivity extends Activity implements CanBox.Listener {
         int action = manual.tap(BootService.running, link == LINK_DOWN);
         if (action == ManualSwitch.NOTHING) return;
         if (action == ManualSwitch.NO_LINK) {
-            flash("Not connected to the car. Nothing sent.");
+            flash(CanBox.setupDecision(this) == CarSetup.ASK ? "Confirm your car first. Nothing sent."
+                    : "Not connected to the car. Nothing sent.");
             return;
         }
         note = null;
@@ -605,74 +605,9 @@ public class MainActivity extends Activity implements CanBox.Listener {
         render();
     }
 
-    private void toggleCapture() {
-        boolean on = !Prefs.captureFrames(this);
-        Prefs.setCaptureFrames(this, on);
-        box.setCaptureFrames(on);
-        onLog(on ? "recording car data on" : "recording car data off");
-        renderBoot();
-    }
-
-    private void toggleAutoUpdate() {
-        boolean on = !Prefs.autoUpdate(this);
-        Prefs.setAutoUpdate(this, on);
-        onLog(on ? "automatic update check on" : "automatic update check off");
-        UpdateJob.schedule(this, true);
-        renderBoot();
-    }
-
-    private void toggleWithoutAdb() {
-        boolean on = !Prefs.withoutAdb(this);
-        Prefs.setWithoutAdb(this, on);
-        if (!on) {
-            onLog("beta: reach the car without adb off, from the next app start");
-            renderBoot();
-            return;
-        }
-        String failure = HiddenApi.exempt();
-        onLog(failure == null ? "beta: reach the car without adb on"
-                : "beta: reach the car without adb failed: " + failure);
-        if (failure == null && !opened) {
-            opened = box.open();
-            link = opened ? LINK_WAITING : LINK_DOWN;
-            if (opened) box.query();
-        }
-        render();
-    }
-
-    private void toggleOtherUnits() {
-        boolean on = !Prefs.otherUnits(this);
-        Prefs.setOtherUnits(this, on);
-        onLog(on ? "beta: FYT and Microntek head units on" : "beta: FYT and Microntek head units off");
-        if (on && !opened) {
-            opened = box.open();
-            link = opened ? LINK_WAITING : LINK_DOWN;
-            if (opened) box.query();
-        } else if (!on && box.usesOtherLink()) {
-            box.close();
-            opened = box.open();
-            link = opened ? LINK_WAITING : LINK_DOWN;
-            if (opened) box.query();
-        }
-        render();
-    }
-
-    private void toggleOtherCars() {
-        boolean on = !Prefs.otherCars(this);
-        Prefs.setOtherCars(this, on);
-        onLog(on ? "beta: other cars on" : "beta: other cars off");
-        // A tap still waiting for its answer belongs to the old protocol: drop it. The profile is chosen at open.
-        manual.pause();
-        handler.removeCallbacks(phaseTimeout);
-        box.close();
-        opened = box.open();
-        link = opened ? LINK_WAITING : LINK_DOWN;
-        if (opened) box.query();
-        render();
-    }
-
-    private void toggleTelemetry() {
-        setTelemetry(!Prefs.telemetry(this));
+    private void openOwn(Class<? extends Activity> screen) {
+        fromOwnScreen = true;
+        startActivity(new Intent(this, screen));
     }
 
     /** Explains the notification access the background start needs, then opens Android's screen for it. */
@@ -830,15 +765,16 @@ public class MainActivity extends Activity implements CanBox.Listener {
     }
 
     private void render() {
-        boolean unsupported = box.unsupported() != null;
-        if (unsupported) link = LINK_DOWN;
-        linkView.setText(unsupported ? "○  CAR NOT SUPPORTED" : link == LINK_LIVE ? "●  CONNECTED TO CAR"
+        boolean setup = CanBox.setupDecision(this) == CarSetup.ASK;
+        boolean unsupported = !setup && box.unsupported() != null;
+        if (unsupported || setup) link = LINK_DOWN;
+        linkView.setText(setup ? "○  SET UP YOUR CAR" : unsupported ? "○  CAR NOT SUPPORTED" : link == LINK_LIVE ? "●  CONNECTED TO CAR"
                 : link == LINK_DOWN ? "○  NO LINK TO CAR" : "○  CONNECTING…");
         linkView.setTextColor(link == LINK_LIVE ? ACCENT : link == LINK_DOWN ? LINK_BAD : MUTED);
 
         boolean bootBusy = BootService.running;
         long last = Prefs.lastSwitchAt(this);
-        Feedback f = Feedback.of(note, bootBusy, result, manual.pending(), link == LINK_DOWN, unsupported,
+        Feedback f = Feedback.of(note, bootBusy, result, manual.pending(), link == LINK_DOWN, setup, unsupported,
                 Prefs.bootSwitchFailed(this), last, Prefs.lastSwitchAtBoot(this));
         feedback.setText(f.text);
         if (f.color != Feedback.KEEP) {
@@ -943,12 +879,6 @@ public class MainActivity extends Activity implements CanBox.Listener {
         startView.setText("Background start: " + (startOn ? "On" : "Off"));
         startView.setTextColor(startOn ? TEXT : MUTED);
         renderSwitch(bootSwitch, Prefs.applyAtBoot(this));
-        renderSwitch(captureSwitch, Prefs.captureFrames(this));
-        if (telemetrySwitch != null) renderSwitch(telemetrySwitch, Prefs.telemetry(this));
-        renderSwitch(autoUpdateSwitch, Prefs.autoUpdate(this));
-        renderSwitch(withoutAdbSwitch, Prefs.withoutAdb(this));
-        renderSwitch(otherUnitsSwitch, Prefs.otherUnits(this));
-        renderSwitch(otherCarsSwitch, Prefs.otherCars(this));
     }
 
     private void renderSwitch(Toggle t, boolean on) {
@@ -986,62 +916,6 @@ public class MainActivity extends Activity implements CanBox.Listener {
                     @Override
                     public void onClick(View v) {
                         toggleBoot();
-                    }
-                });
-        if (Telemetry.configured()) {
-            if (narrow) row = settingsRow(left);
-            telemetrySwitch = addSetting(row, "Share diagnostics",
-                    "Sends this app's log to the developer.",
-                    new View.OnClickListener() {
-                        @Override
-                        public void onClick(View v) {
-                            toggleTelemetry();
-                        }
-                    });
-        }
-        row = settingsRow(left);
-        captureSwitch = addSetting(row, "Record car data",
-                "Logs raw car data. May include vehicle details.",
-                new View.OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        toggleCapture();
-                    }
-                });
-        if (narrow) row = settingsRow(left);
-        autoUpdateSwitch = addSetting(row, "Check for updates automatically",
-                "Once a day. Never installs by itself.",
-                new View.OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        toggleAutoUpdate();
-                    }
-                });
-        row = settingsRow(left);
-        withoutAdbSwitch = addSetting(row, "Beta: reach the car without adb",
-                "Try it if the card says NO LINK TO CAR.",
-                new View.OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        toggleWithoutAdb();
-                    }
-                });
-        row = settingsRow(left);
-        otherUnitsSwitch = addSetting(row, "Beta: FYT and Microntek head units",
-                "PSA with a Raise CAN box only. Untested.",
-                new View.OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        toggleOtherUnits();
-                    }
-                });
-        row = settingsRow(left);
-        otherCarsSwitch = addSetting(row, "Beta: other cars",
-                "VW, Honda, Haval, PSA on other boxes. Untested.",
-                new View.OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        toggleOtherCars();
                     }
                 });
 
@@ -1174,7 +1048,17 @@ public class MainActivity extends Activity implements CanBox.Listener {
         helpView.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                startActivity(new Intent(MainActivity.this, HelpActivity.class));
+                openOwn(HelpActivity.class);
+            }
+        });
+        TextView settingsView = text("Settings", 14, TEXT, true);
+        settingsView.setGravity(Gravity.CENTER);
+        settingsView.setPadding(dp(20), 0, dp(20), 0);
+        settingsView.setBackgroundDrawable(pressable(0, NEUTRAL_PRESSED, 0));
+        settingsView.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                openOwn(SettingsActivity.class);
             }
         });
         linkView = text("", 14, MUTED, true);
@@ -1189,10 +1073,12 @@ public class MainActivity extends Activity implements CanBox.Listener {
             LinearLayout third = new LinearLayout(this);
             third.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
             third.addView(helpView, new LinearLayout.LayoutParams(-2, dp(36)));
+            third.addView(settingsView, new LinearLayout.LayoutParams(-2, dp(36)));
             third.addView(startView, new LinearLayout.LayoutParams(-2, dp(36)));
             left.addView(third, new LinearLayout.LayoutParams(-1, -2));
         } else {
             header.addView(helpView, new LinearLayout.LayoutParams(-2, dp(36)));
+            header.addView(settingsView, new LinearLayout.LayoutParams(-2, dp(36)));
             header.addView(startView, new LinearLayout.LayoutParams(-2, dp(36)));
             updateLp.rightMargin = dp(24);
             header.addView(updateView, updateLp);

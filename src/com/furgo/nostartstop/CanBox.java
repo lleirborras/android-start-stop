@@ -194,9 +194,26 @@ final class CanBox {
         return CarProfile.psaRefusal(DeviceWatch.vendorCarVersion(context));
     }
 
+    /** The car setup's decision for this head unit now, see {@link CarSetup#decide}. */
+    static int setupDecision(Context c) {
+        return CarSetup.decide(DeviceWatch.carDetection(c), Prefs.setupChoice(c), Prefs.setupDetection(c));
+    }
+
+    // Per process: each reason is logged once, not on every reopen of the screen.
+    private static String setupLogged;
+
+    /** Why the car setup lets nothing be sent, or null when it may. Every open and write to the CAN box asks. */
+    private String setupRefusal() {
+        String why = CarSetup.why(DeviceWatch.carDetection(context), Prefs.setupChoice(context),
+                Prefs.setupDetection(context));
+        if (why != null && !why.equals(setupLogged)) log("car setup: " + why + ", nothing will be sent");
+        setupLogged = why;
+        return why;
+    }
+
     // The refusal is the same on every open of this process.
     private static boolean refusalLogged;
-    // Set while open() refuses for the profile, for the CAR NOT SUPPORTED state.
+    // Set while open() refuses for the car setup or the profile, for the CAR NOT SUPPORTED state.
     private String refused;
 
     /**
@@ -214,6 +231,14 @@ final class CanBox {
     /** With captureFrames set, also opens the engine and unit ids, falling back to the CAN box alone if they are refused. */
     boolean open() {
         if (linked()) return true;
+        refused = null;
+        if (power == null) {
+            String setup = setupRefusal();
+            if (setup != null) {
+                if (setupDecision(context) == CarSetup.REFUSE) refused = setup;
+                return false;
+            }
+        }
         // The watch service only listens to power messages and never writes to the CAN box. A profile the beta
         // drives gets its own commands instead.
         boolean driven = Prefs.otherCars(context)
@@ -529,6 +554,7 @@ final class CanBox {
     }
 
     private int write(int cmd, byte[] data) {
+        if (power == null && setupRefusal() != null) return -1;
         if (other != null) return other.write(cmd, data);
         if (tw == null) {
             log("not open");

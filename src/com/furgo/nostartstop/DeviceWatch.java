@@ -63,6 +63,11 @@ final class DeviceWatch {
         }
     }
 
+    /** What the head unit reports for the car setup, see {@link CarSetup#detection}. */
+    static String carDetection(Context c) {
+        return CarSetup.detection(vendorCarVersion(c));
+    }
+
     private static String networkNow(Context c) {
         try {
             ConnectivityManager cm = (ConnectivityManager) c.getSystemService(Context.CONNECTIVITY_SERVICE);

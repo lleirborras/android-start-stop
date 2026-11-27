@@ -30,12 +30,22 @@ final class Feedback {
     /** carUnsupported: the link works but the head unit is set up for a car or CAN box the app does not support. */
     static Feedback of(String note, boolean autoSwitching, String result, boolean pending, boolean linkDown,
             boolean carUnsupported, boolean bootSwitchFailed, long lastSwitchAt, boolean lastSwitchAtBoot) {
+        return of(note, autoSwitching, result, pending, linkDown, false, carUnsupported, bootSwitchFailed,
+                lastSwitchAt, lastSwitchAtBoot);
+    }
+
+    /** setupNeeded: the user has not confirmed the car yet, see {@link CarSetup}. */
+    static Feedback of(String note, boolean autoSwitching, String result, boolean pending, boolean linkDown,
+            boolean setupNeeded, boolean carUnsupported, boolean bootSwitchFailed, long lastSwitchAt,
+            boolean lastSwitchAtBoot) {
         if (note != null) {
             return new Feedback(note, WARN);
         } else if (autoSwitching) {
             return new Feedback("Switching…", MUTED);
         } else if (result.isEmpty() && pending) {
             return new Feedback("", KEEP);
+        } else if (result.isEmpty() && setupNeeded) {
+            return new Feedback("Confirm your car before the app sends anything.", MUTED);
         } else if (result.isEmpty() && carUnsupported) {
             return new Feedback("This car or CAN box is not supported.", MUTED);
         } else if (result.isEmpty() && linkDown) {

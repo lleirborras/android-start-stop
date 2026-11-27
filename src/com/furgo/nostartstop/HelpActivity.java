@@ -69,6 +69,7 @@ public class HelpActivity extends Activity {
         LinearLayout first = column();
         LinearLayout second = narrow ? first : column();
         stateCard(first);
+        carSetup(first);
         engineStart(first);
         backgroundStart(first);
         headUnit(first);
@@ -136,6 +137,18 @@ public class HelpActivity extends Activity {
                 + "cannot follow the ignition.");
         item(card, "Car shows the opposite", "Tap it when the instrument cluster disagrees with the card. It flips "
                 + "the shown state and writes a line to the log, up to a daily limit. Sends nothing to the car.");
+    }
+
+    private void carSetup(LinearLayout column) {
+        LinearLayout card = card(column, "Your car");
+        para(card, "The app sends nothing to the car until you confirm which car it is. It asks once after it is "
+                + "installed or updated, and again when the head unit's CAN box setting changes.");
+        item(card, "SET UP YOUR CAR", "Shown at the top until you confirm. The switch button is grey and nothing "
+                + "is sent, also not at engine start.");
+        item(card, "My car is not listed", "The app sends nothing and shows CAR NOT SUPPORTED.");
+        item(card, "Settings", "Opens from the top of the main screen. It shows the car the head unit reports and "
+                + "the one you confirmed, with Change car. Record car data, the update check, Share diagnostics "
+                + "and the beta switches are there too.");
     }
 
     private void engineStart(LinearLayout column) {

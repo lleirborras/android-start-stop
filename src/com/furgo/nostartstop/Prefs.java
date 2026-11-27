@@ -16,6 +16,8 @@ final class Prefs {
     private static final String WITHOUT_ADB = "without_adb";
     private static final String OTHER_UNITS = "other_units";
     private static final String OTHER_CARS = "other_cars";
+    private static final String SETUP_CHOICE = "setup_choice";
+    private static final String SETUP_DETECTION = "setup_detection";
     private static final String BOOT_SWITCH_BOOT = "boot_switch_boot";
     private static final String LAST_SWITCH_AT = "last_switch_at";
     private static final String LAST_SWITCH_AT_BOOT = "last_switch_at_boot";
@@ -350,6 +352,20 @@ final class Prefs {
 
     static void setOtherCars(Context c, boolean on) {
         prefs(c).edit().putBoolean(OTHER_CARS, on).apply();
+    }
+
+    /** The confirmed car, see {@link CarSetup}; null until the user confirms one, on every install and update. */
+    static String setupChoice(Context c) {
+        return prefs(c).getString(SETUP_CHOICE, null);
+    }
+
+    /** The detection the choice was confirmed against, see {@link CarSetup#detection}. */
+    static String setupDetection(Context c) {
+        return prefs(c).getString(SETUP_DETECTION, null);
+    }
+
+    static void setSetup(Context c, String choice, String detection) {
+        prefs(c).edit().putString(SETUP_CHOICE, choice).putString(SETUP_DETECTION, detection).apply();
     }
 
     /** False until the user has answered the first-launch question with yes. */

@@ -46,6 +46,12 @@ public class FeedbackTest {
         is("result over car not supported", Feedback.of(null, false, RESULT_TEXT, false, true, true, false, 0, false),
                 RESULT_TEXT, RESULT);
 
+        is("car setup needed", Feedback.of(null, false, "", false, true, true, false, true, AT_0841, true),
+                "Confirm your car before the app sends anything.", MUTED);
+        is("note over car setup", Feedback.of(NOTE, false, "", false, true, true, false, false, 0, false), NOTE, WARN);
+        is("result over car setup", Feedback.of(null, false, RESULT_TEXT, false, true, true, false, false, 0, false),
+                RESULT_TEXT, RESULT);
+
         is("automatic switch failed", Feedback.of(null, false, "", false, false, true, 0, false),
                 "Automatic switch failed. Tap to switch.", WARN);
         is("failure over the last switch", Feedback.of(null, false, "", false, false, true, AT_0841, true),
