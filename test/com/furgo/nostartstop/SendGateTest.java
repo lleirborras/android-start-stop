@@ -60,6 +60,12 @@ public class SendGateTest {
             return s;
         }
 
+        S otherUnits(boolean on) {
+            S s = copy();
+            s.otherUnits = on;
+            return s;
+        }
+
         S watch() {
             S s = copy();
             s.watch = true;
@@ -202,6 +208,49 @@ public class SendGateTest {
                 "CAN box type 59 is not PSA with a Raise box (50)");
         check("open refusal Microntek unknown", SendGate.carRefusal(Platform.MICRONTEK, null), "CAN box type unknown");
         check("open refusal FYT unknown", SendGate.carRefusal(Platform.FYT, null), OtherUnits.NOT_IDENTIFIED);
+
+        // The open check on a beta unit: no TWUtil, no link yet.
+        check("beta unit, check at open", van.vendor(null).platforms(false, true, false).link(Platform.NONE, null)
+                .on(Kind.PSA_QUERY), SEND, null);
+
+        // Unit queries and profile commands are TWUtil messages only.
+        check("unit query on FYT", van.fyt("339").on(Kind.UNIT_QUERY), REFUSE, "link");
+        check("unit query on Microntek", van.microntek("50").on(Kind.UNIT_QUERY), REFUSE, "link");
+        check("profile query without a profile", vwDriven.on(Kind.PROFILE_QUERY), REFUSE, "profile");
+        check("profile set on FYT", vwFyt.profile("111").on(Kind.PROFILE_SET), REFUSE, "link");
+        check("profile query on Microntek", vwDriven.microntek("50").vendor(VW).profile("111")
+                .on(Kind.PROFILE_QUERY), REFUSE, "link");
+        check("FYT car not a number", van.fyt("abc").on(Kind.OTHER_SET), REFUSE, "beta: FYT");
+
+        // Precedence between the refusals.
+        check("setup beats beta off", van.fyt("339").otherUnits(false).choice("not_listed").on(Kind.OTHER_SET),
+                REFUSE, "car setup");
+        check("beta off beats ambiguous", both.otherUnits(false).on(Kind.OTHER_SET).why,
+                "FYT and Microntek units are off");
+        check("ambiguous beats PSA", both.vendor(VW).choice("profile:111").on(Kind.OTHER_QUERY).why,
+                "both FYT and Microntek found");
+        check("PSA beats the Microntek car", van.microntek("59").vendor(VW).choice("profile:111").on(Kind.OTHER_SET),
+                REFUSE, "PSA");
+        check("profile beats link", vwFyt.on(Kind.PROFILE_SET), REFUSE, "profile");
+
+        // The beta units switch leaves TWUtil alone.
+        for (Kind k : new Kind[]{Kind.PSA_SET, Kind.PSA_QUERY, Kind.UNIT_QUERY}) {
+            check("beta units off, van " + k, van.otherUnits(false).on(k), SEND, null);
+        }
+        check("beta units off, profile", vwDriven.otherUnits(false).profile("111").on(Kind.PROFILE_SET), SEND, null);
+
+        // A known profile the beta does not drive refuses PSA Raise in the setup, whatever the beta switch.
+        for (Kind k : new Kind[]{Kind.PSA_SET, Kind.PSA_QUERY}) {
+            check("jeep as PSA " + k, van.vendor(JEEP).on(k), REFUSE, "car setup");
+            check("jeep as PSA, beta on " + k, van.vendor(JEEP).otherCars().on(k), REFUSE, "car setup");
+        }
+
+        // No car app with the beta profiles on: nothing to drive.
+        S bare = van.vendor(null).otherCars();
+        check("no car app, beta on, not confirmed", bare.unconfirmed().on(Kind.PSA_SET), ASK, "car setup");
+        check("no car app, beta on, watch", bare.watch().on(Kind.PSA_SET), REFUSE, "watch");
+        check("no car app, beta on, PSA", bare.on(Kind.PSA_SET), SEND, null);
+        check("no car app, beta on, profile", bare.profile("111").on(Kind.PROFILE_SET), REFUSE, "profile");
 
         // The kind on each link.
         check("PSA set on FYT", SendGate.onLink(Kind.PSA_SET, Platform.FYT), Kind.OTHER_SET);
