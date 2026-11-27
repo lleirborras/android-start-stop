@@ -42,6 +42,9 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
     private static final LogBudget SILENT_LINES = new LogBudget(5);
 
     private final Handler handler = new Handler(Looper.getMainLooper());
+    // The unit repeats a reading several times a second at engine start: only a change is logged while armed.
+    private long armedLoggedFor = -1;
+    private int armedLoggedCentivolts = -1;
     private final WatchDecisions decisions = new WatchDecisions(new WatchDecisions.Shell() {
         @Override
         public long now() {
@@ -268,7 +271,10 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
         heard();
         seenCentivolts = centivolts;
         seenCentivoltsAt = lastMessageAt;
-        if (decisions.armed() && ARMED_BATTERY_LINES.take(lastMessageAt)) {
+        if (decisions.armed() && (decisions.armedAt() != armedLoggedFor || centivolts != armedLoggedCentivolts)
+                && ARMED_BATTERY_LINES.take(lastMessageAt)) {
+            armedLoggedFor = decisions.armedAt();
+            armedLoggedCentivolts = centivolts;
             long ms = lastMessageAt - decisions.armedAt();
             LogFile.append(this, "auto: battery " + Protocol.volts(centivolts) + " V, " + ms / 1000 + "." + ms % 1000 / 100
                     + " s after arming");

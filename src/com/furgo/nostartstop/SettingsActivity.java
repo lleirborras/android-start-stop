@@ -48,6 +48,7 @@ public class SettingsActivity extends Activity {
     private Toggle startSwitch;
     private Toggle captureSwitch;
     private Toggle autoUpdateSwitch;
+    private Toggle betaSwitch;
     private Toggle telemetrySwitch;   // null when the build has no PostHog key
     private Toggle withoutAdbSwitch;
     private Toggle otherUnitsSwitch;
@@ -183,6 +184,15 @@ public class SettingsActivity extends Activity {
                         toggleAutoUpdate();
                     }
                 });
+        betaSwitch = addSetting(first, "Beta program",
+                "Offers test builds before release. Leaving does not go back: you stay on the beta until the "
+                        + "next stable version.",
+                new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        toggleBetaProgram();
+                    }
+                });
 
         section(second, "DATA");
         if (Telemetry.configured()) {
@@ -266,8 +276,8 @@ public class SettingsActivity extends Activity {
 
     private String versionLabel() {
         String v = MainActivity.versionName(this);
-        // Release builds are named like "0.3.0"; local builds are "dev".
-        return Character.isDigit(v.charAt(0)) ? "v" + v : v;
+        // Release builds are named like "0.3.0" or "0.21.0-beta.3"; local builds are "dev".
+        return Version.label(v);
     }
 
     /** A small caps title above a group of cards. */
@@ -366,17 +376,18 @@ public class SettingsActivity extends Activity {
         updateBusy = true;
         final Updater.Release found = available;
         handler.removeCallbacks(revertUpdate);
-        showUpdate(found == null || found.apkUrl == null ? "Checking…" : "Downloading " + found.tag + "…", MUTED, false);
+        showUpdate(found == null || found.apkUrl == null ? "Checking…" : "Downloading " + Version.label(found.tag) + "…", MUTED, false);
         new Thread(new Runnable() {
             @Override
             public void run() {
                 try {
                     if (found == null || found.apkUrl == null) {
-                        final Updater.Release latest = Updater.latest();
+                        final boolean beta = Prefs.betaProgram(getApplicationContext());
+                        final Updater.Release latest = Updater.latest(beta);
                         handler.post(new Runnable() {
                             @Override
                             public void run() {
-                                onLatest(latest);
+                                onLatest(latest, beta);
                             }
                         });
                     } else {
@@ -392,12 +403,18 @@ public class SettingsActivity extends Activity {
         }).start();
     }
 
-    private void onLatest(Updater.Release latest) {
+    private void onLatest(Updater.Release latest, boolean beta) {
         if (isDestroyed()) return;
         updateBusy = false;
+        if (Prefs.betaProgram(this) != beta) {
+            // The beta program was switched during the check: ask again for the channel now chosen.
+            available = null;
+            onUpdateClick();
+            return;
+        }
         String installed = MainActivity.versionName(this);
         UpdateJob.remember(this, latest.tag);
-        if (Version.isNewer(latest.tag, installed)) {
+        if (UpdateCheck.offerable(latest.tag, installed, beta) != null) {
             boolean installNow = available != null && available.tag.equals(latest.tag);
             available = latest;
             log("update available: " + latest.tag);
@@ -434,7 +451,7 @@ public class SettingsActivity extends Activity {
         if (updateBusy) return;
         String installed = MainActivity.versionName(this);
         if (available != null && !Version.isNewer(available.tag, installed)) available = null;
-        String tag = UpdateCheck.offerable(Prefs.latestTag(this), installed);
+        String tag = UpdateCheck.offerable(Prefs.latestTag(this), installed, Prefs.betaProgram(this));
         if (tag == null) UpdateJob.cancelNotification(this);
         // Its APK URL is not stored: tapping Install fetches the release again.
         if (tag != null && (available == null || Version.isNewer(tag, available.tag))) {
@@ -444,7 +461,7 @@ public class SettingsActivity extends Activity {
     }
 
     private void showIdleUpdate() {
-        if (available != null) showUpdate("Install " + available.tag, TEXT, true);
+        if (available != null) showUpdate("Install " + Version.label(available.tag), TEXT, true);
         else showUpdate("Check for updates now", TEXT, false);
     }
 
@@ -468,6 +485,23 @@ public class SettingsActivity extends Activity {
         Prefs.setCaptureFrames(this, on);
         log(on ? "recording car data on" : "recording car data off");
         renderSwitches();
+    }
+
+    private void toggleBetaProgram() {
+        boolean on = !Prefs.betaProgram(this);
+        Prefs.setBetaProgram(this, on);
+        String installed = MainActivity.versionName(this);
+        if (on) log("beta program joined: checking for test builds");
+        else if (Version.isBeta(installed)) {
+            log("beta program left: stays on " + Version.label(installed) + " until a newer stable version");
+        } else log("beta program left");
+        renderSwitches();
+        UpdateJob.schedule(this, true);
+        if (updateBusy) return;
+        // Checks at once, so the card shows what the chosen channel offers.
+        UpdateJob.cancelNotification(this);
+        available = null;
+        onUpdateClick();
     }
 
     private void toggleAutoUpdate() {
@@ -530,6 +564,7 @@ public class SettingsActivity extends Activity {
         renderSwitch(startSwitch, StartListener.enabled(this));
         renderSwitch(captureSwitch, Prefs.captureFrames(this));
         renderSwitch(autoUpdateSwitch, Prefs.autoUpdate(this));
+        renderSwitch(betaSwitch, Prefs.betaProgram(this));
         if (telemetrySwitch != null) renderSwitch(telemetrySwitch, Prefs.telemetry(this));
         renderSwitch(withoutAdbSwitch, Prefs.withoutAdb(this));
         renderSwitch(otherUnitsSwitch, Prefs.otherUnits(this));

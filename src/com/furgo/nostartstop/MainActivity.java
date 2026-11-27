@@ -349,7 +349,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         Telemetry.refresh(this);
         renderShare();
         // Settings offers the install; here only a notification for a release that is no longer newer goes.
-        if (UpdateCheck.offerable(Prefs.latestTag(this), versionName()) == null) UpdateJob.cancelNotification(this);
+        if (UpdateCheck.offerable(Prefs.latestTag(this), versionName(), Prefs.betaProgram(this)) == null) UpdateJob.cancelNotification(this);
         UpdateJob.schedule(this, true);
     }
 
@@ -894,7 +894,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         // Release builds are named like "0.3.0"; local builds are "dev".
         LinearLayout about = new LinearLayout(this);
         about.setOrientation(LinearLayout.VERTICAL);
-        TextView version = text(Character.isDigit(v.charAt(0)) ? "v" + v : v, 14, MUTED, false);
+        TextView version = text(Version.label(v), 14, MUTED, false);
         version.setSingleLine(true);
         about.addView(version);
         TextView by = text("by Lleïr Borràs", 12, MUTED, false);

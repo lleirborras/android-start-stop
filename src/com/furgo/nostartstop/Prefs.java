@@ -421,6 +421,7 @@ final class Prefs {
     }
 
     private static final String AUTO_UPDATE = "auto_update";
+    private static final String BETA_PROGRAM = "beta_program";
     private static final String LATEST_TAG = "latest_tag";
     private static final String UPDATE_CHECKED_AT = "update_checked_at";
     private static final String NOTIFIED_TAG = "notified_tag";
@@ -434,6 +435,16 @@ final class Prefs {
 
     static void setAutoUpdate(Context c, boolean on) {
         prefs(c).edit().putBoolean(AUTO_UPDATE, on).apply();
+    }
+
+    static boolean betaProgram(Context c) {
+        return prefs(c).getBoolean(BETA_PROGRAM, false);
+    }
+
+    /** Also forgets the release found so far: it may be a beta, or a stable one older than the newest beta. */
+    static void setBetaProgram(Context c, boolean on) {
+        prefs(c).edit().putBoolean(BETA_PROGRAM, on).remove(LATEST_TAG).remove(UPDATE_CHECKED_AT).remove(NOTIFIED_TAG)
+                .apply();
     }
 
     /** The newest release tag seen by any check. Untrusted text: validate before use. */
