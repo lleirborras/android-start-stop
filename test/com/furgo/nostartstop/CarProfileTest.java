@@ -26,6 +26,13 @@ public class CarProfileTest {
         check("lower case refused", CarProfile.code("abc_1"), null);
         check("empty refused", CarProfile.code("_0000"), null);
         check("odd text cleaned", CarProfile.describe("x y\n"), "car app x?y?, profile unknown");
+        check("PSA Raise may get PSA bytes", CarProfile.psaRefusal("961_0000_260130"), null);
+        check("no vendor app is unchanged", CarProfile.psaRefusal(null), null);
+        check("unknown profile is unchanged", CarProfile.psaRefusal("41_0000_210812"), null);
+        check("VW gets no PSA bytes", CarProfile.psaRefusal("111_0000_260327"),
+                "the car app names profile 111 (Raise, VW MQB)");
+        check("PSA on another box gets no Raise bytes", CarProfile.psaRefusal("96_0000_261006"),
+                "the car app names profile 96 (Simple Soft, Binary or LuZheng, PSA)");
         System.out.println("CarProfileTest passed");
     }
 

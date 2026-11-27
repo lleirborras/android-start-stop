@@ -111,7 +111,7 @@ public class BootService extends Service implements CanBox.Listener, BootFlow.Sh
 
     @Override
     public void newLink() {
-        canBox = new CanBox(this);
+        canBox = new CanBox(this, this);
     }
 
     @Override

@@ -66,6 +66,16 @@ final class CarProfile {
         return null;
     }
 
+    /**
+     * Why the PSA Raise commands must not be sent on this head unit, or null when they may: its vendor car app names
+     * a known profile other than {@link #PSA_RAISE}, where those bytes mean something else. Unknown profiles and units
+     * without the vendor app are left as they were.
+     */
+    static String psaRefusal(String versionName) {
+        CarProfile p = of(versionName);
+        return p == null || p == PSA_RAISE ? null : "the car app names profile " + p.code + " (" + p.name + ")";
+    }
+
     /** For the log, for example "car app 961_0000_260130, profile 961 (Raise, PSA and Opel, tested)". */
     static String describe(String versionName) {
         if (versionName == null) return "car app not found";

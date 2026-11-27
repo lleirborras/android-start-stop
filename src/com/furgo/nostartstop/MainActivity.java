@@ -296,7 +296,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         super.onCreate(savedInstanceState);
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         density = getResources().getDisplayMetrics().density;
-        box = new CanBox(this);
+        box = new CanBox(this, this);
         narrow = getResources().getConfiguration().screenWidthDp < NARROW_DP;
         setContentView(buildUi());
         LogFile.append(this, "app opened, version " + versionName() + ", android " + Build.VERSION.RELEASE
