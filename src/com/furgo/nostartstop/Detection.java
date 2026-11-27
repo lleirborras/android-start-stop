@@ -18,12 +18,10 @@ final class Detection {
         this.vendorVersion = vendorVersion;
     }
 
-    /** TWUtil is tried first, so it decides; the beta platforms count only without it. */
-    Platform platform() {
-        return topway ? Platform.TOPWAY : otherPlatform();
-    }
-
-    /** The beta link this head unit takes when TWUtil does not open: both FYT and Microntek is AMBIGUOUS. */
+    /**
+     * The beta link this head unit takes when TWUtil does not open: both FYT and Microntek is AMBIGUOUS. TWUtil is
+     * tried first, so {@link #topway} decides before this.
+     */
     Platform otherPlatform() {
         if (fyt && microntek) return Platform.AMBIGUOUS;
         if (fyt) return Platform.FYT;
