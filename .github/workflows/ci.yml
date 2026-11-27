@@ -5,11 +5,14 @@ on:
     branches: [master]
     tags: ['v*']
   pull_request:
+  # Actions > ci > Run workflow publishes a beta of the chosen branch for the app's beta program.
+  workflow_dispatch:
 
 permissions: {}
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # Betas share one group, so two at once cannot pick the same number.
+  group: ci-${{ github.event_name == 'workflow_dispatch' && 'beta' || github.ref }}
   cancel-in-progress: false
   queue: max    # keep every pending run; the default keeps one, so quick merges lost their release
 
@@ -85,7 +88,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag=""
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            # A beta of the version this branch would release, numbered after its earlier betas.
+            tags=$(gh api "repos/$GITHUB_REPOSITORY/tags" --paginate --jq '.[].name')
+            latest=$(printf '%s\n' "$tags" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)
+            tag=$(printf '%s\n' "$tags" | sh scripts/beta-tag.sh "$GITHUB_REF_NAME" "${latest:-v0.0.0}")
+            echo "beta of '$GITHUB_REF_NAME', latest tag '$latest', beta tag '$tag'"
+          elif [ "$GITHUB_REF_TYPE" = tag ]; then
             tag="$GITHUB_REF_NAME"
           elif [ "$GITHUB_EVENT_NAME" = push ]; then
             # Only a pull request merged into master counts, and it must be the only one for this commit.
@@ -119,8 +128,13 @@ jobs:
               fi
             fi
           fi
-          if [ -n "$tag" ] && ! echo "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "::error::release tag must look like vX.Y.Z"
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            pattern='^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$'
+          else
+            pattern='^v[0-9]+\.[0-9]+\.[0-9]+$'
+          fi
+          if [ -n "$tag" ] && ! echo "$tag" | grep -Eq "$pattern"; then
+            echo "::error::release tag $tag does not match $pattern"
             exit 1
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
@@ -129,16 +143,20 @@ jobs:
       - name: Build APK
         env:
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
-          VERSION_CODE: ${{ github.run_number }}
+          RUN_NUMBER: ${{ github.run_number }}
           # Public, write-only PostHog project key; diagnostics are left out of the build when unset.
           POSTHOG_KEY: ${{ vars.POSTHOG_KEY }}
           POSTHOG_HOST: ${{ vars.POSTHOG_HOST }}
         run: |
+          # A release's code comes from its tag, so it is ordered like the tags whatever order the runs ran in.
           if [ -n "$RELEASE_TAG" ]; then
             export VERSION_NAME="${RELEASE_TAG#v}"
+            VERSION_CODE=$(sh scripts/version-code.sh "$RELEASE_TAG")
           else
             export VERSION_NAME="dev-${GITHUB_SHA::7}"
+            VERSION_CODE="$RUN_NUMBER"
           fi
+          export VERSION_CODE
           sh build.sh
 
       - name: Check APK contents
@@ -160,10 +178,11 @@ jobs:
           name: nostartstop-apk
           path: build/nostartstop.apk
 
-  # Runs no code from the repository: it only signs and publishes the APK the build job made.
+  # Runs no code from the repository, but its steps come from the branch's own ci.yml: the release environment's
+  # branch policy and reviewers are what keep the signing key from other branches.
   release:
     needs: build
-    if: github.event_name == 'push' && needs.build.outputs.tag != ''
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.build.outputs.tag != ''
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -201,6 +220,22 @@ jobs:
           rm "$RUNNER_TEMP/release.p12"
           "$bt/apksigner" verify build/nostartstop.apk
 
+      # The approval can wait for hours: a stable release of the same version may have come out meanwhile, and
+      # then no one would be offered this beta.
+      - name: Check the beta is still ahead
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          base="${RELEASE_TAG%-beta.*}"
+          latest=$(gh api "repos/$GITHUB_REPOSITORY/tags" --paginate --jq '.[].name' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)
+          if [ -n "$latest" ] && [ "$(printf '%s\n%s\n' "$base" "$latest" | sort -V | tail -n 1)" = "$latest" ]; then
+            echo "::error::$latest is already out, so $RELEASE_TAG would never be offered; run the workflow again"
+            exit 1
+          fi
+
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -212,7 +247,11 @@ jobs:
           # A hand-pushed tag has no pull request and gets GitHub's generated notes.
           pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
             --jq '.[] | select(.merged_at != null and .base.ref == "master") | .number' | head -n 1)
-          if [ "$GITHUB_REF_TYPE" != tag ] && [ -n "$pr" ]; then
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            # A pre-release: left out of releases/latest, so only the beta program is offered it.
+            gh release create "$RELEASE_TAG" "$apk" --target "$GITHUB_SHA" --title "$RELEASE_TAG" --prerelease \
+              --notes "Beta build of \`$GITHUB_REF_NAME\` at $GITHUB_SHA."
+          elif [ "$GITHUB_REF_TYPE" != tag ] && [ -n "$pr" ]; then
             gh api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq '"## " + .title + "\n\n" + (.body // "")' > "$RUNNER_TEMP/notes.md"
             gh release create "$RELEASE_TAG" "$apk" --target "$GITHUB_SHA" --title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/notes.md"
           else

@@ -11,6 +11,9 @@ public class PowerWatchTest {
         same("5 is the wake", p.onState(5, 3_000), PowerWatch.WAKING);
         check("the wake ends the hold after ignition off", !p.offSeenHere(3_000));
         same("8 means nothing", p.onState(8, 3_500), N);
+        same("4, going to sleep, is ignition off", p.onState(4, 3_600), OFF);
+        check("4 starts the hold", p.offSeenHere(3_600));
+        same("5 after it is the wake", p.onState(5, 3_700), PowerWatch.WAKING);
 
         // A crank: 9, then 6 about 5 s later. 9 itself is not ignition off.
         same("9 is not ignition off", p.onState(9, 10_000), N);

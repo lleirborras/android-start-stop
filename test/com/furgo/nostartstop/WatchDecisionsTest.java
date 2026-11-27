@@ -184,7 +184,8 @@ public class WatchDecisionsTest {
         fresh();
         s.flag = true;
         start("start by the listener after ignition off", PowerWatch.BY_LISTENER, 0, NOTHING);
-        state("4 going to sleep", 4, 9_000, NOTHING);
+        state("4 going to sleep counts as ignition off", 4, 9_000, "offNow true", "event OFF_SEEN",
+                "assumed end ignition off", "cancel");
         state("5 waking", 5, HOUR, armed("ignition on", "offNow false", "wake ignition on IGNITION_ON_CYCLE"));
         state("6 awake", 6, HOUR + 5_000, "offNow false", "tick");
         tick("that tick", HOUR + 5_000, NOTHING);
@@ -284,6 +285,18 @@ public class WatchDecisionsTest {
         check("nothing pending", !d.armed());
         start("the process outlived the sleep", PowerWatch.BY_APP, 100_000 + PowerWatch.OFF_HOLD_MS,
                 armed("ignition on", "wake ignition on IGNITION_ON_CYCLE"));
+
+        // Seen on the van: the head unit restarted the app 2 s after an ignition off. The new process has no hold, so
+        // the start arms; the 4 that follows as the unit goes to sleep drops it.
+        fresh();
+        state("ignition off", 1, 100_000, "offNow true", "event OFF_SEEN", "assumed end ignition off", "cancel");
+        d = new WatchDecisions(s);
+        start("the app restarted in a new process", PowerWatch.BY_APP, 102_000, armed("ignition on",
+                "wake ignition on IGNITION_ON_CYCLE"));
+        state("4 going to sleep", 4, 106_000, "offNow true", "event OFF_SEEN", "assumed end ignition off", "cancel",
+                "log: ignition off, nothing sent");
+        check("nothing pending after the sleep", !d.armed());
+        battery("a charger above 13 V while parked", 1400, 200_000, NOTHING);
     }
 
     private static void giveUp() {

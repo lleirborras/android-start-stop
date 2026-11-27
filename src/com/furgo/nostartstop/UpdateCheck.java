@@ -17,18 +17,32 @@ final class UpdateCheck {
         return age < 0 || age >= MIN_GAP_MS;
     }
 
-    /** Release tags are "vX.Y.Z"; anything else read from GitHub or prefs is not shown or used. */
+    /** Release tags are "vX.Y.Z", or "vX.Y.Z-beta.N" for a beta; anything else read from GitHub or prefs is not used. */
     static boolean validTag(String tag) {
-        return tag != null && tag.matches("v[0-9]{1,6}\\.[0-9]{1,6}\\.[0-9]{1,6}");
+        return tag != null && tag.matches("v[0-9]{1,6}\\.[0-9]{1,6}\\.[0-9]{1,6}(-beta\\.[0-9]{1,9})?");
     }
 
-    /** The stored tag when it is valid and newer than the installed version, else null. */
-    static String offerable(String storedTag, String installed) {
-        return validTag(storedTag) && Version.isNewer(storedTag, installed) ? storedTag : null;
+    /** Whether a release with this tag may be offered: a beta only to those in the beta program. */
+    static boolean forChannel(String tag, boolean beta) {
+        return validTag(tag) && (beta || !Version.isBeta(tag));
     }
 
-    static boolean shouldNotify(String tag, String installed, String notifiedTag) {
-        return offerable(tag, installed) != null && !tag.equals(notifiedTag);
+    /** The stored tag when it suits the channel and is newer than the installed version, else null. */
+    static String offerable(String storedTag, String installed, boolean beta) {
+        return forChannel(storedTag, beta) && Version.isNewer(storedTag, installed) ? storedTag : null;
+    }
+
+    static boolean shouldNotify(String tag, String installed, String notifiedTag, boolean beta) {
+        return offerable(tag, installed, beta) != null && !tag.equals(notifiedTag);
+    }
+
+    /** The newest of the tags that suit the channel, or null. */
+    static String newest(Iterable<String> tags, boolean beta) {
+        String best = null;
+        for (String t : tags) {
+            if (forChannel(t, beta) && (best == null || Version.isNewer(t, best))) best = t;
+        }
+        return best;
     }
 
     /** A short, printable reason for a log line. */

@@ -519,6 +519,8 @@ final class CanBox {
         } else if (msg.what == Protocol.MSG_POWER && msg.arg1 == 0 && msg.obj instanceof byte[]) {
             int cv = Protocol.batteryCentivolts((byte[]) msg.obj);
             if (power != null && cv >= 0) power.onBattery(cv);
+            // The watch service logs the same readings while it follows the power messages.
+            if (power == null && WatchService.following) return;
             if (cv < 0 || batteryLines >= MAX_BATTERY_LINES
                     || (loggedCentivolts >= 0 && now - batteryLoggedAt < CAR_DATA_EVERY_MS)
                     || !Protocol.batteryChanged(loggedCentivolts, cv)) return;
