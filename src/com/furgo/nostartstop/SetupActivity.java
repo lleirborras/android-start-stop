@@ -18,6 +18,7 @@ import android.widget.TextView;
 
 /** Asks which car this is. Nothing is sent to the car before a choice is confirmed here, see {@link CarSetup}. */
 public class SetupActivity extends Activity {
+
     private static final int BG = 0xFF0B0E13;
     private static final int CARD = 0xFF151A22;
     private static final int CARD_EDGE = 0xFF232A35;

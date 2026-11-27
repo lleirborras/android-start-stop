@@ -78,7 +78,8 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private Boolean startShown;      // the background start state last seen, to log a change made in Settings
     private Toggle bootSwitch;
     private boolean askingAboutDiagnostics;
-    private boolean fromOwnScreen;   // back from a screen of this app: the car setup is not opened again
+    private boolean fromOwnScreen;
+    private boolean setupPending;   // back from a screen of this app: the car setup is not opened again
     private TextView logView;
     private boolean logOpen;         // narrow only: the log is shown below its title row
     private TextView shareText;      // null when the build has no PostHog key
@@ -339,7 +340,9 @@ public class MainActivity extends Activity implements CanBox.Listener {
         // Once per return to the app: backing out of the setup must not open it again at once.
         boolean askSetup = !fromOwnScreen && CanBox.setupDecision(this) == CarSetup.ASK;
         fromOwnScreen = false;
-        if (askSetup) openOwn(SetupActivity.class);
+        // Opened once this screen has the focus: a main screen recreated at launch resumes twice, and only the one
+        // that is shown gets the focus.
+        setupPending = askSetup;
         UpdateJob.onResult = jobDone;
         Telemetry.onChange = shareChanged;
         shareLive = true;
@@ -352,6 +355,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
 
     @Override
     protected void onPause() {
+        setupPending = false;
         handler.removeCallbacks(requery);
         handler.removeCallbacks(phaseTimeout);
         BootService.onRunningChanged = null;
@@ -480,6 +484,14 @@ public class MainActivity extends Activity implements CanBox.Listener {
             Prefs.assumedEnd(this, "automatic switch off");
         }
         render();
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (!hasFocus || !setupPending) return;
+        setupPending = false;
+        if (CanBox.setupDecision(this) == CarSetup.ASK) openOwn(SetupActivity.class);
     }
 
     private void openOwn(Class<? extends Activity> screen) {
