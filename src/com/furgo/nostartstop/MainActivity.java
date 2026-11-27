@@ -296,12 +296,12 @@ public class MainActivity extends Activity implements CanBox.Listener {
         super.onCreate(savedInstanceState);
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         density = getResources().getDisplayMetrics().density;
-        box = new CanBox(this);
+        box = new CanBox(this, this);
         narrow = getResources().getConfiguration().screenWidthDp < NARROW_DP;
         setContentView(buildUi());
         LogFile.append(this, "app opened, version " + versionName() + ", android " + Build.VERSION.RELEASE
                 + " (sdk " + Build.VERSION.SDK_INT + "), " + Build.MODEL + ", " + display() + ", "
-                + DeviceWatch.facts(this));
+                + DeviceWatch.facts(this) + ", " + CarProfile.describe(DeviceWatch.vendorCarVersion(this)));
         watch = new DeviceWatch(this, this);
         watch.start();
         render();
