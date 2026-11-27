@@ -126,13 +126,21 @@ final class CanBox {
         return tw != null || other != null;
     }
 
-    private final OtherLink.Sink sink = new OtherLink.Sink() {
+    /** One per link: posts from a link closed since, which may still be running, are dropped. */
+    private final class LinkSink implements OtherLink.Sink {
+        // Set right after the open; posts made during it run later. Null when the open failed.
+        OtherLink link;
+
+        private boolean current() {
+            return link != null && link == other;
+        }
+
         @Override
         public void frame(final int id, final byte[] data) {
             handler.post(new Runnable() {
                 @Override
                 public void run() {
-                    if (other != null) onCanboxFrame(id, data);
+                    if (current()) onCanboxFrame(id, data);
                 }
             });
         }
@@ -142,7 +150,8 @@ final class CanBox {
             handler.post(new Runnable() {
                 @Override
                 public void run() {
-                    CanBox.this.log(line);
+                    // Lines from a failed open still say why there is no link.
+                    if (link == null || current()) CanBox.this.log(line);
                 }
             });
         }
@@ -152,7 +161,7 @@ final class CanBox {
             handler.post(new Runnable() {
                 @Override
                 public void run() {
-                    if (other != null && power != null) power.onIgnition(on);
+                    if (current() && power != null) power.onIgnition(on);
                 }
             });
         }
@@ -162,11 +171,11 @@ final class CanBox {
             handler.post(new Runnable() {
                 @Override
                 public void run() {
-                    if (other != null && power != null) power.onEngineRunning(why);
+                    if (current() && power != null) power.onEngineRunning(why);
                 }
             });
         }
-    };
+    }
 
     /**
      * Call before {@link #open}. Then open() asks for the power messages only, without the CAN box, and does not log
@@ -217,7 +226,9 @@ final class CanBox {
     /** Beta: without TWUtil, the FYT or Microntek link. For the watch service it only reads the ignition and engine. */
     private boolean openOther() {
         if (!Prefs.otherUnits(context)) return false;
+        LinkSink sink = new LinkSink();
         OtherLink o = OtherLink.open(context, sink, power != null);
+        sink.link = o;
         if (o == null) return false;
         other = o;
         lastFrame = null;
