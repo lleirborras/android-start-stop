@@ -26,9 +26,9 @@ It changes nothing in the car: no ECU reflash, no coding, no wiring. It sends th
 
 ![Main screen during a drive, after the automatic switch: stop-start off (assumed)](docs/main.png)
 
-![After a tap: sent, check the instrument cluster](docs/sent.png)
+![After a tap: switch sent, the card shows ON, the state that switch implies](docs/sent.png)
 
-The screenshots are from an emulator at 1920x720 with a simulated CAN box: the main screen during a drive, after **Switch off at engine start** sent its switch, and the same screen right after a tap. On a device without the Topway framework the button is grey and sends nothing:
+The screenshots are from an emulator at 1920x720 with a simulated PSA car behind a Raise CAN box: the main screen during a drive, after **Switch off at engine start** sent its switch, and the same screen right after a tap switched it back on. On a device without the Topway framework the header says **NOT CONNECTED**, the button is grey and sends nothing:
 
 ![No link to the car](docs/unreachable.png)
 
@@ -42,19 +42,25 @@ In split screen the same screen is one scrolling column:
 
 In builds that can share diagnostics, the line under the log shows when log lines are being sent:
 
-![Line under the log: sending 2 lines](docs/diagnostics.png)
+![Log card, line under the log: sending 3 lines](docs/diagnostics.png)
 
 A backlog stored while offline goes out in several requests, and the rule above the line fills as they go:
 
-![Line under the log: sending 505 of 1233 lines, bar partly filled](docs/progress.png)
+![Log card, line under the log: sending 505 of 1233 lines, bar partly filled](docs/progress.png)
 
-With no network it shows how many lines, from how many days, are stored for the next try:
+When a send fails it shows how many lines, and from how many days when more than one, are stored for the next try:
 
-![Line under the log: send failed, 2466 lines from 3 days waiting](docs/waiting.png)
+![Log card, line under the log: send failed, 30 lines waiting](docs/waiting.png)
 
 **Help** in the header opens a screen that explains each control, the diagnostics line, the log, updates and what to check when something is wrong:
 
 ![Help screen](docs/help.png)
+
+**Settings** in the header holds every switch except **Switch off at engine start**, grouped by what it is for:
+
+![Settings: the car, background start, data and beta switches](docs/settings.png)
+
+![Settings scrolled: updates and the beta program](docs/settings-updates.png)
 
 ## What it does
 
@@ -89,6 +95,8 @@ With no network it shows how many lines, from how many days, are stored for the 
 ### Car setup
 
 The app sends nothing to the car until you confirm which car it is. It asks once after it is installed or updated, the van included, and the header says **SET UP YOUR CAR** until then (tap it to open the setup): the switch button is grey and **Switch off at engine start** sends nothing. The screen says which CAN box profile the head unit is set up for, as the vendor car app `com.tw.car` names it, and offers only the choices the app would act on: **PSA with a Raise CAN box (tested on a Citroën Jumpy)** where the head unit names profile `961`, a profile the app does not know or none at all; the matching [beta profile](#what-it-does) where it names one, which also turns **Beta: other cars** on; and **My car is not listed**, which sends nothing and shows CAR NOT SUPPORTED (its button reads **Confirm: send nothing**). Beta profiles have an amber stripe and say "Untested. It may do nothing or the wrong thing." **Not now** closes the screen, sends nothing and leaves SET UP YOUR CAR in the header. The choice is stored with the profile it was confirmed for, so the app asks again when the head unit's CAN setting changes. The log says why nothing was sent (`car setup: not confirmed, nothing will be sent`) and what was confirmed (`car setup: confirmed … for profile 961`). Change it later with **Change car** in **Settings**. FYT and Microntek units report no profile here; their own checks still apply.
+
+![Car setup on a head unit set up for profile 961](docs/setup.png)
 
 There is no "keep it off" or lock option: the vendor app's "permanently closed" setting has no effect on this van, and stop-start is on again after every engine start whatever it is set to.
 
