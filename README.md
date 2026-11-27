@@ -119,7 +119,8 @@ This was measured on the van's head unit. It does not reboot at each engine star
 A new ignition cycle starts when:
 
 - the service starts after the head unit last reported ignition off (the app remembers this across the restart). This is the usual case; or
-- the engine is started while the app is running: the head unit reports a crank (power state 9) and then 6 a few seconds later. This covers a quick ignition off and on, and a second engine start in the same drive.
+- the engine is started while the app is running: the head unit reports a crank (power state 9) and then 6 a few seconds later. This covers a quick ignition off and on, and a second engine start in the same drive; or
+- the head unit reports that it wakes (power state 5) after it last reported ignition off, to a service that is still running. This is the case with [background start](#background-start): the service was started again before the head unit slept, so no start comes at ignition on, and a crank during the wake is not reported as a 9.
 
 After that the app waits until a battery reading of 13.0 V or more arrives, at least 5 seconds have passed and no crank is in progress, and then sends one switch. After an engine start, readings from the crank count too. After an engine start, if the engine is not seen running within 3 minutes, nothing is sent. After an ignition on there is no time limit, since the app may be restarted while the head unit is still off; it waits until the engine runs or the ignition is reported off again. Without battery readings nothing is sent. Each engine start gets its own switch, because the car turns stop-start back on every time; two crank ends less than 5 seconds apart count as one.
 
@@ -139,9 +140,9 @@ The head unit only reopens the app that was on screen at ignition off, and its w
 Android itself starts every app that has notification access, at power on and again after the app was stopped. **Background start** uses that: the app declares a notification listener whose only job is to start the background service of **Switch off at engine start**. It asks for no notification, reads none and stores none. Turn it on or off in Android's notification access screen, which the **Background start** control in the header opens.
 
 - It does nothing while **Switch off at engine start** is off.
-- A start by the listener never counts as ignition on by itself. Android binds the listener again seconds after the head unit stops the app at ignition off, so such a start says nothing about the ignition. A service started that way sends its switch after the next engine crank it sees (power state 9, then 6).
+- A start by the listener never counts as ignition on by itself. Android binds the listener again seconds after the head unit stops the app at ignition off, so such a start says nothing about the ignition. A service started that way starts a cycle when the head unit reports its wake (power state 5), or at the next engine crank it sees (power state 9, then 6).
 - Android 10 and older do not start notification listeners on low-memory devices. There a tap on the control says "This head unit does not allow a background start."
-- In an emulator Android restarted the app within seconds of a forced stop and at boot. On the van it is not verified yet, and neither is whether the service then sees the crank: the log shows `listener: connected, asleep … s since boot` and `watch: service started (by the notification listener)` when the start works, then `auto: crank seen` when the crank is seen.
+- On the van (Android 10) Android started the app again within seconds of the head unit stopping it at ignition off, and the service was still running at the next ignition on: the log shows `listener: connected, asleep … s since boot` and `watch: service started (by the notification listener)`. It then saw power state 5 and 6 but no crank, which is why the wake starts a cycle. A switch sent after such a wake, without the app on screen, is not verified on the van yet: the log then shows `power state 5`, `auto: ignition on, waiting for the engine to run` and `auto: engine running (… V), switching`. If Android starts the app only after the wake, the service sees neither the 5 nor a crank and nothing is sent until the app is opened.
 
 ## The assumed stop-start state
 
@@ -227,7 +228,7 @@ To copy it without adb:
 
 Each line has a date and time. Lines to look for:
 
-- `app opened, version …, android … (sdk …), <model>, display 1920x720, 240 dpi, boot count 7, up 42 s, network up (wifi)`: app and Android version, the head unit's model name, its screen size in pixels and density, how many times the head unit has booted, seconds since it booted, and the network state. `boot count unknown` before Android 7.
+- `app opened, version …, android … (sdk …), <model>, display 1920x720, 240 dpi, boot count 7, up 42 s, network up (wifi), car app 961_0000_260130, profile 961 (Raise, PSA and Opel, tested)`: app and Android version, the head unit's model name, its screen size in pixels and density, how many times the head unit has booted, seconds since it booted, the network state, and the version of the vendor car app `com.tw.car` with the CAN box profile it names. `boot count unknown` before Android 7. The profile line says `untested` for a profile whose stop-start command is only read from vendor code, `no stop-start command known` for any other, and `car app not found` without the vendor app. The app still sends only the PSA command; see [docs/vendor-profiles.md](docs/vendor-profiles.md).
 - `TWUtil open` / `TWUtil unavailable: …`: whether the head unit's MCU link works. With **Record car data** on, `TWUtil open, CAN box only (engine and unit ids refused: …)` means the head unit refused the engine and unit messages; the switch works the same.
 - `status 00 4A …`: the raw settings frame (id 56) from the CAN box, logged whenever it changes.
 - `function 05 12 02 01 (stop-start field=2)`: the CAN box function frame (id 57), asked for after the first status frame when the link opens and 1.5 and 5 seconds after each switch, logged when it changes since the app started (at most 40 lines each time the app connects). The field is a candidate for the real stop-start state (1 on, 2 off, 0 not reported); it is not verified and the app does not use it.
@@ -260,7 +261,7 @@ The automatic switch uses two head unit messages, found in the vendor code and c
 
 | Data | Call |
 |---|---|
-| Power state | message `what = 514`, `arg1`: 1 at ignition off, 9 while the engine cranks, then 6 a few seconds later. The head unit also answers 6 every time the link is opened |
+| Power state | message `what = 514`, `arg1`: 1 at ignition off, 4 as the head unit goes to sleep, 5 as it wakes, 9 while the engine cranks, then 6 a few seconds later. The head unit also answers 6 every time the link is opened |
 | Battery | message `what = 1292`, `arg1 = 0`: `((b[0] & 0x7F) << 8 \| b[1]) * 0.01` V when `b[0]` bit 7 is clear. About 12.0 V with the engine off, above 13 V with it running |
 
 The app also logs these, which come from the vendor code and are **not verified** on the van. Nothing depends on them:

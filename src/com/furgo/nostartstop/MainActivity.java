@@ -303,7 +303,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         setContentView(buildUi());
         LogFile.append(this, "app opened, version " + versionName() + ", android " + Build.VERSION.RELEASE
                 + " (sdk " + Build.VERSION.SDK_INT + "), " + Build.MODEL + ", " + display() + ", "
-                + DeviceWatch.facts(this));
+                + DeviceWatch.facts(this) + ", " + CarProfile.describe(DeviceWatch.vendorCarVersion(this)));
         watch = new DeviceWatch(this, this);
         watch.start();
         render();

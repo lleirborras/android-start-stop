@@ -222,13 +222,16 @@ public class HelpActivity extends Activity {
         item(card, "Turn it on", "Tap Background start at the top, then Open settings, and allow notification access "
                 + "for No Start-Stop. The app reads no notification; Android starts apps that have this access.");
         item(card, "What it does then", "A start in the background sends nothing by itself. The app sends its "
-                + "switch after the next engine start it sees.");
+                + "switch once the head unit wakes at the next ignition on and the engine runs, if Android kept the app "
+                + "running until then.");
         item(card, "Check that it works", "After a drive where you did not open the app, the log shows "
-                + "\"listener: connected\" and \"watch: service started (by the notification listener)\". Without "
-                + "those lines the head unit does not restart the app: open the app before you drive.");
+                + "\"listener: connected\" and \"watch: service started (by the notification listener)\", then "
+                + "\"power state 5\", \"auto: ignition on, waiting for the engine to run\" and \"auto: engine "
+                + "running\". Without those lines no switch was sent in the background: open the app before you "
+                + "drive.");
         item(card, "\"This head unit does not allow a background start.\"", "Android 10 and older do not give "
                 + "notification access on low-memory units.");
-        item(card, "Not verified on a real head unit yet", "It worked in an emulator. Some head units stop apps "
+        item(card, "Depends on the head unit", "Measured on one Android 10 unit. Some head units stop apps "
                 + "themselves and may not let Android start them again. \"This head unit\" below shows its Android version.");
     }
 

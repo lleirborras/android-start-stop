@@ -54,6 +54,15 @@ final class DeviceWatch {
         return BootId.facts(count, SystemClock.elapsedRealtime()) + ", " + networkNow(c);
     }
 
+    /** Version name of the vendor app com.tw.car, which names the CAN box profile, or null when it is absent. */
+    static String vendorCarVersion(Context c) {
+        try {
+            return c.getPackageManager().getPackageInfo(CarProfile.VENDOR_PACKAGE, 0).versionName;
+        } catch (Throwable e) {
+            return null;
+        }
+    }
+
     private static String networkNow(Context c) {
         try {
             ConnectivityManager cm = (ConnectivityManager) c.getSystemService(Context.CONNECTIVITY_SERVICE);

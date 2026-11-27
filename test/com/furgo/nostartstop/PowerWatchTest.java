@@ -8,7 +8,8 @@ public class PowerWatchTest {
         PowerWatch p = new PowerWatch();
         same("6 when the link opens means nothing", p.onState(6, 1_000), N);
         same("1 is ignition off", p.onState(1, 2_000), OFF);
-        same("5 is not ignition off", p.onState(5, 3_000), N);
+        same("5 is the wake", p.onState(5, 3_000), PowerWatch.WAKING);
+        check("the wake ends the hold after ignition off", !p.offSeenHere(3_000));
         same("8 means nothing", p.onState(8, 3_500), N);
 
         // A crank: 9, then 6 about 5 s later. 9 itself is not ignition off.

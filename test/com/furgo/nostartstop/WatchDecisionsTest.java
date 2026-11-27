@@ -114,6 +114,7 @@ public class WatchDecisionsTest {
         bootThenCrankThenFire();
         bootAfterIgnitionOff();
         ignitionOffThenOnByTheApp();
+        wakeSeenByAServiceThatOutlivedTheSleep();
         startsThatAreNotAnIgnitionOn();
         startWithinTheOffHold();
         giveUp();
@@ -173,6 +174,55 @@ public class WatchDecisionsTest {
                 "wake ignition on IGNITION_ON_CYCLE"));
         battery("engine running, just before the settle delay", 1340, 500 + SETTLE - 1, NOTHING);
         tick("at the settle delay", 500 + SETTLE, FIRE);
+    }
+
+    private static void wakeSeenByAServiceThatOutlivedTheSleep() {
+        // The listener started the service again after the ignition off; no start and no 9 come at ignition on.
+        fresh();
+        s.flag = true;
+        start("start by the listener after ignition off", PowerWatch.BY_LISTENER, 0, NOTHING);
+        state("4 going to sleep", 4, 9_000, NOTHING);
+        state("5 waking", 5, HOUR, armed("ignition on", "offNow false", "wake ignition on IGNITION_ON_CYCLE"));
+        state("6 awake", 6, HOUR + 5_000, "offNow false", "tick");
+        tick("that tick", HOUR + 5_000, NOTHING);
+        start("the app opens while pending", PowerWatch.BY_APP, HOUR + 6_000, NOTHING);
+        battery("engine running", 1340, HOUR + 80_000, FIRE);
+        check("firing clears the flag", !s.flag);
+        state("a 5 later without an ignition off", 5, 2 * HOUR, "offNow false");
+
+        // The same service saw the ignition go off and the wake.
+        fresh();
+        start("first start", PowerWatch.BY_APP, 0, NOTHING);
+        state("ignition off", 1, 50_000, "offNow true", "event OFF_SEEN", "assumed end ignition off", "cancel");
+        state("5 waking", 5, 60_000, armed("ignition on", "offNow false", "wake ignition on IGNITION_ON_CYCLE"));
+        check("no longer off", !s.offNow);
+        state("a second 5", 5, 61_000, "offNow false");
+        state("ignition off before the engine ran", 1, 70_000, "offNow true", "event OFF_SEEN",
+                "assumed end ignition off", "cancel", "log: ignition off, nothing sent");
+
+        // A reading before the 6 fires at the settle delay and clears the flag.
+        state("5 waking", 5, 100_000, armed("ignition on", "offNow false", "wake ignition on IGNITION_ON_CYCLE"));
+        battery("engine running before the 6", 1340, 101_000, NOTHING);
+        tick("just before the settle delay, counted from the clock at the 5", 100_000 + SETTLE, NOTHING);
+        tick("at the settle delay", 100_000 + skew + SETTLE, FIRE);
+        check("firing clears the flag", !s.flag);
+
+        // A crank after the wake, before the switch: the same cycle, one switch.
+        fresh();
+        s.flag = true;
+        state("5 waking", 5, 0, armed("ignition on", "offNow false", "wake ignition on IGNITION_ON_CYCLE"));
+        state("9", 9, 2_000, "offNow false");
+        state("6 ends the crank", 6, 6_000, armed("engine start, same cycle", "offNow false", "log: crank seen",
+                "event CRANK_CYCLE", "assumed engine start false"));
+        battery("engine running", 1340, 6_000 + skew + SETTLE, FIRE);
+        battery("more readings", 1420, 6_000 + SETTLE + 1_000, NOTHING);
+
+        // The app opened first: the 5 does not arm again.
+        fresh();
+        s.flag = true;
+        start("the app starts the service", PowerWatch.BY_APP, 0, armed("ignition on",
+                "wake ignition on IGNITION_ON_CYCLE"));
+        state("5 while pending", 5, 1_000, "offNow false");
     }
 
     private static void ignitionOffThenOnByTheApp() {
