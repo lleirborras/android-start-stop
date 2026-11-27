@@ -70,22 +70,20 @@ abstract class OtherLink {
      * The link for this head unit, or null after logging why there is none. With watch it only reads, and reports
      * the ignition and the engine through the sink.
      */
-    static OtherLink open(Context c, Detection d, Sink sink, boolean watch) {
-        Detection.Platform p = d.otherPlatform();
-        if (p == Detection.Platform.AMBIGUOUS) {
-            if (!bothLogged) sink.log("beta: both FYT and Microntek found, nothing will be sent");
-            bothLogged = true;
+    /** Opens the link of the chosen head unit type, p: FYT or MICRONTEK, if this head unit has its CAN service. */
+    static OtherLink open(Context c, Detection d, Detection.Platform p, Sink sink, boolean watch) {
+        boolean present = p == Detection.Platform.FYT ? d.fyt : p == Detection.Platform.MICRONTEK && d.microntek;
+        if (!present) {
+            if (p != missingLogged) sink.log("beta: no " + (p == Detection.Platform.FYT ? "FYT" : "Microntek")
+                    + " CAN service on this head unit, nothing will be sent");
+            missingLogged = p;
             return null;
         }
-        if (p == Detection.Platform.MICRONTEK) return Microntek.open(c, sink, watch);
-        if (p == Detection.Platform.FYT) return Fyt.open(c, sink, watch);
-        if (!noServiceLogged) sink.log("beta: no FYT or Microntek CAN service on this head unit");
-        noServiceLogged = true;
-        return null;
+        return p == Detection.Platform.MICRONTEK ? Microntek.open(c, sink, watch) : Fyt.open(c, sink, watch);
     }
 
     // Open is retried every few seconds at boot; the reason is the same each time.
-    private static boolean noServiceLogged, bothLogged;
+    private static Detection.Platform missingLogged;
 
     private static String versionName(Context c, String pkg) {
         try {

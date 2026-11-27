@@ -53,7 +53,8 @@ final class SendGate {
         final Detection detection;
         /** The car setup, see {@link CarSetup#decide}. */
         final String setupChoice, setupConfirmed;
-        final boolean otherCars, otherUnits;
+        /** A beta or local build: only those send the untested choices. */
+        final boolean betaBuild;
         /** The watch service: it only listens. */
         final boolean watch;
         /** Code of the beta profile the TWUtil link drives, or null for the PSA defaults. */
@@ -63,13 +64,12 @@ final class SendGate {
         /** The car the beta link reports: FYT canbus id, Microntek cfg_canbus; null until known. */
         final String car;
 
-        Snapshot(Detection detection, String setupChoice, String setupConfirmed, boolean otherCars,
-                boolean otherUnits, boolean watch, String profile, Detection.Platform link, String car) {
+        Snapshot(Detection detection, String setupChoice, String setupConfirmed, boolean betaBuild, boolean watch,
+                String profile, Detection.Platform link, String car) {
             this.detection = detection;
             this.setupChoice = setupChoice;
             this.setupConfirmed = setupConfirmed;
-            this.otherCars = otherCars;
-            this.otherUnits = otherUnits;
+            this.betaBuild = betaBuild;
             this.watch = watch;
             this.profile = profile;
             this.link = link;
@@ -90,27 +90,37 @@ final class SendGate {
         return kind == Kind.PSA_SET || kind == Kind.PROFILE_SET ? Kind.OTHER_SET : Kind.OTHER_QUERY;
     }
 
+    /**
+     * The user's pick decides what goes out, a pick that differs from the head unit's own setting included: the
+     * user confirmed it against a warning. Only the commands of that pick, over its link, are sent.
+     */
     static Verdict decide(Kind kind, Snapshot s) {
         String detection = s.detection.carSetup();
-        int setup = CarSetup.decide(detection, s.setupChoice, s.setupConfirmed);
+        int setup = CarSetup.decide(detection, s.setupChoice, s.setupConfirmed, s.betaBuild);
         // Nothing at all before the user confirms the car, not even in watch mode.
         if (setup == CarSetup.ASK) {
-            return new Verdict(ASK, "car setup", CarSetup.why(detection, s.setupChoice, s.setupConfirmed));
+            return new Verdict(ASK, "car setup", CarSetup.why(detection, s.setupChoice, s.setupConfirmed, s.betaBuild));
         }
         if (s.watch) return new Verdict(REFUSE, "watch", "the watch service never sends");
         if (setup == CarSetup.REFUSE) {
-            return new Verdict(REFUSE, "car setup", CarSetup.why(detection, s.setupChoice, s.setupConfirmed));
+            return new Verdict(REFUSE, "car setup", CarSetup.why(detection, s.setupChoice, s.setupConfirmed, s.betaBuild));
         }
+        Detection.Platform wanted = CarSetup.platform(s.setupChoice);
         boolean other = kind == Kind.OTHER_SET || kind == Kind.OTHER_QUERY;
-        if (other && !s.otherUnits) return new Verdict(REFUSE, "beta", "FYT and Microntek units are off");
-        if (kind == Kind.PROFILE_SET || kind == Kind.PROFILE_QUERY) {
-            Verdict profile = profile(s);
-            if (profile != null) return profile;
+        if (other != (wanted == Detection.Platform.FYT || wanted == Detection.Platform.MICRONTEK)) {
+            return new Verdict(REFUSE, "car setup", other ? "the chosen CAN box is not on an FYT or Microntek unit"
+                    : "the chosen CAN box is on an FYT or Microntek unit");
         }
-        Verdict platform = other ? otherPlatform(s) : topwayPlatform(s);
+        String code = CarSetup.profileCode(s.setupChoice);
+        boolean profileKind = kind == Kind.PROFILE_SET || kind == Kind.PROFILE_QUERY;
+        if (profileKind && (code == null || !code.equals(s.profile))) {
+            return new Verdict(REFUSE, "profile", "profile " + s.profile + " is not the chosen CAN box");
+        }
+        if (code != null && (kind == Kind.PSA_SET || kind == Kind.PSA_QUERY)) {
+            return new Verdict(REFUSE, "profile", "PSA bytes, but profile " + code + " was chosen");
+        }
+        Verdict platform = other ? otherPlatform(s, wanted) : topwayPlatform(s);
         if (platform != null) return platform;
-        String psa = CarProfile.psaRefusal(s.detection.vendorVersion);
-        if (psa != null && psaBytes(kind, s)) return new Verdict(REFUSE, "PSA", psa);
         if (other && s.link != Detection.Platform.NONE) {
             String car = carRefusal(s.link, s.car);
             // "beta: " first: the main screen redraws on those log lines.
@@ -121,36 +131,16 @@ final class SendGate {
         return SENT;
     }
 
-    /**
-     * Whether a known non-PSA profile in the car app still lets these bytes through. The switch never; queries and
-     * the unit identity only while the beta drives that profile, as the open allows.
-     */
-    private static boolean psaBytes(Kind kind, Snapshot s) {
-        if (kind == Kind.PROFILE_SET || kind == Kind.PROFILE_QUERY) return false;
-        if (kind == Kind.PSA_SET || kind == Kind.OTHER_SET) return true;
-        return !(s.otherCars && CarProfile.forBeta(s.detection.vendorVersion) != null);
-    }
-
-    /** The profile the link drives must still be the one the beta drives for the car app now. */
-    private static Verdict profile(Snapshot s) {
-        if (!s.otherCars) return new Verdict(REFUSE, "profile", "beta car profiles are off");
-        CarProfile p = CarProfile.forBeta(s.detection.vendorVersion);
-        if (p != null && p.code.equals(s.profile)) return null;
-        return new Verdict(REFUSE, "profile", "profile " + s.profile + " is not driven for "
-                + CarProfile.describe(s.detection.vendorVersion));
-    }
-
     private static Verdict topwayPlatform(Snapshot s) {
         if (s.link == Detection.Platform.NONE) return null;
         if (s.link != Detection.Platform.TOPWAY) return new Verdict(REFUSE, "link", "TWUtil command on the beta link");
         return s.detection.topway ? null : new Verdict(REFUSE, "link", "TWUtil not found");
     }
 
-    private static Verdict otherPlatform(Snapshot s) {
-        Detection.Platform p = s.detection.otherPlatform();
-        if (p == Detection.Platform.AMBIGUOUS) return new Verdict(REFUSE, "beta", "both FYT and Microntek found");
+    private static Verdict otherPlatform(Snapshot s, Detection.Platform wanted) {
         if (s.link == Detection.Platform.NONE) return null;
-        return p == s.link ? null : new Verdict(REFUSE, "beta", "the head unit is no longer " + s.link.name());
+        return s.link == wanted ? null : new Verdict(REFUSE, "beta", "the open link is " + s.link.name()
+                + ", not the chosen " + wanted.name());
     }
 
     /**

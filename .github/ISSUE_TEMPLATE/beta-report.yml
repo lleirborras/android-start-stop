@@ -11,11 +11,14 @@ body:
   - type: dropdown
     id: setting
     attributes:
-      label: Which beta setting?
+      label: Which beta setting or CAN box?
       multiple: true
       options:
         - "Beta: reach the car without adb"
-        - "Beta: FYT and Microntek head units"
+        - "Beta: guess the engine start"
+        - "CAN box: PSA Raise on an FYT head unit"
+        - "CAN box: PSA Raise on a Microntek head unit"
+        - "CAN box: another Topway profile (96, 114, 111, 274, F91)"
         - Other or none
     validations:
       required: true

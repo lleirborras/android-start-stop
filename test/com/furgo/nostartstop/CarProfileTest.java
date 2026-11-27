@@ -29,13 +29,7 @@ public class CarProfileTest {
         check("empty refused", CarProfile.code("_0000"), null);
         check("odd text cleaned", CarProfile.describe("x y\n"), "car app x?y?, profile unknown");
         beta();
-        check("PSA Raise may get PSA bytes", CarProfile.psaRefusal("961_0000_260130"), null);
-        check("no vendor app is unchanged", CarProfile.psaRefusal(null), null);
-        check("unknown profile is unchanged", CarProfile.psaRefusal("41_0000_210812"), null);
-        check("VW gets no PSA bytes", CarProfile.psaRefusal("111_0000_260327"),
-                "the car app names profile 111 (Raise, VW MQB)");
-        check("PSA on another box gets no Raise bytes", CarProfile.psaRefusal("96_0000_261006"),
-                "the car app names profile 96 (Simple Soft, Binary or LuZheng, PSA)");
+        check("beta profiles", java.util.Arrays.toString(codes(CarProfile.betaProfiles())), "[96, 114, 111, 274, F91]");
         System.out.println("CarProfileTest passed");
     }
 
@@ -74,6 +68,12 @@ public class CarProfileTest {
         byte[] b = new byte[v.length];
         for (int i = 0; i < v.length; i++) b[i] = (byte) v[i];
         return b;
+    }
+
+    private static String[] codes(CarProfile[] ps) {
+        String[] out = new String[ps.length];
+        for (int i = 0; i < ps.length; i++) out[i] = ps[i].code;
+        return out;
     }
 
     private static void check(String name, Object got, Object want) {

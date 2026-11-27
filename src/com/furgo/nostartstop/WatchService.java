@@ -188,7 +188,15 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
             long now = SystemClock.elapsedRealtime();
             // The beta link reports only changes, so its silence means nothing.
             boolean quietLink = canBox.usesOtherLink();
-            if (linkOpen && !quietLink && now - lastMessageAt >= SILENT_MS && now - lastReopenAt >= reopenEvery) {
+            if (linkOpen && !canBox.followsPick()) {
+                // The CAN box pick moved to another link: its ignition and engine reports no longer count.
+                canBox.close();
+                linkOpen = false;
+                forgetSeen();
+                decisions.linkClosed();
+                LogFile.append(WatchService.this, "watch: CAN box changed, link reopened");
+                ensureOpen();
+            } else if (linkOpen && !quietLink && now - lastMessageAt >= SILENT_MS && now - lastReopenAt >= reopenEvery) {
                 lastReopenAt = now;
                 reopenEvery = Math.min(reopenEvery * 2, MAX_REOPEN_MS);
                 canBox.close();

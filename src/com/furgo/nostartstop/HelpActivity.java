@@ -144,14 +144,19 @@ public class HelpActivity extends Activity {
     private void carSetup(LinearLayout column) {
         LinearLayout card = card(column, "Your car");
         para(card, "The app sends nothing to the car until you confirm which car it is. It asks once after it is "
-                + "installed or updated, and again when the head unit's CAN box setting changes.");
+                + "installed or updated, again when the head unit's CAN box setting changes, and when a stable "
+                + "release replaces a beta whose untested CAN box it does not offer.");
         item(card, "SET UP YOUR CAR", "Shown at the top until you confirm; tap it to open the car setup. The switch "
                 + "button is grey and nothing is sent, also not at engine start.");
         item(card, "My car is not listed", "Confirm: send nothing. The app sends nothing and shows CAR NOT SUPPORTED.");
         item(card, "Not now", "Closes the setup and sends nothing. The top keeps saying SET UP YOUR CAR.");
         item(card, "Settings", "Opens from the top of the main screen. Its CAR section shows the car the head unit "
-                + "reports and the one you confirmed, with Change car. Background start, the update checks, Share diagnostics, "
+                + "reports and the CAN box dropdown. Background start, the update checks, Share diagnostics, "
                 + "Record car data and the beta switches are there too.");
+        item(card, "CAN box", "A dropdown, set to your last pick or the box the head unit reports. Stable releases "
+                + "list only PSA with a Raise box, the one tested on a car. Beta builds also list untested boxes: "
+                + "VW, Honda, Haval and other PSA boxes on Topway units, and PSA with a Raise box on FYT or "
+                + "Microntek units. Picking another box than the head unit reports asks first.");
     }
 
     private void engineStart(LinearLayout column) {
@@ -213,18 +218,9 @@ public class HelpActivity extends Activity {
         item(card, "Beta: reach the car without adb", "Off by default. Some head units block the link to the car "
                 + "for apps that are not part of the system, and the card says NOT CONNECTED. This asks Android "
                 + "to lift that block for this app only. The log says if it failed.");
-        item(card, "Beta: FYT and Microntek head units", "Off by default. For head units that are not Topway, such "
-                + "as Teyes, Joying or Dasaita, with a PSA car and a Raise CAN box. The app sends nothing if the head "
-                + "unit is set up for another car or box. At engine start it waits for the engine speed. Microntek "
-                + "gives none, so there it never switches by itself unless the guess below is on.");
-        item(card, "Beta: guess the engine start", "Off by default. Where the head unit gives no engine speed, "
-                + "the engine is taken as running 15 s after ignition on. A switch sent before the engine runs is "
-                + "undone by the start.");
-        item(card, "Beta: other cars", "Off by default. On Topway head units set up for VW MQB on a Hiworld or "
-                + "Raise box, Honda on Hiworld, Haval on Raise, or PSA on a Simple Soft, Binary or LuZheng box, the app uses that car's own command and reads the "
-                + "setting back. At engine start it always sends off; a tap sends the opposite of what the car "
-                + "reports, and the card shows the state the car reports. Read from the head unit maker's app, not "
-                + "tested on these cars.");
+        item(card, "Beta: guess the engine start", "Beta builds only, off by default. For an FYT or Microntek "
+                + "CAN box where the head unit gives no engine speed: the engine is taken as running 15 s after "
+                + "ignition on. A switch sent before the engine runs is undone by the start.");
         item(card, "The file", "Android/data/com.furgo.nostartstop/files/nostartstop.log on the head unit's "
                 + "internal storage. Copy it to a pendrive with the head unit's file manager.");
     }

@@ -14,8 +14,6 @@ final class Prefs {
     private static final String TELEMETRY = "telemetry";
     private static final String CAPTURE_FRAMES = "capture_frames";
     private static final String WITHOUT_ADB = "without_adb";
-    private static final String OTHER_UNITS = "other_units";
-    private static final String OTHER_CARS = "other_cars";
     private static final String SETUP_CHOICE = "setup_choice";
     private static final String SETUP_DETECTION = "setup_detection";
     private static final String ENGINE_GUESS = "engine_guess";
@@ -336,24 +334,6 @@ final class Prefs {
 
     static void setWithoutAdb(Context c, boolean on) {
         prefs(c).edit().putBoolean(WITHOUT_ADB, on).apply();
-    }
-
-    /** Beta, off by default: FYT and Microntek head units, see {@link OtherLink}. */
-    static boolean otherUnits(Context c) {
-        return prefs(c).getBoolean(OTHER_UNITS, false);
-    }
-
-    static void setOtherUnits(Context c, boolean on) {
-        prefs(c).edit().putBoolean(OTHER_UNITS, on).apply();
-    }
-
-    /** Beta, off by default: Topway car profiles other than PSA Raise, see {@link CarProfile#forBeta}. */
-    static boolean otherCars(Context c) {
-        return prefs(c).getBoolean(OTHER_CARS, false);
-    }
-
-    static void setOtherCars(Context c, boolean on) {
-        prefs(c).edit().putBoolean(OTHER_CARS, on).apply();
     }
 
     /** The confirmed car, see {@link CarSetup}; null until the user confirms one, on every install and update. */

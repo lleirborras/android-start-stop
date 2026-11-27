@@ -91,6 +91,15 @@ final class CarProfile {
                 ? p : null;
     }
 
+    /** The profiles {@link #forBeta} drives, in the order they are listed. */
+    static CarProfile[] betaProfiles() {
+        java.util.List<CarProfile> out = new java.util.ArrayList<>();
+        for (CarProfile p : KNOWN) {
+            if (forBeta(p.code) != null) out.add(p);
+        }
+        return out.toArray(new CarProfile[0]);
+    }
+
     /** Stop-start as this frame reports it: TRUE on, FALSE off, null when the frame is not this profile's readback. */
     Boolean stopStartOn(int id, byte[] data) {
         if (id != frame || data == null || data.length <= readByte) return null;
@@ -130,16 +139,6 @@ final class CarProfile {
             if (p.code.equals(code)) return p;
         }
         return null;
-    }
-
-    /**
-     * Why the PSA Raise commands must not be sent on this head unit, or null when they may: its vendor car app names
-     * a known profile other than {@link #PSA_RAISE}, where those bytes mean something else. Unknown profiles and units
-     * without the vendor app are left as they were.
-     */
-    static String psaRefusal(String versionName) {
-        CarProfile p = of(versionName);
-        return p == null || p == PSA_RAISE ? null : "the car app names profile " + p.code + " (" + p.name + ")";
     }
 
     /** For the log, for example "car app 961_0000_260130, profile 961 (Raise, PSA and Opel, tested)". */
