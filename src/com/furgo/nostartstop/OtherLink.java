@@ -55,6 +55,15 @@ abstract class OtherLink {
 
     abstract String name();
 
+    abstract Detection.Platform platform();
+
+    /** The car the head unit reports to this link, for the send gate: FYT canbus id, Microntek cfg_canbus; null until known. */
+    abstract String car();
+
+    /** Right before a send: reads the car again where it can change without a reopen. */
+    void refreshCar() {
+    }
+
     /** Why the head unit's car or CAN box is not supported, once known, or null. */
     abstract String unsupported();
 
@@ -114,7 +123,8 @@ abstract class OtherLink {
         private final Handler handler = new Handler(Looper.getMainLooper());
         // Each refusal is logged once per process: open is retried, and every write checks again.
         private static String openRefusalLogged, writeRefusalLogged;
-        private volatile String refusal;
+        // cfg_canbus, as last read.
+        private volatile String type;
         private String power;
         private final Runnable poll = new Runnable() {
             @Override
@@ -140,8 +150,9 @@ abstract class OtherLink {
             }
         };
 
-        private Microntek(Context c, Sink sink, boolean watch) {
+        private Microntek(Context c, Sink sink, boolean watch, String type) {
             context = c.getApplicationContext();
+            this.type = type;
             this.sink = sink;
             this.watch = watch;
         }
@@ -171,7 +182,7 @@ abstract class OtherLink {
                 return null;
             }
             refusedAtOpen = null;
-            Microntek m = new Microntek(c, sink, watch);
+            Microntek m = new Microntek(c, sink, watch, type);
             if (watch) m.handler.post(m.poll);
             else m.context.registerReceiver(m.receiver, new IntentFilter(SYNC));
             return m;
@@ -210,9 +221,8 @@ abstract class OtherLink {
         int write(int cmd, byte[] data) {
             if (watch) return -1;
             // The CAN box type may have been changed in the vendor settings since the open.
-            String type = carParameter("cfg_canbus=");
+            refreshCar();
             String r = OtherUnits.microntekRefusal(type);
-            refusal = type == null ? null : r;
             if (r != null) {
                 if (!r.equals(writeRefusalLogged)) sink.log("beta: Microntek " + r + ", nothing sent");
                 writeRefusalLogged = r;
@@ -244,8 +254,24 @@ abstract class OtherLink {
         }
 
         @Override
+        Detection.Platform platform() {
+            return Detection.Platform.MICRONTEK;
+        }
+
+        @Override
+        String car() {
+            return type;
+        }
+
+        @Override
+        void refreshCar() {
+            type = carParameter("cfg_canbus=");
+        }
+
+        @Override
         String unsupported() {
-            return refusal;
+            String t = type;
+            return t == null ? null : OtherUnits.microntekRefusal(t);
         }
     }
 
@@ -560,6 +586,17 @@ abstract class OtherLink {
         @Override
         String name() {
             return "FYT";
+        }
+
+        @Override
+        Detection.Platform platform() {
+            return Detection.Platform.FYT;
+        }
+
+        @Override
+        String car() {
+            int id = canbusId;
+            return id < 0 ? null : String.valueOf(id);
         }
 
         @Override

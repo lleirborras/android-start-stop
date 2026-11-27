@@ -328,7 +328,7 @@ final class CanBox {
             if (!firstFunctionPending) return;
             firstFunctionPending = false;
             handler.removeCallbacks(this);
-            write(Protocol.CMD_QUERY, Protocol.query(Protocol.STATUS_FUNCTION));
+            write(SendGate.Kind.PSA_QUERY, Protocol.CMD_QUERY, Protocol.query(Protocol.STATUS_FUNCTION));
             if (captureFrames) requestCarData();
         }
     };
@@ -397,12 +397,8 @@ final class CanBox {
     /** Head unit identity, only asked for while the user records car data. */
     private void requestCarData() {
         if (!extraIds || (unitIdLogged && unitConfigLogged)) return;
-        try {
-            tw.write(Protocol.MSG_UNIT_ID, 255, 0);
-            tw.write(Protocol.MSG_UNIT_CONFIG, 255, 0);
-        } catch (Throwable e) {
-            log("unit query failed: " + e);
-        }
+        write(SendGate.Kind.UNIT_QUERY, Protocol.MSG_UNIT_ID, null);
+        write(SendGate.Kind.UNIT_QUERY, Protocol.MSG_UNIT_CONFIG, null);
     }
 
     private void resetEngine() {
@@ -414,8 +410,8 @@ final class CanBox {
     }
 
     void query() {
-        if (profile == null) write(Protocol.CMD_QUERY, Protocol.query());
-        else if (profile.queryCmd() >= 0) write(profile.queryCmd(), profile.query());
+        if (profile == null) write(SendGate.Kind.PSA_QUERY, Protocol.CMD_QUERY, Protocol.query());
+        else if (profile.queryCmd() >= 0) write(SendGate.Kind.PROFILE_QUERY, profile.queryCmd(), profile.query());
     }
 
     /** Beta profile: the setting as the car reports it. The echo the callers wait for is "it is what was sent". */
@@ -443,7 +439,7 @@ final class CanBox {
         }
         wantOn = on;
         awaitingReport = true;
-        int rc = write(profile.cmd, profile.set(on));
+        int rc = write(SendGate.Kind.PROFILE_SET, profile.cmd, profile.set(on));
         if (rc < 0) {
             log("stop-start " + (on ? "on" : "off") + " not sent, rc=" + rc);
             return -1;
@@ -478,7 +474,7 @@ final class CanBox {
             return -1;
         }
         int bit = Protocol.toggleValue(lastFrame);
-        int rc = write(Protocol.CMD_SET, Protocol.set(bit));
+        int rc = write(SendGate.Kind.PSA_SET, Protocol.CMD_SET, Protocol.set(bit));
         if (rc < 0) {
             log("stop-start switch not sent, bit=" + bit + ", rc=" + rc);
             return rc == -2 ? -2 : -1;
@@ -495,7 +491,7 @@ final class CanBox {
         Runnable after = new Runnable() {
             @Override
             public void run() {
-                write(Protocol.CMD_QUERY, Protocol.query(Protocol.STATUS_FUNCTION));
+                write(SendGate.Kind.PSA_QUERY, Protocol.CMD_QUERY, Protocol.query(Protocol.STATUS_FUNCTION));
             }
         };
         handler.postDelayed(after, 1500);
@@ -574,19 +570,50 @@ final class CanBox {
         log("frame " + id + " " + hex(b));
     }
 
-    private int write(int cmd, byte[] data) {
+    // Per process: a refusal is logged once, not on every query.
+    private static String gateLogged;
+
+    /**
+     * Every byte to the CAN box or the head unit leaves here, after the send gate. kind is as for the TWUtil link;
+     * on the beta link it becomes OTHER_SET or OTHER_QUERY. For UNIT_QUERY cmd is the message, 266 or 267, and data
+     * is unused. Returns -2 when the link is not ready yet, -1 when nothing was sent.
+     */
+    private int write(SendGate.Kind kind, int cmd, byte[] data) {
         if (power == null && setupRefusal() != null) return -1;
-        if (other != null) return other.write(cmd, data);
-        if (tw == null) {
+        if (other != null && kind != SendGate.Kind.UNIT_QUERY) {
+            kind = kind == SendGate.Kind.PSA_SET || kind == SendGate.Kind.PROFILE_SET
+                    ? SendGate.Kind.OTHER_SET : SendGate.Kind.OTHER_QUERY;
+        }
+        if (!linked()) {
             log("not open");
             return -1;
         }
-        try {
-            return tw.write(Protocol.MSG_CANBOX, cmd, data.length, data);
-        } catch (Throwable e) {
-            log("write failed: " + e);
+        SendGate.Verdict v = gate(kind);
+        if (!v.send()) {
+            if (v.result == SendGate.NOT_READY) return -2;
+            if (!v.why.equals(gateLogged)) log(v.rule + ": " + v.why + ", nothing sent");
+            gateLogged = v.why;
             return -1;
         }
+        gateLogged = null;
+        if (other != null) return other.write(cmd, data);
+        try {
+            if (kind == SendGate.Kind.UNIT_QUERY) return tw.write(cmd, 255, 0);
+            return tw.write(Protocol.MSG_CANBOX, cmd, data.length, data);
+        } catch (Throwable e) {
+            log((kind == SendGate.Kind.UNIT_QUERY ? "unit query failed: " : "write failed: ") + e);
+            return -1;
+        }
+    }
+
+    /** The send gate's verdict now, from a fresh snapshot. */
+    private SendGate.Verdict gate(SendGate.Kind kind) {
+        if (other != null) other.refreshCar();
+        Detection.Platform link = other != null ? other.platform()
+                : tw != null ? Detection.Platform.TOPWAY : Detection.Platform.NONE;
+        return SendGate.decide(kind, new SendGate.Snapshot(DeviceWatch.detect(context), Prefs.setupChoice(context),
+                Prefs.setupDetection(context), Prefs.otherCars(context), Prefs.otherUnits(context), power != null,
+                profile == null ? null : profile.code, link, other == null ? null : other.car()));
     }
 
     private void log(String line) {
