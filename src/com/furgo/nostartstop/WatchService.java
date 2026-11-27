@@ -160,6 +160,12 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
                 lastMessageAt = SystemClock.elapsedRealtime();
                 return;
             }
+            // The head unit is set up for another car: retrying cannot help, and the reason is already logged.
+            if (canBox.unsupported() != null) {
+                openAttempt = -1;
+                Prefs.assumedEnd(WatchService.this, "car not supported");
+                return;
+            }
             if (openAttempt >= OPEN_BACKOFF_MS.length) {
                 openAttempt = -1;
                 if (gaveUp) return;
@@ -189,7 +195,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
                 if (!quietReopen) LogFile.append(WatchService.this, "watch: link silent, reopened");
                 Prefs.assumedEnd(WatchService.this, "link silent");
                 ensureOpen();
-            } else if (!linkOpen && openAttempt < 0) {
+            } else if (!linkOpen && openAttempt < 0 && canBox.unsupported() == null) {
                 // Past the backoff, so openTick tries once and does not reschedule itself.
                 openAttempt = OPEN_BACKOFF_MS.length;
                 handler.post(openTick);

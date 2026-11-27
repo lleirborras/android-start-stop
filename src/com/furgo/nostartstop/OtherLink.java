@@ -99,6 +99,9 @@ abstract class OtherLink {
         private final Sink sink;
         private final boolean watch;
         private final Handler handler = new Handler(Looper.getMainLooper());
+        // Each refusal is logged once per process: open is retried, and every write checks again.
+        private static String openRefusalLogged, writeRefusalLogged;
+        private volatile String refusal;
         private String power;
         private final Runnable poll = new Runnable() {
             @Override
@@ -149,7 +152,8 @@ abstract class OtherLink {
             String type = carParameter("cfg_canbus=");
             String refusal = OtherUnits.microntekRefusal(type);
             if (refusal != null) {
-                sink.log("beta: Microntek " + refusal + ", nothing will be sent");
+                if (!refusal.equals(openRefusalLogged)) sink.log("beta: Microntek " + refusal + ", nothing will be sent");
+                openRefusalLogged = refusal;
                 if (type != null) refusedAtOpen = refusal;
                 return null;
             }
@@ -192,6 +196,15 @@ abstract class OtherLink {
         @Override
         int write(int cmd, byte[] data) {
             if (watch) return -1;
+            // The CAN box type may have been changed in the vendor settings since the open.
+            String type = carParameter("cfg_canbus=");
+            String r = OtherUnits.microntekRefusal(type);
+            refusal = type == null ? null : r;
+            if (r != null) {
+                if (!r.equals(writeRefusalLogged)) sink.log("beta: Microntek " + r + ", nothing sent");
+                writeRefusalLogged = r;
+                return -1;
+            }
             byte[] frame = OtherUnits.fdFrame(cmd, OtherUnits.microntekData(cmd, data));
             context.sendBroadcast(new Intent(SEND).putExtra(SEND_KEY, frame));
             return 0;
@@ -214,7 +227,7 @@ abstract class OtherLink {
 
         @Override
         String unsupported() {
-            return null;
+            return refusal;
         }
     }
 
