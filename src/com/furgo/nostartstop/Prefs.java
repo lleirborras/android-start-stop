@@ -14,6 +14,7 @@ final class Prefs {
     private static final String TELEMETRY = "telemetry";
     private static final String CAPTURE_FRAMES = "capture_frames";
     private static final String WITHOUT_ADB = "without_adb";
+    private static final String OTHER_UNITS = "other_units";
     private static final String BOOT_SWITCH_BOOT = "boot_switch_boot";
     private static final String LAST_SWITCH_AT = "last_switch_at";
     private static final String LAST_SWITCH_AT_BOOT = "last_switch_at_boot";
@@ -330,6 +331,15 @@ final class Prefs {
 
     static void setWithoutAdb(Context c, boolean on) {
         prefs(c).edit().putBoolean(WITHOUT_ADB, on).apply();
+    }
+
+    /** Beta, off by default: FYT and Microntek head units, see {@link OtherLink}. */
+    static boolean otherUnits(Context c) {
+        return prefs(c).getBoolean(OTHER_UNITS, false);
+    }
+
+    static void setOtherUnits(Context c, boolean on) {
+        prefs(c).edit().putBoolean(OTHER_UNITS, on).apply();
     }
 
     /** False until the user has answered the first-launch question with yes. */

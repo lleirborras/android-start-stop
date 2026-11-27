@@ -96,6 +96,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private Toggle captureSwitch;
     private Toggle autoUpdateSwitch;
     private Toggle withoutAdbSwitch;
+    private Toggle otherUnitsSwitch;
     private TextView logView;
     private TextView shareText;      // null when the build has no PostHog key
     private View shareDot;
@@ -297,7 +298,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         super.onCreate(savedInstanceState);
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         density = getResources().getDisplayMetrics().density;
-        box = new CanBox(this);
+        box = new CanBox(this, this);
         narrow = getResources().getConfiguration().screenWidthDp < NARROW_DP;
         setContentView(buildUi());
         LogFile.append(this, "app opened, version " + versionName() + ", android " + Build.VERSION.RELEASE
@@ -636,6 +637,23 @@ public class MainActivity extends Activity implements CanBox.Listener {
         render();
     }
 
+    private void toggleOtherUnits() {
+        boolean on = !Prefs.otherUnits(this);
+        Prefs.setOtherUnits(this, on);
+        onLog(on ? "beta: FYT and Microntek head units on" : "beta: FYT and Microntek head units off");
+        if (on && !opened) {
+            opened = box.open();
+            link = opened ? LINK_WAITING : LINK_DOWN;
+            if (opened) box.query();
+        } else if (!on && box.usesOtherLink()) {
+            box.close();
+            opened = box.open();
+            link = opened ? LINK_WAITING : LINK_DOWN;
+            if (opened) box.query();
+        }
+        render();
+    }
+
     private void toggleTelemetry() {
         setTelemetry(!Prefs.telemetry(this));
     }
@@ -906,6 +924,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         if (telemetrySwitch != null) renderSwitch(telemetrySwitch, Prefs.telemetry(this));
         renderSwitch(autoUpdateSwitch, Prefs.autoUpdate(this));
         renderSwitch(withoutAdbSwitch, Prefs.withoutAdb(this));
+        renderSwitch(otherUnitsSwitch, Prefs.otherUnits(this));
     }
 
     private void renderSwitch(Toggle t, boolean on) {
@@ -981,6 +1000,15 @@ public class MainActivity extends Activity implements CanBox.Listener {
                     @Override
                     public void onClick(View v) {
                         toggleWithoutAdb();
+                    }
+                });
+        row = settingsRow(left);
+        otherUnitsSwitch = addSetting(row, "Beta: FYT and Microntek head units",
+                "PSA with a Raise CAN box only. Untested.",
+                new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        toggleOtherUnits();
                     }
                 });
 

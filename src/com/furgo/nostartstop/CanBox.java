@@ -1,5 +1,6 @@
 package com.furgo.nostartstop;
 
+import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
@@ -45,7 +46,10 @@ final class CanBox {
     private static final short[] WATCH_IDS = {(short) Protocol.MSG_POWER_STATE, (short) Protocol.MSG_POWER};
     private static int instances;
 
+    private final Context context;
     private final Listener listener;
+    // Beta: set instead of tw on FYT and Microntek head units.
+    private OtherLink other;
     // Set only for the watch service, which opens only the power messages and never sends.
     private PowerListener power;
     private String openFailure;
@@ -88,15 +92,51 @@ final class CanBox {
                 return;
             }
             if (!(msg.obj instanceof byte[])) return;
-            if (msg.arg1 == Protocol.STATUS_SETTINGS) onFrame((byte[]) msg.obj);
-            else if (msg.arg1 == Protocol.STATUS_FUNCTION) onFunction((byte[]) msg.obj);
-            else onOtherFrame(msg.arg1, (byte[]) msg.obj);
+            onCanboxFrame(msg.arg1, (byte[]) msg.obj);
         }
     };
 
-    CanBox(Listener listener) {
+    private void onCanboxFrame(int id, byte[] b) {
+        if (id == Protocol.STATUS_SETTINGS) onFrame(b);
+        else if (id == Protocol.STATUS_FUNCTION) onFunction(b);
+        else onOtherFrame(id, b);
+    }
+
+    CanBox(Context context, Listener listener) {
+        this.context = context;
         this.listener = listener;
     }
+
+    /** True while the beta FYT or Microntek link is the open one. */
+    boolean usesOtherLink() {
+        return other != null;
+    }
+
+    private boolean linked() {
+        return tw != null || other != null;
+    }
+
+    private final OtherLink.Sink sink = new OtherLink.Sink() {
+        @Override
+        public void frame(final int id, final byte[] data) {
+            handler.post(new Runnable() {
+                @Override
+                public void run() {
+                    if (other != null) onCanboxFrame(id, data);
+                }
+            });
+        }
+
+        @Override
+        public void log(final String line) {
+            handler.post(new Runnable() {
+                @Override
+                public void run() {
+                    CanBox.this.log(line);
+                }
+            });
+        }
+    };
 
     /**
      * Call before {@link #open}. Then open() asks for the power messages only, without the CAN box, and does not log
@@ -112,12 +152,12 @@ final class CanBox {
 
     /** With captureFrames set, also opens the engine and unit ids, falling back to the CAN box alone if they are refused. */
     boolean open() {
-        if (tw != null) return true;
+        if (linked()) return true;
         extraIdsRefused = null;
         TWUtil t = captureFrames && power == null ? connect(ALL_IDS, true) : null;
         extraIds = t != null;
         if (t == null) t = connect(power != null ? WATCH_IDS : CANBOX_IDS, false);
-        if (t == null) return false;
+        if (t == null) return openOther();
         lastFrame = null;
         otherFrames.clear();
         otherFrameLines.clear();
@@ -141,6 +181,21 @@ final class CanBox {
         // The caller asks for the settings frame first; frame 57 and the car data follow its answer.
         firstFunctionPending = true;
         handler.postDelayed(firstFunction, 500);
+        return true;
+    }
+
+    /** Beta: without TWUtil, the FYT or Microntek link. The watch service never uses it: it has no power messages. */
+    private boolean openOther() {
+        if (power != null || !Prefs.otherUnits(context)) return false;
+        OtherLink o = OtherLink.open(context, sink);
+        if (o == null) return false;
+        other = o;
+        lastFrame = null;
+        otherFrames.clear();
+        otherFrameLines.clear();
+        frameLines = 0;
+        functionLines = 0;
+        log("beta: " + o.name() + " link open");
         return true;
     }
 
@@ -189,6 +244,10 @@ final class CanBox {
 
     void close() {
         handler.removeCallbacksAndMessages(null);
+        if (other != null) {
+            other.close();
+            other = null;
+        }
         if (tw == null) return;
         TWUtil t = tw;
         tw = null;
@@ -237,7 +296,7 @@ final class CanBox {
      * nothing was sent.
      */
     int toggle() {
-        if (tw == null) {
+        if (!linked()) {
             log("not open, nothing sent");
             return -1;
         }
@@ -339,6 +398,7 @@ final class CanBox {
     }
 
     private int write(int cmd, byte[] data) {
+        if (other != null) return other.write(cmd, data);
         if (tw == null) {
             log("not open");
             return -1;

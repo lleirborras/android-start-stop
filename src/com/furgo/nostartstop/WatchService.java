@@ -213,7 +213,7 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
         String how = intent == null ? PowerWatch.RESTARTED : intent.getStringExtra(EXTRA_HOW);
         if (canBox == null) {
             watchLog("service started (" + (how == null ? "unknown" : how) + "), " + DeviceWatch.facts(this));
-            canBox = new CanBox(this);
+            canBox = new CanBox(this, this);
             canBox.watchPower(this);
             IntentFilter f = new IntentFilter();
             for (String a : WakeReceiver.RUNTIME_ACTIONS) f.addAction(a);

@@ -196,6 +196,9 @@ public class HelpActivity extends Activity {
         item(card, "Beta: reach the car without adb", "Off by default. Some head units block the link to the car "
                 + "for apps that are not part of the system, and the card says NO LINK TO CAR. This asks Android "
                 + "to lift that block for this app only. The log says if it failed.");
+        item(card, "Beta: FYT and Microntek head units", "Off by default. For head units that are not Topway, such "
+                + "as Teyes, Joying or Dasaita, with a PSA car and a Raise CAN box. The app sends nothing if the head "
+                + "unit is set up for another car or box. The switch at engine start does not work on these units.");
         item(card, "The file", "Android/data/com.furgo.nostartstop/files/nostartstop.log on the head unit's "
                 + "internal storage. Copy it to a pendrive with the head unit's file manager.");
     }
