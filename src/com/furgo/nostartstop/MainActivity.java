@@ -95,6 +95,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private Toggle telemetrySwitch;   // null when the build has no PostHog key
     private Toggle captureSwitch;
     private Toggle autoUpdateSwitch;
+    private Toggle betaSwitch;
     private TextView logView;
     private TextView shareText;      // null when the build has no PostHog key
     private View shareDot;
@@ -484,17 +485,18 @@ public class MainActivity extends Activity implements CanBox.Listener {
         updateBusy = true;
         final Updater.Release found = available;
         handler.removeCallbacks(revertUpdate);
-        showUpdate(found == null || found.apkUrl == null ? "Checking…" : "Downloading " + found.tag + "…", MUTED, false);
+        showUpdate(found == null || found.apkUrl == null ? "Checking…" : "Downloading " + Version.label(found.tag) + "…", MUTED, false);
         new Thread(new Runnable() {
             @Override
             public void run() {
                 try {
                     if (found == null || found.apkUrl == null) {
-                        final Updater.Release latest = Updater.latest();
+                        final boolean beta = Prefs.betaProgram(getApplicationContext());
+                        final Updater.Release latest = Updater.latest(beta);
                         handler.post(new Runnable() {
                             @Override
                             public void run() {
-                                onLatest(latest);
+                                onLatest(latest, beta);
                             }
                         });
                     } else {
@@ -510,11 +512,17 @@ public class MainActivity extends Activity implements CanBox.Listener {
         }).start();
     }
 
-    private void onLatest(Updater.Release latest) {
+    private void onLatest(Updater.Release latest, boolean beta) {
         if (isDestroyed()) return;
         updateBusy = false;
+        if (Prefs.betaProgram(this) != beta) {
+            // The beta program was switched during the check: ask again for the channel now chosen.
+            available = null;
+            onUpdateClick();
+            return;
+        }
         UpdateJob.remember(this, latest.tag);
-        if (Version.isNewer(latest.tag, versionName())) {
+        if (UpdateCheck.offerable(latest.tag, versionName(), Prefs.betaProgram(this)) != null) {
             boolean installNow = available != null && available.tag.equals(latest.tag);
             available = latest;
             onLog("update available: " + latest.tag);
@@ -551,7 +559,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         if (updateBusy) return;
         String installed = versionName();
         if (available != null && !Version.isNewer(available.tag, installed)) available = null;
-        String tag = UpdateCheck.offerable(Prefs.latestTag(this), installed);
+        String tag = UpdateCheck.offerable(Prefs.latestTag(this), installed, Prefs.betaProgram(this));
         if (tag == null) UpdateJob.cancelNotification(this);
         // Its APK URL is not stored: tapping Install fetches the release again.
         if (tag != null && (available == null || Version.isNewer(tag, available.tag))) {
@@ -561,7 +569,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     }
 
     private void showIdleUpdate() {
-        if (available != null) showUpdate("Install " + available.tag, TEXT, true);
+        if (available != null) showUpdate("Install " + Version.label(available.tag), TEXT, true);
         else showUpdate("Check for updates", MUTED, false);
     }
 
@@ -614,6 +622,23 @@ public class MainActivity extends Activity implements CanBox.Listener {
         onLog(on ? "automatic update check on" : "automatic update check off");
         UpdateJob.schedule(this, true);
         renderBoot();
+    }
+
+    private void toggleBetaProgram() {
+        boolean on = !Prefs.betaProgram(this);
+        Prefs.setBetaProgram(this, on);
+        String installed = versionName();
+        if (on) onLog("beta program joined: checking for test builds");
+        else if (Version.isBeta(installed)) {
+            onLog("beta program left: stays on " + Version.label(installed) + " until a newer stable version");
+        } else onLog("beta program left");
+        renderBoot();
+        UpdateJob.schedule(this, true);
+        if (updateBusy) return;
+        // Checks at once, so the button shows what the chosen channel offers.
+        UpdateJob.cancelNotification(this);
+        available = null;
+        onUpdateClick();
     }
 
     private void toggleTelemetry() {
@@ -885,6 +910,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         renderSwitch(captureSwitch, Prefs.captureFrames(this));
         if (telemetrySwitch != null) renderSwitch(telemetrySwitch, Prefs.telemetry(this));
         renderSwitch(autoUpdateSwitch, Prefs.autoUpdate(this));
+        renderSwitch(betaSwitch, Prefs.betaProgram(this));
     }
 
     private void renderSwitch(Toggle t, boolean on) {
@@ -951,6 +977,16 @@ public class MainActivity extends Activity implements CanBox.Listener {
                     @Override
                     public void onClick(View v) {
                         toggleAutoUpdate();
+                    }
+                });
+        row = settingsRow(left);
+        betaSwitch = addSetting(row, "Beta program",
+                "Offers test builds before release. Leaving does not go back: you stay on the beta until the "
+                        + "next stable version.",
+                new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        toggleBetaProgram();
                     }
                 });
 
@@ -1047,7 +1083,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         // Release builds are named like "0.3.0"; local builds are "dev".
         LinearLayout about = new LinearLayout(this);
         about.setOrientation(LinearLayout.VERTICAL);
-        about.addView(text(Character.isDigit(v.charAt(0)) ? "v" + v : v, 14, MUTED, false));
+        about.addView(text(Version.label(v), 14, MUTED, false));
         TextView by = text("by Lleïr Borràs", 12, MUTED, false);
         by.setSingleLine(true);
         by.setEllipsize(TextUtils.TruncateAt.END);

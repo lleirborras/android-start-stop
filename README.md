@@ -108,6 +108,10 @@ With **Check for updates automatically** on (the default), Android runs a backgr
 
 Turn the switch off to stop all background update checks. The **Check for updates** button keeps working.
 
+### Beta program
+
+With **Beta program** on, the update check and the button also offer test builds (GitHub pre-releases tagged `vX.Y.Z-beta.N`), so a change can be tried on a head unit before it is released to everyone. A beta always installs over the stable release it follows. Turning the switch off keeps the installed beta: Android does not let an app install an older version of itself, so the next stable release newer than the beta (`vX.Y.Z`, which comes after any `vX.Y.Z-beta.N`) is offered instead. To go back at once, uninstall the app and install the latest release; that clears its settings. On a beta the version at the top reads like `v0.21.0 beta 3`.
+
 Apart from that check and **Share diagnostics**, the app only uses the network when you tap the button: it asks `api.github.com` for the latest release and downloads the APK from `github.com`. Android refuses any APK that is not signed with the same key as the installed app, so a locally built (debug-signed) install cannot be updated this way.
 
 ## Switch off at engine start: how and limits
@@ -354,9 +358,13 @@ To release by hand instead, push a tag (the notes are then GitHub's generated li
 git tag v0.2.0 && git push origin v0.2.0
 ```
 
+A beta is published by hand: **Actions** → **ci** → **Run workflow** on the branch to try. It is tagged as a beta of the version that branch would release, numbered after its earlier betas (`v0.21.0-beta.1`, `-beta.2`, … for a `feat/` branch after `v0.20.3`; a branch that releases nothing gets a beta of the next patch). It is signed like a release and marked as a pre-release, so GitHub leaves it out of the latest release and only the beta program is offered it. Betas of different branches replace each other in the order they were published.
+
+A release's version code comes from its tag (`scripts/version-code.sh`): `((major × 1000 + minor) × 100 + patch) × 100`, plus the beta number for a beta or 99 for the release itself. Codes therefore follow the tag order whatever order the builds ran in, and a release always installs over its own betas. Other builds use the run number.
+
 [Renovate](https://docs.renovatebot.com/) (`renovate.json`) opens pull requests for new versions of the GitHub Actions (keeping them pinned to commit SHAs) and the pinned JDK patch level. It needs the Renovate GitHub App installed on the repository.
 
-Releases are signed with the key in the secrets `RELEASE_KEYSTORE_B64` (base64 of a PKCS12 keystore, alias `release`) and `RELEASE_KEYSTORE_PASSWORD`. They belong to the GitHub environment `release`, which only `master` and `v*` tags may use, so only the release job can read them. A release fails if they are missing. Keep a copy of that keystore: if it is lost, later releases cannot update earlier installs.
+Releases are signed with the key in the secrets `RELEASE_KEYSTORE_B64` (base64 of a PKCS12 keystore, alias `release`) and `RELEASE_KEYSTORE_PASSWORD`. They belong to the GitHub environment `release`, which only `master`, `v*` tags and `feat/*`, `fix/*` and `refactor/*` branches (for betas) may use, so only the release job can read them. Each release job waits for the maintainer's approval in GitHub before it gets them: a manual run takes its steps from the branch's own `ci.yml`, so a tampered branch could otherwise read the key. A release fails if they are missing. Keep a copy of that keystore: if it is lost, later releases cannot update earlier installs.
 
 ## License
 
