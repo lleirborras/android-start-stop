@@ -34,8 +34,8 @@ final class CanBox {
         void onBattery(int centivolts);
         /** Beta FYT and Microntek units: the ignition as the head unit reports it. */
         void onIgnition(boolean on);
-        /** Beta FYT and Microntek units: the engine runs; why is for the log. */
-        void onEngineRunning(String why);
+        /** Beta FYT and Microntek units: the engine runs; why is for the log. afterStop: it was seen stopped before. */
+        void onEngineRunning(String why, boolean afterStop);
     }
 
     private static final String TAG = "NoStartStop";
@@ -143,17 +143,35 @@ final class CanBox {
         return tw == null && Prefs.otherUnits(context) ? OtherLink.refusedAtOpen : null;
     }
 
+    /** Beta link only: whether it can report the engine running. */
+    boolean engineSignal() {
+        return other == null || other.engineSignal();
+    }
+
+    /** False while the beta link cannot send yet; the TWUtil link is always ready once open. */
+    boolean ready() {
+        return other == null || other.ready();
+    }
+
     private boolean linked() {
         return tw != null || other != null;
     }
 
-    private final OtherLink.Sink sink = new OtherLink.Sink() {
+    /** One per link: posts from a link closed since, which may still be running, are dropped. */
+    private final class LinkSink implements OtherLink.Sink {
+        // Set right after the open; posts made during it run later. Null when the open failed.
+        OtherLink link;
+
+        private boolean current() {
+            return link != null && link == other;
+        }
+
         @Override
         public void frame(final int id, final byte[] data) {
             handler.post(new Runnable() {
                 @Override
                 public void run() {
-                    if (other != null) onCanboxFrame(id, data);
+                    if (current()) onCanboxFrame(id, data);
                 }
             });
         }
@@ -163,7 +181,8 @@ final class CanBox {
             handler.post(new Runnable() {
                 @Override
                 public void run() {
-                    CanBox.this.log(line);
+                    // Lines from a failed open still say why there is no link.
+                    if (link == null || current()) CanBox.this.log(line);
                 }
             });
         }
@@ -173,21 +192,21 @@ final class CanBox {
             handler.post(new Runnable() {
                 @Override
                 public void run() {
-                    if (other != null && power != null) power.onIgnition(on);
+                    if (current() && power != null) power.onIgnition(on);
                 }
             });
         }
 
         @Override
-        public void engineRunning(final String why) {
+        public void engineRunning(final String why, final boolean afterStop) {
             handler.post(new Runnable() {
                 @Override
                 public void run() {
-                    if (other != null && power != null) power.onEngineRunning(why);
+                    if (current() && power != null) power.onEngineRunning(why, afterStop);
                 }
             });
         }
-    };
+    }
 
     /** Why this unit gets no PSA commands, or null. See {@link CarProfile#psaRefusal}. */
     String psaRefusal() {
@@ -289,7 +308,9 @@ final class CanBox {
     /** Beta: without TWUtil, the FYT or Microntek link. For the watch service it only reads the ignition and engine. */
     private boolean openOther() {
         if (!Prefs.otherUnits(context)) return false;
+        LinkSink sink = new LinkSink();
         OtherLink o = OtherLink.open(context, sink, power != null);
+        sink.link = o;
         if (o == null) return false;
         other = o;
         lastFrame = null;
@@ -440,8 +461,8 @@ final class CanBox {
 
     /**
      * Sends one stop-start switch command, which flips stop-start on the car. Its bit is the opposite of the
-     * echo in the last status frame, so call it right after a fresh frame. Returns the bit sent, or -1 when
-     * nothing was sent.
+     * echo in the last status frame, so call it right after a fresh frame. Returns the bit sent, -2 when the
+     * beta link is not ready yet, or -1 when nothing was sent.
      */
     int toggle() {
         // A tap on a beta profile asks for the opposite of what the car last reported, off when nothing came yet.
@@ -460,7 +481,7 @@ final class CanBox {
         int rc = write(Protocol.CMD_SET, Protocol.set(bit));
         if (rc < 0) {
             log("stop-start switch not sent, bit=" + bit + ", rc=" + rc);
-            return -1;
+            return rc == -2 ? -2 : -1;
         }
         log("sent stop-start switch, bit=" + bit + ", rc=" + rc
                 + (captureFrames && lastRpm >= 0 ? ", rpm=" + lastRpm : ""));

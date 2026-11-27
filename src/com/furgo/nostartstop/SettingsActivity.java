@@ -41,6 +41,7 @@ public class SettingsActivity extends Activity {
     private Toggle withoutAdbSwitch;
     private Toggle otherUnitsSwitch;
     private Toggle otherCarsSwitch;
+    private Toggle engineGuessSwitch;
 
     private static final class Toggle {
         FrameLayout track;
@@ -138,6 +139,14 @@ public class SettingsActivity extends Activity {
                     @Override
                     public void onClick(View v) {
                         toggleOtherCars();
+                    }
+                });
+        engineGuessSwitch = addSetting(page, "Beta: guess the engine start",
+                "Switch 15 s after ignition on when the head unit gives no engine speed.",
+                new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        toggleEngineGuess();
                     }
                 });
 
@@ -275,6 +284,13 @@ public class SettingsActivity extends Activity {
         renderSwitches();
     }
 
+    private void toggleEngineGuess() {
+        boolean on = !Prefs.engineGuess(this);
+        Prefs.setEngineGuess(this, on);
+        log(on ? "beta: engine guess on" : "beta: engine guess off");
+        renderSwitches();
+    }
+
     private void renderSwitches() {
         renderSwitch(captureSwitch, Prefs.captureFrames(this));
         renderSwitch(autoUpdateSwitch, Prefs.autoUpdate(this));
@@ -282,6 +298,7 @@ public class SettingsActivity extends Activity {
         renderSwitch(withoutAdbSwitch, Prefs.withoutAdb(this));
         renderSwitch(otherUnitsSwitch, Prefs.otherUnits(this));
         renderSwitch(otherCarsSwitch, Prefs.otherCars(this));
+        renderSwitch(engineGuessSwitch, Prefs.engineGuess(this));
     }
 
     /** Adds a tappable setting card with a drawn switch to the page and returns the switch. */

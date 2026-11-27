@@ -63,14 +63,21 @@ final class WatchDecisions {
 
     /**
      * Beta head units report the ignition themselves, so unlike {@link #onStart} no hold after ignition off applies.
-     * Starts a cycle only after an ignition off, and not while a switch is pending.
+     * Starts a cycle only after an ignition off, and not while a switch is pending. Without engineSignal nothing
+     * will report the engine running, so nothing is sent.
      */
-    void onIgnitionOn(String source) {
+    void onIgnitionOn(String source, boolean engineSignal) {
         shell.ignitionOffNow(false);
         if (!shell.ignitionOff() || auto.armed()) return;
         shell.newWake(source, WakeRules.IGNITION_ON_CYCLE);
         auto.arm(shell.now(), false);
-        armed(source);
+        if (engineSignal) {
+            armed(source);
+            return;
+        }
+        // Still armed, so a repeated ignition on does not start another cycle.
+        shell.autoLog("no engine signal on this head unit, nothing sent; turn on Beta: guess the engine start to "
+                + "switch anyway");
     }
 
     void onPowerState(int state, long at) {
@@ -115,6 +122,22 @@ final class WatchDecisions {
 
     /** The head unit reports the engine running without a battery reading; why is for the log. */
     void onRunning(String why, long at) {
+        act(auto.onRunning(why, at));
+    }
+
+    /**
+     * Beta head units: the engine runs again by its speed after it was seen stopped. After a switch in this cycle it
+     * starts a new one, as a crank end does; otherwise it counts as {@link #onRunning}.
+     */
+    void onEngineStart(String why, long at) {
+        // Beta head units have no crank state: an engine start seen in the engine speed counts as a crank end.
+        boolean fresh = auto.onCrank(at, shell.lastSwitchElapsed());
+        if (fresh) shell.newWake("engine start", WakeRules.CRANK_CYCLE);
+        else {
+            shell.ignitionEvent(WakeRules.CRANK_CYCLE);
+            shell.assumedEngineStart(auto.switchedDuringCrank());
+        }
+        armed(fresh ? "engine start" : "engine start, same cycle");
         act(auto.onRunning(why, at));
     }
 

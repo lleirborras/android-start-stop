@@ -27,6 +27,14 @@ public class OtherUnitsTest {
         check("fyt echo off", Protocol.echo(OtherUnits.fytStatusFrame(0)), false);
         check("fyt toggles from echo", Protocol.toggleValue(OtherUnits.fytStatusFrame(1)), 0);
 
+        check("fyt 2023 build", OtherUnits.fytStatusCode("2.23.1117.1115"), 164);
+        check("fyt 2025 build", OtherUnits.fytStatusCode("25.0510"), 168);
+        check("fyt 2026 build", OtherUnits.fytStatusCode("26.1015"), 168);
+        check("fyt other build", OtherUnits.fytStatusCode("2.24.0101"), -1);
+        check("fyt 2.23 without the dot", OtherUnits.fytStatusCode("2.230"), -1);
+        check("fyt 27 build", OtherUnits.fytStatusCode("27.0101"), -1);
+        check("fyt no version", OtherUnits.fytStatusCode(null), -1);
+
         check("fyt psa raise", OtherUnits.fytRefusal(339), null);
         check("fyt psa raise variant", OtherUnits.fytRefusal((5 << 16) | 339), null);
         check("fyt other car", OtherUnits.fytRefusal(281), "canbus id 281 is not PSA with a Raise box (339)");

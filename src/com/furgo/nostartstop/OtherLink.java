@@ -6,6 +6,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
+import android.content.pm.ApplicationInfo;
 import android.os.Binder;
 import android.os.Handler;
 import android.os.IBinder;
@@ -26,16 +27,29 @@ abstract class OtherLink {
         void log(String line);
         /** Watch mode only: the ignition as the head unit reports it. */
         void ignition(boolean on);
-        /** Watch mode only: the engine runs; why is for the log. */
-        void engineRunning(String why);
+        /**
+         * Watch mode only: the engine runs; why is for the log. afterStop: the engine speed shows it running again
+         * after it was seen stopped, which may undo a switch sent before.
+         */
+        void engineRunning(String why, boolean afterStop);
     }
 
     /** Without an engine signal, the engine is taken as running this long after ignition on. A guess. */
     static final long GUESS_MS = 15_000;
     static final String GUESS = "assumed, " + GUESS_MS / 1000 + " s after ignition on";
 
-    /** Returns a negative value when nothing was sent. */
+    /** Returns -2 when the link is not ready yet, -1 when refused or failed: nothing was sent then. */
     abstract int write(int cmd, byte[] data);
+
+    /** Watch mode: whether the engine running can be reported at all, by rpm or by the opt-in guess. */
+    boolean engineSignal() {
+        return true;
+    }
+
+    /** Whether a write can be attempted now; until then it returns -2. */
+    boolean ready() {
+        return true;
+    }
 
     abstract void close();
 
@@ -52,20 +66,36 @@ abstract class OtherLink {
      * the ignition and the engine through the sink.
      */
     static OtherLink open(Context c, Sink sink, boolean watch) {
-        if (installed(c, Microntek.PACKAGE)) return Microntek.open(c, sink, watch);
-        if (installed(c, Fyt.PACKAGE)) return Fyt.open(c, sink, watch);
+        boolean microntek = installed(c, Microntek.PACKAGE);
+        boolean fyt = installed(c, Fyt.PACKAGE);
+        if (microntek && fyt) {
+            if (!bothLogged) sink.log("beta: both FYT and Microntek found, nothing will be sent");
+            bothLogged = true;
+            return null;
+        }
+        if (microntek) return Microntek.open(c, sink, watch);
+        if (fyt) return Fyt.open(c, sink, watch);
         if (!noServiceLogged) sink.log("beta: no FYT or Microntek CAN service on this head unit");
         noServiceLogged = true;
         return null;
     }
 
     // Open is retried every few seconds at boot; the reason is the same each time.
-    private static boolean noServiceLogged;
+    private static boolean noServiceLogged, bothLogged;
 
+    private static String versionName(Context c, String pkg) {
+        try {
+            return c.getPackageManager().getPackageInfo(pkg, 0).versionName;
+        } catch (Throwable e) {
+            return null;
+        }
+    }
+
+    /** Only as part of the system: a sideloaded copy of a vendor app does not make this that head unit. */
     private static boolean installed(Context c, String pkg) {
         try {
-            c.getPackageManager().getPackageInfo(pkg, 0);
-            return true;
+            int flags = c.getPackageManager().getApplicationInfo(pkg, 0).flags;
+            return (flags & (ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0;
         } catch (Throwable e) {
             return false;
         }
@@ -82,6 +112,9 @@ abstract class OtherLink {
         private final Sink sink;
         private final boolean watch;
         private final Handler handler = new Handler(Looper.getMainLooper());
+        // Each refusal is logged once per process: open is retried, and every write checks again.
+        private static String openRefusalLogged, writeRefusalLogged;
+        private volatile String refusal;
         private String power;
         private final Runnable poll = new Runnable() {
             @Override
@@ -93,7 +126,7 @@ abstract class OtherLink {
         private final Runnable guess = new Runnable() {
             @Override
             public void run() {
-                sink.engineRunning(GUESS);
+                sink.engineRunning(GUESS, false);
             }
         };
         // The vendor broadcast has no permission, so any app could fake a status frame. It can only fool the
@@ -119,9 +152,9 @@ abstract class OtherLink {
             power = state;
             if (state.equals("power_on")) {
                 sink.ignition(true);
-                // Microntek gives no engine signal: guess.
+                // Microntek gives no engine signal: guess, if the user asked for it.
                 handler.removeCallbacks(guess);
-                handler.postDelayed(guess, GUESS_MS);
+                if (Prefs.engineGuess(context)) handler.postDelayed(guess, GUESS_MS);
             } else if (state.equals("power_off") || state.equals("acc_off") || state.equals("sleep")) {
                 handler.removeCallbacks(guess);
                 sink.ignition(false);
@@ -132,7 +165,8 @@ abstract class OtherLink {
             String type = carParameter("cfg_canbus=");
             String refusal = OtherUnits.microntekRefusal(type);
             if (refusal != null) {
-                sink.log("beta: Microntek " + refusal + ", nothing will be sent");
+                if (!refusal.equals(openRefusalLogged)) sink.log("beta: Microntek " + refusal + ", nothing will be sent");
+                openRefusalLogged = refusal;
                 if (type != null) refusedAtOpen = refusal;
                 return null;
             }
@@ -175,6 +209,15 @@ abstract class OtherLink {
         @Override
         int write(int cmd, byte[] data) {
             if (watch) return -1;
+            // The CAN box type may have been changed in the vendor settings since the open.
+            String type = carParameter("cfg_canbus=");
+            String r = OtherUnits.microntekRefusal(type);
+            refusal = type == null ? null : r;
+            if (r != null) {
+                if (!r.equals(writeRefusalLogged)) sink.log("beta: Microntek " + r + ", nothing sent");
+                writeRefusalLogged = r;
+                return -1;
+            }
             byte[] frame = OtherUnits.fdFrame(cmd, OtherUnits.microntekData(cmd, data));
             context.sendBroadcast(new Intent(SEND).putExtra(SEND_KEY, frame));
             return 0;
@@ -191,13 +234,18 @@ abstract class OtherLink {
         }
 
         @Override
+        boolean engineSignal() {
+            return Prefs.engineGuess(context);
+        }
+
+        @Override
         String name() {
             return "Microntek";
         }
 
         @Override
         String unsupported() {
-            return null;
+            return refusal;
         }
     }
 
@@ -217,26 +265,32 @@ abstract class OtherLink {
         /** Canbus module: engine speed, from box frame 0x7D sub 0x0A on PSA Raise. */
         private static final int RPM = 1032;
         private static final int SET_STOP_START = 18;
-        private static final int STATUS = 168;
         private static final int CANBUS_ID = 1000;
+        // The version line is the same for every link this process opens.
+        private static boolean versionLogged;
         private final Context context;
+        private final String version;
+        /** Update code of the stop-start bit for this com.syu.ms build, or -1 when unknown. */
+        private final int statusCode;
         private final Sink sink;
         private volatile IBinder module;
         private volatile int canbusId = -1;
-        // Last status bit published by update code 168, -1 before the first.
+        // Last status bit published under statusCode, -1 before the first.
         private volatile int status = -1;
         private volatile boolean closed;
         private volatile boolean refusalLogged;
         private final boolean watch;
         private volatile IBinder main;
         private final Handler handler = new Handler(Looper.getMainLooper());
-        // Once this process has seen rpm above 0, the unit reports it and no guess is needed. Main thread.
-        private static boolean rpmWorks;
-        private boolean running;
+        // Main thread. stopped: rpm 0, or no rpm yet since the ignition on.
+        private boolean running, stopped;
+        private int lastRpm = -1;
+        // 1 on, 0 off, -1 not reported yet. Main thread.
+        private int acc = -1;
         private final Runnable guess = new Runnable() {
             @Override
             public void run() {
-                if (!rpmWorks) sink.engineRunning(GUESS);
+                if (!Prefs.fytRpmWorks(context)) sink.engineRunning(GUESS, false);
             }
         };
 
@@ -254,12 +308,29 @@ abstract class OtherLink {
                     @Override
                     public void run() {
                         handler.removeCallbacks(guess);
-                        if (on) {
-                            if (!rpmWorks) handler.postDelayed(guess, GUESS_MS);
-                        } else {
+                        boolean wasOff = acc == 0;
+                        acc = on ? 1 : 0;
+                        if (!on) {
                             running = false;
+                            // The next ignition on decides; an rpm from before this off must not count for it.
+                            stopped = false;
+                            lastRpm = -1;
+                            sink.ignition(false);
+                            return;
                         }
-                        sink.ignition(on);
+                        boolean rpmWorks = Prefs.fytRpmWorks(context);
+                        // ACC first heard here may be a restart mid-drive, its rpm still to come. Only without rpm
+                        // seen before could a guess have switched too early, and then the first rpm must re-arm.
+                        if (lastRpm <= 0 && (wasOff || !rpmWorks)) stopped = true;
+                        if (!rpmWorks && Prefs.engineGuess(context)) {
+                            handler.postDelayed(guess, GUESS_MS);
+                        }
+                        sink.ignition(true);
+                        // The engine speed can arrive before the ACC flag: the new cycle has not heard it yet.
+                        if (lastRpm > 0) {
+                            running = true;
+                            sink.engineRunning("rpm " + lastRpm, false);
+                        }
                     }
                 });
                 return true;
@@ -286,7 +357,7 @@ abstract class OtherLink {
                             onRpm(rpm);
                         }
                     });
-                } else if (update == STATUS) {
+                } else if (update == statusCode && statusCode >= 0) {
                     status = ints[0] & 1;
                     // On another car the status is not ours: it must not show the link as working.
                     if (unsupported() != null) return true;
@@ -314,10 +385,15 @@ abstract class OtherLink {
                         main = remoteModule(toolkit, MAIN);
                         if (main != null) register(main, mainCallback, ACC, true);
                         else sink.log("beta: FYT toolkit has no main module, ignition not followed");
-                    } else {
-                        register(module, callback, STATUS, true);
+                    } else if (statusCode >= 0) {
+                        register(module, callback, statusCode, true);
                     }
                     sink.log("beta: FYT canbus module connected");
+                    if (!versionLogged) {
+                        sink.log("beta: FYT com.syu.ms " + version + (statusCode < 0
+                                ? ": status code unknown, the switch cannot be confirmed" : ", status code " + statusCode));
+                    }
+                    versionLogged = true;
                 } catch (Throwable e) {
                     sink.log("beta: FYT toolkit failed: " + e);
                 }
@@ -349,18 +425,28 @@ abstract class OtherLink {
         /** Main thread. The engine counts as running on the first rpm above 0 after a stop. */
         private void onRpm(int rpm) {
             if (closed || rpm < 0) return;
+            lastRpm = rpm;
             if (rpm == 0) {
                 running = false;
+                // With the ignition off, the next ignition on decides.
+                stopped = acc != 0;
                 return;
             }
-            rpmWorks = true;
+            if (!Prefs.fytRpmWorks(context)) Prefs.setFytRpmWorks(context);
             handler.removeCallbacks(guess);
             if (running) return;
             running = true;
-            sink.engineRunning("rpm " + rpm);
+            boolean afterStop = stopped;
+            stopped = false;
+            sink.engineRunning("rpm " + rpm, afterStop);
         }
 
         private void forget() {
+            // The first rpm after a reconnect is the engine as it is, not a start: it must not undo a switch.
+            running = false;
+            stopped = false;
+            lastRpm = -1;
+            acc = -1;
             module = null;
             main = null;
             canbusId = -1;
@@ -372,6 +458,8 @@ abstract class OtherLink {
             context = c.getApplicationContext();
             this.sink = sink;
             this.watch = watch;
+            version = versionName(c, PACKAGE);
+            statusCode = OtherUnits.fytStatusCode(version);
         }
 
         static OtherLink open(Context c, Sink sink, boolean watch) {
@@ -408,8 +496,10 @@ abstract class OtherLink {
 
         @Override
         int write(int cmd, byte[] data) {
+            if (watch) return -1;
             IBinder m = module;
-            if (m == null || watch) return -1;
+            // Until the service reports the car, its handler does not exist and drops every command silently.
+            if (m == null || canbusId < 0) return -2;
             try {
                 if (cmd == Protocol.CMD_QUERY && data.length > 0 && data[0] == Protocol.STATUS_SETTINGS) {
                     // No command asks for frame 0x38 again; answer with the last value the service published.
@@ -450,7 +540,8 @@ abstract class OtherLink {
             try {
                 IBinder m = module;
                 register(m, callback, CANBUS_ID, false);
-                register(m, callback, watch ? RPM : STATUS, false);
+                if (watch) register(m, callback, RPM, false);
+                else if (statusCode >= 0) register(m, callback, statusCode, false);
                 register(main, mainCallback, ACC, false);
             } catch (Throwable ignored) {
             }
@@ -459,6 +550,11 @@ abstract class OtherLink {
                 context.unbindService(connection);
             } catch (Throwable ignored) {
             }
+        }
+
+        @Override
+        boolean ready() {
+            return module != null && canbusId >= 0;
         }
 
         @Override

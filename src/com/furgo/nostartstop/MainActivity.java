@@ -469,7 +469,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     }
 
     private void onSwitchTap() {
-        int action = manual.tap(BootService.running, link == LINK_DOWN);
+        int action = manual.tap(BootService.running, shownLink() == LINK_DOWN);
         if (action == ManualSwitch.NOTHING) return;
         if (action == ManualSwitch.NO_LINK) {
             flash(CanBox.setupDecision(this) == CarSetup.ASK ? "Confirm your car first. Nothing sent."
@@ -764,17 +764,22 @@ public class MainActivity extends Activity implements CanBox.Listener {
         return t;
     }
 
+    /** The link as shown: down while the car is not supported, without forgetting the state behind it. */
+    private int shownLink() {
+        return box.unsupported() != null ? LINK_DOWN : link;
+    }
+
     private void render() {
         boolean setup = CanBox.setupDecision(this) == CarSetup.ASK;
         boolean unsupported = !setup && box.unsupported() != null;
-        if (unsupported || setup) link = LINK_DOWN;
-        linkView.setText(setup ? "○  SET UP YOUR CAR" : unsupported ? "○  CAR NOT SUPPORTED" : link == LINK_LIVE ? "●  CONNECTED TO CAR"
-                : link == LINK_DOWN ? "○  NO LINK TO CAR" : "○  CONNECTING…");
-        linkView.setTextColor(link == LINK_LIVE ? ACCENT : link == LINK_DOWN ? LINK_BAD : MUTED);
+        int shown = setup ? LINK_DOWN : shownLink();
+        linkView.setText(setup ? "○  SET UP YOUR CAR" : unsupported ? "○  CAR NOT SUPPORTED" : shown == LINK_LIVE ? "●  CONNECTED TO CAR"
+                : shown == LINK_DOWN ? "○  NO LINK TO CAR" : "○  CONNECTING…");
+        linkView.setTextColor(shown == LINK_LIVE ? ACCENT : shown == LINK_DOWN ? LINK_BAD : MUTED);
 
         boolean bootBusy = BootService.running;
         long last = Prefs.lastSwitchAt(this);
-        Feedback f = Feedback.of(note, bootBusy, result, manual.pending(), link == LINK_DOWN, setup, unsupported,
+        Feedback f = Feedback.of(note, bootBusy, result, manual.pending(), shown == LINK_DOWN, setup, unsupported,
                 Prefs.bootSwitchFailed(this), last, Prefs.lastSwitchAtBoot(this));
         feedback.setText(f.text);
         if (f.color != Feedback.KEEP) {
@@ -782,7 +787,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         }
 
         boolean pending = manual.pending();
-        boolean usable = !pending && !bootBusy && link != LINK_DOWN;
+        boolean usable = !pending && !bootBusy && shown != LINK_DOWN;
         switchButton.setText(pending ? "Sending…" : "Switch stop-start");
         switchButton.setTextColor(usable ? TEXT : MUTED);
         switchButton.setBackgroundDrawable(usable ? pressable(PRIMARY, PRIMARY_PRESSED, 0)
