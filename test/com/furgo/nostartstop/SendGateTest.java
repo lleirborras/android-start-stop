@@ -168,19 +168,21 @@ public class SendGateTest {
         for (Kind k : new Kind[]{Kind.OTHER_SET, Kind.OTHER_QUERY}) {
             check("FYT 339 " + k, van.fyt("339").on(k), SEND, null);
             check("FYT 339 variant " + k, van.fyt(String.valueOf((5 << 16) | 339)).on(k), SEND, null);
-            check("FYT other car " + k, van.fyt("281").on(k), REFUSE, "beta: FYT");
+            check("FYT other car, confirmed " + k, van.fyt("281").on(k), SEND, null);
             check("FYT unknown " + k, van.fyt(null).on(k), NOT_READY, "beta: FYT");
             check("Microntek 50 " + k, van.microntek("50").on(k), SEND, null);
             check("Microntek 50 spaces " + k, van.microntek(" 50\n").on(k), SEND, null);
-            check("Microntek other box " + k, van.microntek("59").on(k), REFUSE, "beta: Microntek");
-            check("Microntek unknown " + k, van.microntek(null).on(k), REFUSE, "beta: Microntek");
+            check("Microntek other box, confirmed " + k, van.microntek("59").on(k), SEND, null);
+            check("Microntek unknown, confirmed " + k, van.microntek(null).on(k), SEND, null);
             check("beta link with PSA chosen " + k, van.beta().link(Platform.FYT, "339").on(k), REFUSE, "car setup");
             check("FYT chosen, Microntek link " + k, van.fyt("339").link(Platform.MICRONTEK, "50").on(k), REFUSE,
                     "beta");
         }
-        check("FYT reason", van.fyt("281").on(Kind.OTHER_SET).why, "canbus id 281 is not PSA with a Raise box (339)");
-        check("Microntek reason", van.microntek("59").on(Kind.OTHER_SET).why,
+        check("FYT warning", SendGate.carMismatch(Platform.FYT, "281"), "canbus id 281 is not PSA with a Raise box (339)");
+        check("Microntek warning", SendGate.carMismatch(Platform.MICRONTEK, "59"),
                 "CAN box type 59 is not PSA with a Raise box (50)");
+        check("no warning for FYT 339", SendGate.carMismatch(Platform.FYT, "339"), null);
+        check("no warning for Microntek 50", SendGate.carMismatch(Platform.MICRONTEK, "50"), null);
         check("FYT picked on a unit with both", van.fyt("339").platforms(false, true, true).confirmed("ambiguous")
                 .on(Kind.OTHER_SET), SEND, null);
         check("FYT chosen, TWUtil command", van.fyt("339").on(Kind.PSA_SET), REFUSE, "car setup");
@@ -191,17 +193,10 @@ public class SendGateTest {
         check("TWUtil link without TWUtil", van.platforms(false, false, false).on(Kind.PSA_SET), REFUSE, "link");
         check("TWUtil with FYT too", van.platforms(true, true, true).on(Kind.PSA_SET), SEND, null);
 
-        // The CAR NOT SUPPORTED state, only once the link reported the car.
-        check("unsupported FYT unknown", SendGate.unsupported(Platform.FYT, null), null);
-        check("unsupported FYT 339", SendGate.unsupported(Platform.FYT, "339"), null);
-        check("unsupported FYT 281", SendGate.unsupported(Platform.FYT, "281"),
-                "canbus id 281 is not PSA with a Raise box (339)");
-        check("unsupported Microntek unknown", SendGate.unsupported(Platform.MICRONTEK, null), null);
-        check("unsupported Microntek 59", SendGate.unsupported(Platform.MICRONTEK, "59"),
-                "CAN box type 59 is not PSA with a Raise box (50)");
-        check("open refusal Microntek unknown", SendGate.carRefusal(Platform.MICRONTEK, null), "CAN box type unknown");
-        check("open refusal FYT unknown", SendGate.carRefusal(Platform.FYT, null), OtherUnits.NOT_IDENTIFIED);
-        check("FYT car not a number", van.fyt("abc").on(Kind.OTHER_SET), REFUSE, "beta: FYT");
+        // What the beta link reports about the car only warns.
+        check("Microntek unknown type", SendGate.carMismatch(Platform.MICRONTEK, null), "CAN box type unknown");
+        check("FYT not reported yet", SendGate.carMismatch(Platform.FYT, null), OtherUnits.NOT_IDENTIFIED);
+        check("FYT car not a number, confirmed", van.fyt("abc").on(Kind.OTHER_SET), SEND, null);
 
         // The kind on each link.
         check("PSA set on FYT", SendGate.onLink(Kind.PSA_SET, Platform.FYT), Kind.OTHER_SET);

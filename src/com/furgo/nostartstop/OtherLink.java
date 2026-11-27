@@ -154,9 +154,7 @@ abstract class OtherLink {
         }
 
         static OtherLink open(Context c, Sink sink, boolean watch) {
-            // A refused CAN box type is not started: CanBox asks the send gate and closes it again.
             Microntek m = new Microntek(c, sink, watch, carParameter("cfg_canbus="));
-            if (SendGate.carRefusal(Detection.Platform.MICRONTEK, m.type) != null) return m;
             if (watch) m.handler.post(m.poll);
             else m.context.registerReceiver(m.receiver, new IntentFilter(SYNC));
             return m;
@@ -346,8 +344,6 @@ abstract class OtherLink {
                     });
                 } else if (update == statusCode && statusCode >= 0) {
                     status = ints[0] & 1;
-                    // On another car the status is not ours: it must not show the link as working.
-                    if (SendGate.unsupported(Detection.Platform.FYT, car()) != null) return true;
                     sink.frame(Protocol.STATUS_SETTINGS, OtherUnits.fytStatusFrame(status));
                 }
                 return true;
