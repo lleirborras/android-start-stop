@@ -49,19 +49,33 @@ final class Updater {
         }
     }
 
-    /** The newest release for the channel: GitHub's latest release, or with beta the newest of the recent ones. */
+    /**
+     * The newest release for the channel: GitHub's latest release, or with beta the newest of the recent ones that has
+     * an APK, so a release made by hand without one does not hide the others.
+     */
     static Release latest(boolean beta) throws IOException, JSONException {
         if (!beta) return withApk(new JSONObject(get(LATEST_URL)));
         JSONArray releases = new JSONArray(get(RECENT_URL));
-        List<String> tags = new ArrayList<>();
+        List<JSONObject> left = new ArrayList<>();
         for (int i = 0; i < releases.length(); i++) {
             JSONObject r = releases.getJSONObject(i);
-            // One entry per release, so an index here is one in releases; a draft gets a tag that never counts.
-            tags.add(r.optBoolean("draft") ? "" : r.optString("tag_name"));
+            if (!r.optBoolean("draft") && UpdateCheck.forChannel(r.optString("tag_name"), true)) left.add(r);
         }
-        String tag = UpdateCheck.newest(tags, true);
-        if (tag == null) throw new IOException("no release found");
-        return withApk(releases.getJSONObject(tags.indexOf(tag)));
+        if (left.isEmpty()) throw new IOException("no release found");
+        NoApkException missing = null;
+        while (!left.isEmpty()) {
+            JSONObject best = left.get(0);
+            for (JSONObject r : left) {
+                if (Version.isNewer(r.getString("tag_name"), best.getString("tag_name"))) best = r;
+            }
+            try {
+                return withApk(best);
+            } catch (NoApkException e) {
+                if (missing == null) missing = e;
+                left.remove(best);
+            }
+        }
+        throw missing;
     }
 
     private static Release withApk(JSONObject release) throws JSONException, NoApkException {

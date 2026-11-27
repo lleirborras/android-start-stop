@@ -156,6 +156,8 @@ public class UpdateJob extends JobService {
             logFailure(app, UpdateCheck.reason(e));
             return false;
         }
+        // The beta program was switched during the check: its answer is for the other channel.
+        if (Prefs.betaProgram(app) != beta) return true;
         if (!UpdateCheck.forChannel(latest.tag, beta)) {
             completedWithout(app, "unexpected tag");
             return true;

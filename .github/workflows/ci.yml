@@ -88,14 +88,10 @@ jobs:
         run: |
           tag=""
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
-            # A beta of the next minor version; the run number orders betas and is also the version code.
+            # A beta of the version this branch would release, numbered after its earlier betas.
             tags=$(gh api "repos/$GITHUB_REPOSITORY/tags" --paginate --jq '.[].name')
             latest=$(printf '%s\n' "$tags" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)
-            v="${latest#v}"
-            rest="${v#*.}"
-            major="${v%%.*}"
-            minor="${rest%%.*}"
-            tag="v${major:-0}.$(( ${minor:-0} + 1 )).0-beta.$GITHUB_RUN_NUMBER"
+            tag=$(printf '%s\n' "$tags" | sh scripts/beta-tag.sh "$GITHUB_REF_NAME" "${latest:-v0.0.0}")
             echo "beta of '$GITHUB_REF_NAME', latest tag '$latest', beta tag '$tag'"
           elif [ "$GITHUB_REF_TYPE" = tag ]; then
             tag="$GITHUB_REF_NAME"
@@ -146,16 +142,20 @@ jobs:
       - name: Build APK
         env:
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
-          VERSION_CODE: ${{ github.run_number }}
+          RUN_NUMBER: ${{ github.run_number }}
           # Public, write-only PostHog project key; diagnostics are left out of the build when unset.
           POSTHOG_KEY: ${{ vars.POSTHOG_KEY }}
           POSTHOG_HOST: ${{ vars.POSTHOG_HOST }}
         run: |
+          # A release's code comes from its tag, so it is ordered like the tags whatever order the runs ran in.
           if [ -n "$RELEASE_TAG" ]; then
             export VERSION_NAME="${RELEASE_TAG#v}"
+            VERSION_CODE=$(sh scripts/version-code.sh "$RELEASE_TAG")
           else
             export VERSION_NAME="dev-${GITHUB_SHA::7}"
+            VERSION_CODE="$RUN_NUMBER"
           fi
+          export VERSION_CODE
           sh build.sh
 
       - name: Check APK contents
@@ -177,7 +177,8 @@ jobs:
           name: nostartstop-apk
           path: build/nostartstop.apk
 
-  # Runs no code from the repository: it only signs and publishes the APK the build job made.
+  # Runs no code from the repository, but its steps come from the branch's own ci.yml: the release environment's
+  # branch policy and reviewers are what keep the signing key from other branches.
   release:
     needs: build
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.build.outputs.tag != ''

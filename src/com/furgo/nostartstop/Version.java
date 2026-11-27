@@ -18,8 +18,11 @@ final class Version {
         return false;
     }
 
-    static boolean valid(String s) {
-        return parse(s) != null;
+    /** For display: "v0.21.0 beta 3" for a beta, the tag or name as given otherwise, with a "v" before a number. */
+    static String label(String s) {
+        if (s == null) return "";
+        String v = s.startsWith("v") || s.isEmpty() || !Character.isDigit(s.charAt(0)) ? s : "v" + s;
+        return isBeta(s) ? v.replace(BETA, " beta ") : v;
     }
 
     static boolean isBeta(String s) {

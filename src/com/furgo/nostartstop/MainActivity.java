@@ -485,17 +485,18 @@ public class MainActivity extends Activity implements CanBox.Listener {
         updateBusy = true;
         final Updater.Release found = available;
         handler.removeCallbacks(revertUpdate);
-        showUpdate(found == null || found.apkUrl == null ? "Checking…" : "Downloading " + found.tag + "…", MUTED, false);
+        showUpdate(found == null || found.apkUrl == null ? "Checking…" : "Downloading " + Version.label(found.tag) + "…", MUTED, false);
         new Thread(new Runnable() {
             @Override
             public void run() {
                 try {
                     if (found == null || found.apkUrl == null) {
-                        final Updater.Release latest = Updater.latest(Prefs.betaProgram(getApplicationContext()));
+                        final boolean beta = Prefs.betaProgram(getApplicationContext());
+                        final Updater.Release latest = Updater.latest(beta);
                         handler.post(new Runnable() {
                             @Override
                             public void run() {
-                                onLatest(latest);
+                                onLatest(latest, beta);
                             }
                         });
                     } else {
@@ -511,9 +512,15 @@ public class MainActivity extends Activity implements CanBox.Listener {
         }).start();
     }
 
-    private void onLatest(Updater.Release latest) {
+    private void onLatest(Updater.Release latest, boolean beta) {
         if (isDestroyed()) return;
         updateBusy = false;
+        if (Prefs.betaProgram(this) != beta) {
+            // The beta program was switched during the check: ask again for the channel now chosen.
+            available = null;
+            onUpdateClick();
+            return;
+        }
         UpdateJob.remember(this, latest.tag);
         if (UpdateCheck.offerable(latest.tag, versionName(), Prefs.betaProgram(this)) != null) {
             boolean installNow = available != null && available.tag.equals(latest.tag);
@@ -562,7 +569,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     }
 
     private void showIdleUpdate() {
-        if (available != null) showUpdate("Install " + available.tag, TEXT, true);
+        if (available != null) showUpdate("Install " + Version.label(available.tag), TEXT, true);
         else showUpdate("Check for updates", MUTED, false);
     }
 
@@ -620,11 +627,17 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private void toggleBetaProgram() {
         boolean on = !Prefs.betaProgram(this);
         Prefs.setBetaProgram(this, on);
-        onLog(on ? "beta program joined" : "beta program left");
-        if (!updateBusy) available = null;
-        UpdateJob.schedule(this, true);
-        showStoredUpdate();
+        String installed = versionName();
+        if (on) onLog("beta program joined: checking for test builds");
+        else if (Version.isBeta(installed)) {
+            onLog("beta program left: stays on " + Version.label(installed) + " until a newer stable version");
+        } else onLog("beta program left");
         renderBoot();
+        UpdateJob.schedule(this, true);
+        if (updateBusy) return;
+        // Checks at once, so the button shows what the chosen channel offers.
+        available = null;
+        onUpdateClick();
     }
 
     private void toggleTelemetry() {
@@ -967,8 +980,8 @@ public class MainActivity extends Activity implements CanBox.Listener {
                 });
         row = settingsRow(left);
         betaSwitch = addSetting(row, "Beta program",
-                "Offers test builds before they are released. Leaving keeps the installed build until a newer "
-                        + "stable one is out.",
+                "Offers test builds before release. Leaving does not go back: you stay on the beta until the "
+                        + "next stable version.",
                 new View.OnClickListener() {
                     @Override
                     public void onClick(View v) {
@@ -1069,7 +1082,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         // Release builds are named like "0.3.0"; local builds are "dev".
         LinearLayout about = new LinearLayout(this);
         about.setOrientation(LinearLayout.VERTICAL);
-        about.addView(text(Character.isDigit(v.charAt(0)) ? "v" + v : v, 14, MUTED, false));
+        about.addView(text(Version.label(v), 14, MUTED, false));
         TextView by = text("by Lleïr Borràs", 12, MUTED, false);
         by.setSingleLine(true);
         by.setEllipsize(TextUtils.TruncateAt.END);
