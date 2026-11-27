@@ -120,9 +120,10 @@ abstract class OtherLink {
                 sink.engineRunning(GUESS, false);
             }
         };
-        // The vendor broadcast has no permission, so any app could fake a status frame. It can only fool the
-        // confirmation of a switch (stop-start may then stay on); it never makes the app send. What is sent depends
-        // only on the CAN box the user confirmed.
+        // The vendor broadcast has no permission and carries no sender, so any app could fake a status frame. A
+        // switch is only started by the ignition and engine signals (carpower over the binder) or a tap; a fake frame
+        // can make one already under way go out early with the wrong bit, or confirm one that did nothing, so
+        // stop-start may stay on. It cannot make the app send otherwise.
         private final BroadcastReceiver receiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context c, Intent intent) {
