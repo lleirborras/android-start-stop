@@ -20,11 +20,8 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.SystemClock;
 import android.text.Layout;
-import android.text.SpannableStringBuilder;
 import android.text.TextPaint;
 import android.text.TextUtils;
-import android.text.style.ForegroundColorSpan;
-import android.text.style.RelativeSizeSpan;
 import android.util.DisplayMetrics;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -37,9 +34,6 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
-import java.net.ConnectException;
-import java.net.SocketTimeoutException;
-import java.net.UnknownHostException;
 import java.util.ArrayDeque;
 import java.util.Locale;
 
@@ -61,7 +55,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private static final int MAX_LOG = 50;
     private static final long REQUERY_MS = 5000;
     private static final long STALE_MS = 12000;
-    private static final long NOTE_MS = 3000, REVERT_MS = 4000;
+    private static final long NOTE_MS = 3000;
 
     private static final int LINK_WAITING = 0, LINK_LIVE = 1, LINK_DOWN = -1;
 
@@ -81,25 +75,13 @@ public class MainActivity extends Activity implements CanBox.Listener {
 
     private float density;
     private TextView linkView;
-    private TextView updateView;
-    private TextView startView;      // "Background start: On/Off", opens Android's notification access screen
-    private boolean updateBusy;
-    private String updateLabel;      // what the update button shows, kept across a rebuild of the screen
-    private int updateColor;
-    private boolean updatePrimary;
-    private AlertDialog startDialog;
-    private Boolean startShown;      // the background start state last drawn, to log a change made in Settings
-    private Updater.Release available;   // non-null once a newer release was found
+    private Boolean startShown;      // the background start state last seen, to log a change made in Settings
     private Toggle bootSwitch;
     private boolean askingAboutDiagnostics;
-    private Toggle telemetrySwitch;   // null when the build has no PostHog key
-    private Toggle captureSwitch;
-    private Toggle autoUpdateSwitch;
-    private Toggle withoutAdbSwitch;
-    private Toggle otherUnitsSwitch;
-    private Toggle engineGuessSwitch;
-    private Toggle betaSwitch;
+    private boolean fromOwnScreen;
+    private boolean setupPending;   // back from a screen of this app: the car setup is not opened again
     private TextView logView;
+    private boolean logOpen;         // narrow only: the log is shown below its title row
     private TextView shareText;      // null when the build has no PostHog key
     private View shareDot;
     private View shareFill, shareRest;   // the rule above the line, filled as a send of several requests goes on
@@ -110,6 +92,10 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private TextView switchButton;
     private TextView assumedWord;
     private TextView assumedHint;
+    private TextView stateTag;       // ASSUMED, FROM THE CAR or SENT under the state word
+    /** The state a tap's switch implies while the model is unknown, or UNKNOWN; sentShownFor is that switch's time. */
+    private int sentShown = AssumedState.UNKNOWN;
+    private long sentShownFor;
     private static final float WORD_SP = 44;
     private StateBadge badge;
     private LinearLayout stateCard;
@@ -189,20 +175,12 @@ public class MainActivity extends Activity implements CanBox.Listener {
         }
     };
 
-    private final Runnable revertUpdate = new Runnable() {
-        @Override
-        public void run() {
-            showIdleUpdate();
-        }
-    };
-
     private final Runnable jobDone = new Runnable() {
         @Override
         public void run() {
             log.clear();
             log.addAll(LogFile.tail(MainActivity.this, MAX_LOG));
             renderLog();
-            showStoredUpdate();
         }
     };
 
@@ -315,7 +293,6 @@ public class MainActivity extends Activity implements CanBox.Listener {
     protected void onDestroy() {
         watch.stop();
         handler.removeCallbacksAndMessages(null);
-        if (startDialog != null) startDialog.dismiss();
         super.onDestroy();
     }
 
@@ -360,17 +337,25 @@ public class MainActivity extends Activity implements CanBox.Listener {
         if (opened) box.query();
         handler.postDelayed(requery, REQUERY_MS);
         askAboutDiagnostics();
+        // Once per return to the app: backing out of the setup must not open it again at once.
+        boolean askSetup = !fromOwnScreen && CanBox.setupDecision(this) == CarSetup.ASK;
+        fromOwnScreen = false;
+        // Opened once this screen has the focus: a main screen recreated at launch resumes twice, and only the one
+        // that is shown gets the focus.
+        setupPending = askSetup;
         UpdateJob.onResult = jobDone;
         Telemetry.onChange = shareChanged;
         shareLive = true;
         Telemetry.refresh(this);
         renderShare();
-        showStoredUpdate();
+        // Settings offers the install; here only a notification for a release that is no longer newer goes.
+        if (UpdateCheck.offerable(Prefs.latestTag(this), versionName(), Prefs.betaProgram(this)) == null) UpdateJob.cancelNotification(this);
         UpdateJob.schedule(this, true);
     }
 
     @Override
     protected void onPause() {
+        setupPending = false;
         handler.removeCallbacks(requery);
         handler.removeCallbacks(phaseTimeout);
         BootService.onRunningChanged = null;
@@ -408,12 +393,18 @@ public class MainActivity extends Activity implements CanBox.Listener {
             render();
             return;
         }
+        boolean unknownBefore = Prefs.assumedState(this) == AssumedState.UNKNOWN;
         int bit = box.toggle();
         if (bit < 0) {
             showResult("Could not send to the car. Nothing sent.", WARN);
             return;
         }
         Prefs.recordSwitch(this, false);
+        if (unknownBefore) {
+            // The model does not count this switch; the car turned stop-start on at its start, so it is off now.
+            sentShown = sentShown == AssumedState.OFF ? AssumedState.ON : AssumedState.OFF;
+            sentShownFor = Prefs.lastSwitchAt(this);
+        }
         if (manual.sent(bit, SystemClock.elapsedRealtime()) == ManualSwitch.HOLD) {
             hold();
             return;
@@ -429,7 +420,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     }
 
     private void showSent() {
-        showResult("Sent at " + clock() + ". Check the instrument cluster.", ACCENT);
+        showResult(Feedback.sent(System.currentTimeMillis()), ACCENT);
     }
 
     @Override
@@ -453,10 +444,6 @@ public class MainActivity extends Activity implements CanBox.Listener {
         });
     }
 
-    private static String clock() {
-        return Feedback.clock(System.currentTimeMillis());
-    }
-
     private void showResult(String text, int color) {
         result = text;
         resultColor = color;
@@ -474,7 +461,8 @@ public class MainActivity extends Activity implements CanBox.Listener {
         int action = manual.tap(BootService.running, shownLink() == LINK_DOWN);
         if (action == ManualSwitch.NOTHING) return;
         if (action == ManualSwitch.NO_LINK) {
-            flash("Not connected to the car. Nothing sent.");
+            flash(CanBox.setupDecision(this) == CarSetup.ASK ? "Confirm your car first. Nothing sent."
+                    : "Not connected to the car. Nothing sent.");
             return;
         }
         note = null;
@@ -483,121 +471,6 @@ public class MainActivity extends Activity implements CanBox.Listener {
         box.query();
         handler.postDelayed(phaseTimeout, ManualSwitch.ANSWER_MS);
         render();
-    }
-
-    private void onUpdateClick() {
-        if (updateBusy) return;
-        updateBusy = true;
-        final Updater.Release found = available;
-        handler.removeCallbacks(revertUpdate);
-        showUpdate(found == null || found.apkUrl == null ? "Checking…" : "Downloading " + Version.label(found.tag) + "…", MUTED, false);
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    if (found == null || found.apkUrl == null) {
-                        final boolean beta = Prefs.betaProgram(getApplicationContext());
-                        final Updater.Release latest = Updater.latest(beta);
-                        handler.post(new Runnable() {
-                            @Override
-                            public void run() {
-                                onLatest(latest, beta);
-                            }
-                        });
-                    } else {
-                        Updater.install(getApplicationContext(), found);
-                        finishUpdate("download done, waiting for Android's install prompt", "Waiting for Android…", TEXT, true);
-                    }
-                } catch (final Throwable e) {
-                    boolean offline = e instanceof UnknownHostException || e instanceof ConnectException
-                            || e instanceof SocketTimeoutException;
-                    finishUpdate("update failed: " + e, offline ? "No internet" : "Update failed", WARN, false);
-                }
-            }
-        }).start();
-    }
-
-    private void onLatest(Updater.Release latest, boolean beta) {
-        if (isDestroyed()) return;
-        updateBusy = false;
-        if (Prefs.betaProgram(this) != beta) {
-            // The beta program was switched during the check: ask again for the channel now chosen.
-            available = null;
-            onUpdateClick();
-            return;
-        }
-        UpdateJob.remember(this, latest.tag);
-        if (UpdateCheck.offerable(latest.tag, versionName(), Prefs.betaProgram(this)) != null) {
-            boolean installNow = available != null && available.tag.equals(latest.tag);
-            available = latest;
-            onLog("update available: " + latest.tag);
-            showIdleUpdate();
-            if (installNow) onUpdateClick();
-        } else {
-            available = null;
-            onLog("no update: latest release is " + latest.tag + ", installed is " + versionName());
-            showUpdate("Up to date", TEXT, false);
-            handler.postDelayed(revertUpdate, REVERT_MS);
-        }
-    }
-
-    private void finishUpdate(final String logLine, final String label, final int color, final boolean done) {
-        handler.post(new Runnable() {
-            @Override
-            public void run() {
-                if (isDestroyed()) {
-                    LogFile.append(getApplicationContext(), logLine);
-                    return;
-                }
-                updateBusy = false;
-                // After a failure the found release stays, so the button offers the install again.
-                if (done) available = null;
-                onLog(logLine);
-                showUpdate(label, color, false);
-                handler.postDelayed(revertUpdate, REVERT_MS);
-            }
-        });
-    }
-
-    /** Offers the release found by the background check, if it is still newer than the installed version. */
-    private void showStoredUpdate() {
-        if (updateBusy) return;
-        String installed = versionName();
-        if (available != null && !Version.isNewer(available.tag, installed)) available = null;
-        String tag = UpdateCheck.offerable(Prefs.latestTag(this), installed, Prefs.betaProgram(this));
-        if (tag == null) UpdateJob.cancelNotification(this);
-        // Its APK URL is not stored: tapping Install fetches the release again.
-        if (tag != null && (available == null || Version.isNewer(tag, available.tag))) {
-            available = new Updater.Release(tag, null);
-        }
-        showIdleUpdate();
-    }
-
-    private void showIdleUpdate() {
-        if (available != null) showUpdate("Install " + Version.label(available.tag), TEXT, true);
-        else showUpdate("Check for updates", MUTED, false);
-    }
-
-    private void showUpdate(String label, int color, boolean primary) {
-        handler.removeCallbacks(revertUpdate);
-        updateLabel = label;
-        updateColor = color;
-        updatePrimary = primary;
-        drawUpdate();
-    }
-
-    private void drawUpdate() {
-        String label = updateLabel;
-        int color = updateColor;
-        boolean primary = updatePrimary;
-        updateView.setText(label);
-        updateView.setTextColor(color);
-        LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) updateView.getLayoutParams();
-        lp.height = dp(primary ? 44 : 36);
-        updateView.setLayoutParams(lp);
-        updateView.setBackgroundDrawable(primary
-                ? pressable(PRIMARY, PRIMARY_PRESSED, 0)
-                : pressable(0, NEUTRAL_PRESSED, 0));
     }
 
     private void toggleBoot() {
@@ -613,115 +486,17 @@ public class MainActivity extends Activity implements CanBox.Listener {
         render();
     }
 
-    private void toggleCapture() {
-        boolean on = !Prefs.captureFrames(this);
-        Prefs.setCaptureFrames(this, on);
-        box.setCaptureFrames(on);
-        onLog(on ? "recording car data on" : "recording car data off");
-        renderBoot();
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (!hasFocus || !setupPending) return;
+        setupPending = false;
+        if (CanBox.setupDecision(this) == CarSetup.ASK) openOwn(SetupActivity.class);
     }
 
-    private void toggleAutoUpdate() {
-        boolean on = !Prefs.autoUpdate(this);
-        Prefs.setAutoUpdate(this, on);
-        onLog(on ? "automatic update check on" : "automatic update check off");
-        UpdateJob.schedule(this, true);
-        renderBoot();
-    }
-
-    private void toggleWithoutAdb() {
-        boolean on = !Prefs.withoutAdb(this);
-        Prefs.setWithoutAdb(this, on);
-        if (!on) {
-            onLog("beta: reach the car without adb off, from the next app start");
-            renderBoot();
-            return;
-        }
-        String failure = HiddenApi.exempt();
-        onLog(failure == null ? "beta: reach the car without adb on"
-                : "beta: reach the car without adb failed: " + failure);
-        if (failure == null && !opened) {
-            opened = box.open();
-            link = opened ? LINK_WAITING : LINK_DOWN;
-            if (opened) box.query();
-        }
-        render();
-    }
-
-    private void toggleOtherUnits() {
-        boolean on = !Prefs.otherUnits(this);
-        Prefs.setOtherUnits(this, on);
-        onLog(on ? "beta: FYT and Microntek head units on" : "beta: FYT and Microntek head units off");
-        if (on && !opened) {
-            opened = box.open();
-            link = opened ? LINK_WAITING : LINK_DOWN;
-            if (opened) box.query();
-        } else if (!on && box.usesOtherLink()) {
-            box.close();
-            opened = box.open();
-            link = opened ? LINK_WAITING : LINK_DOWN;
-            if (opened) box.query();
-        }
-        render();
-    }
-
-    private void toggleEngineGuess() {
-        boolean on = !Prefs.engineGuess(this);
-        Prefs.setEngineGuess(this, on);
-        onLog(on ? "beta: engine guess on" : "beta: engine guess off");
-        renderBoot();
-    }
-
-    private void toggleBetaProgram() {
-        boolean on = !Prefs.betaProgram(this);
-        Prefs.setBetaProgram(this, on);
-        String installed = versionName();
-        if (on) onLog("beta program joined: checking for test builds");
-        else if (Version.isBeta(installed)) {
-            onLog("beta program left: stays on " + Version.label(installed) + " until a newer stable version");
-        } else onLog("beta program left");
-        renderBoot();
-        UpdateJob.schedule(this, true);
-        if (updateBusy) return;
-        // Checks at once, so the button shows what the chosen channel offers.
-        UpdateJob.cancelNotification(this);
-        available = null;
-        onUpdateClick();
-    }
-
-    private void toggleTelemetry() {
-        setTelemetry(!Prefs.telemetry(this));
-    }
-
-    /** Explains the notification access the background start needs, then opens Android's screen for it. */
-    private void onStartTap() {
-        if (!StartListener.available(this)) {
-            flash("This head unit does not allow a background start.");
-            return;
-        }
-        boolean on = StartListener.enabled(this);
-        startDialog = new AlertDialog.Builder(this)
-                .setTitle(on ? "Background start is on" : "Start with the head unit?")
-                .setMessage("Android can start this app in the background when the head unit powers on or wakes, "
-                        + "so Switch off at engine start also works when another app was on screen.\n\n"
-                        + "It uses Android's notification access, because Android starts apps that have it. "
-                        + "This app does not read any notification.\n\n"
-                        + (on ? "To turn it off, switch off No Start-Stop on the next screen."
-                        : "On the next screen, switch on No Start-Stop."))
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Open settings", new DialogInterface.OnClickListener() {
-                    @Override
-                    public void onClick(DialogInterface dialog, int which) {
-                        try {
-                            startActivity(new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"));
-                            onLog("background start: opened notification access settings");
-                        } catch (RuntimeException e) {
-                            onLog("background start: no notification access settings: " + e);
-                            flash("This head unit has no notification access screen.");
-                        }
-                    }
-                })
-                .show();
+    private void openOwn(Class<? extends Activity> screen) {
+        fromOwnScreen = true;
+        startActivity(new Intent(this, screen));
     }
 
     /** Asked once, on the first launch of a build that can share diagnostics. Nothing is sent before an answer. */
@@ -729,7 +504,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         if (!Telemetry.configured() || Prefs.telemetryAnswered(this) || askingAboutDiagnostics) return;
         askingAboutDiagnostics = true;
         new AlertDialog.Builder(this)
-                .setTitle("Help fix problems?")
+                .setTitle("Share this log with the developer?")
                 .setMessage("Send this app's log to the developer? Each line includes the app version, "
                         + "Android version, head unit model and a random ID. The log holds the commands "
                         + "sent to the car and the car's replies. With Record car data on, it also holds raw "
@@ -853,15 +628,19 @@ public class MainActivity extends Activity implements CanBox.Listener {
     }
 
     private void render() {
-        boolean unsupported = box.unsupported() != null;
-        int shown = shownLink();
-        linkView.setText(unsupported ? "○  CAR NOT SUPPORTED" : shown == LINK_LIVE ? "●  CONNECTED TO CAR"
-                : shown == LINK_DOWN ? "○  NO LINK TO CAR" : "○  CONNECTING…");
-        linkView.setTextColor(shown == LINK_LIVE ? ACCENT : shown == LINK_DOWN ? LINK_BAD : MUTED);
+        boolean setup = CanBox.setupDecision(this) == CarSetup.ASK;
+        boolean unsupported = !setup && box.unsupported() != null;
+        int shown = setup ? LINK_DOWN : shownLink();
+        linkView.setText(setup ? "○  SET UP YOUR CAR" : unsupported ? "○  CAR NOT SUPPORTED" : shown == LINK_LIVE ? "●  CONNECTED TO CAR"
+                : shown == LINK_DOWN ? "○  NOT CONNECTED" : "○  CONNECTING…");
+        linkView.setTextColor(setup || unsupported ? WARN : shown == LINK_LIVE ? ACCENT
+                : shown == LINK_DOWN ? LINK_BAD : MUTED);
+        linkView.setClickable(setup);
+        linkView.setBackgroundDrawable(setup ? pressable(0, NEUTRAL_PRESSED, 0) : null);
 
         boolean bootBusy = BootService.running;
         long last = Prefs.lastSwitchAt(this);
-        Feedback f = Feedback.of(note, bootBusy, result, manual.pending(), shown == LINK_DOWN, unsupported,
+        Feedback f = Feedback.of(note, bootBusy, result, manual.pending(), shown == LINK_DOWN, setup, unsupported,
                 Prefs.bootSwitchFailed(this), last, Prefs.lastSwitchAtBoot(this));
         feedback.setText(f.text);
         if (f.color != Feedback.KEEP) {
@@ -875,30 +654,36 @@ public class MainActivity extends Activity implements CanBox.Listener {
         switchButton.setBackgroundDrawable(usable ? pressable(PRIMARY, PRIMARY_PRESSED, 0)
                 : pressable(NEUTRAL, NEUTRAL_PRESSED, 2));
 
-        int assumed = Prefs.assumedState(this);
+        // A beta car profile reads the setting back: show that, not the model.
+        Boolean reported = box.reportedOn();
+        int model = Prefs.assumedState(this);
+        if (model != AssumedState.UNKNOWN || reported != null || Prefs.ignitionOff(this)
+                || Prefs.lastSwitchAt(this) != sentShownFor) {
+            sentShown = AssumedState.UNKNOWN;
+        }
+        boolean sent = sentShown != AssumedState.UNKNOWN;
+        int assumed = reported != null ? (reported ? AssumedState.ON : AssumedState.OFF) : sent ? sentShown : model;
         int stateColor = assumed == AssumedState.OFF ? TEXT : assumed == AssumedState.ON ? ACCENT : MUTED;
         badge.setState(assumed);
         stateCard.setBackgroundDrawable(shape(CARD, 20, 2, assumed == AssumedState.UNKNOWN ? CARD_EDGE : assumed == AssumedState.OFF ? OFF_EDGE : ACCENT));
-        String word = assumed == AssumedState.UNKNOWN ? "UNKNOWN" : AssumedState.name(assumed).toUpperCase(Locale.ROOT);
-        SpannableStringBuilder sb = new SpannableStringBuilder(word);
-        if (assumed != AssumedState.UNKNOWN) {
-            int from = sb.length();
-            sb.append("  assumed");
-            sb.setSpan(new RelativeSizeSpan(20f / WORD_SP), from, sb.length(), 0);
-            sb.setSpan(new ForegroundColorSpan(MUTED), from, sb.length(), 0);
-        }
-        assumedWord.setText(sb);
+        assumedWord.setText(AssumedState.name(assumed).toUpperCase(Locale.ROOT));
         fitWord();
         assumedWord.setTextColor(stateColor);
-        assumedHint.setText(assumed == AssumedState.ON && usable ? "Not read from the car. Tap Switch to turn it off."
-                : assumed != AssumedState.UNKNOWN ? "Not read from the car. Check the instrument cluster."
-                : !Prefs.applyAtBoot(this) ? "Only followed while Switch off at engine start is on. Check the instrument cluster."
-                : !Prefs.canSetAssumed(this) ? "The app cannot follow the ignition right now. Check the instrument cluster."
-                : "Not followed since the last ignition off. Check the instrument cluster, then tap Started (on) or Stopped (off).");
-        boolean unknown = assumed == AssumedState.UNKNOWN;
+        if (assumed == AssumedState.UNKNOWN) {
+            stateTag.setVisibility(View.GONE);
+        } else {
+            int tagColor = reported != null ? ACCENT : sent ? MUTED : WARN;
+            stateTag.setText(reported != null ? "FROM THE CAR" : sent ? "SENT" : "ASSUMED");
+            stateTag.setTextColor(tagColor);
+            stateTag.setBackgroundDrawable(shape(0, 14, 2, tagColor));
+            stateTag.setVisibility(View.VISIBLE);
+        }
+        assumedHint.setText(Feedback.hint(assumed, reported != null, sent, usable, Prefs.applyAtBoot(this),
+                Prefs.canSetAssumed(this)));
+        boolean unknown = reported == null && model == AssumedState.UNKNOWN;
         boolean free = !pending && !bootBusy && SystemClock.elapsedRealtime() >= reportedAt + HOLD_MS;
-        wrongButton.setVisibility(unknown ? View.GONE : View.VISIBLE);
-        setRow.setVisibility(unknown ? View.VISIBLE : View.GONE);
+        wrongButton.setVisibility(unknown || reported != null ? View.GONE : View.VISIBLE);
+        setRow.setVisibility(unknown && reported == null ? View.VISIBLE : View.GONE);
         renderOutlined(wrongButton, !unknown && free, TEXT, 0xFF4A5568);
         boolean canSet = unknown && free && Prefs.canSetAssumed(this);
         // The colours of the state each one sets: green for on, white for off.
@@ -918,7 +703,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         long now = SystemClock.elapsedRealtime();
         if (now < reportedAt + HOLD_MS || manual.pending() || BootService.running) return;
         if (!Prefs.setAssumedByHand(this, state)) return;
-        // The row turns into "Car shows the opposite": a second tap in the same place must not flip it.
+        // The row turns into "Car shows the other state": a second tap in the same place must not flip it.
         reportedAt = now;
         handler.postDelayed(rerender, HOLD_MS);
         flash("Set by hand. Nothing sent to the car.");
@@ -959,16 +744,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
             if (startShown != null) onLog(startOn ? "background start on" : "background start off");
             startShown = startOn;
         }
-        startView.setText("Background start: " + (startOn ? "On" : "Off"));
-        startView.setTextColor(startOn ? TEXT : MUTED);
         renderSwitch(bootSwitch, Prefs.applyAtBoot(this));
-        renderSwitch(captureSwitch, Prefs.captureFrames(this));
-        if (telemetrySwitch != null) renderSwitch(telemetrySwitch, Prefs.telemetry(this));
-        renderSwitch(autoUpdateSwitch, Prefs.autoUpdate(this));
-        renderSwitch(withoutAdbSwitch, Prefs.withoutAdb(this));
-        renderSwitch(otherUnitsSwitch, Prefs.otherUnits(this));
-        renderSwitch(engineGuessSwitch, Prefs.engineGuess(this));
-        renderSwitch(betaSwitch, Prefs.betaProgram(this));
     }
 
     private void renderSwitch(Toggle t, boolean on) {
@@ -1001,88 +777,36 @@ public class MainActivity extends Activity implements CanBox.Listener {
 
         LinearLayout row = settingsRow(left);
         bootSwitch = addSetting(row, "Switch off at engine start",
-                "One switch each time the car starts.",
+                "Sends one switch each time the engine starts.",
                 new View.OnClickListener() {
                     @Override
                     public void onClick(View v) {
                         toggleBoot();
                     }
                 });
-        if (Telemetry.configured()) {
-            if (narrow) row = settingsRow(left);
-            telemetrySwitch = addSetting(row, "Share diagnostics",
-                    "Sends this app's log to the developer.",
-                    new View.OnClickListener() {
-                        @Override
-                        public void onClick(View v) {
-                            toggleTelemetry();
-                        }
-                    });
-        }
-        row = settingsRow(left);
-        captureSwitch = addSetting(row, "Record car data",
-                "Logs raw car data. May include vehicle details.",
-                new View.OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        toggleCapture();
-                    }
-                });
-        if (narrow) row = settingsRow(left);
-        autoUpdateSwitch = addSetting(row, "Check for updates automatically",
-                "Once a day. Never installs by itself.",
-                new View.OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        toggleAutoUpdate();
-                    }
-                });
-        row = settingsRow(left);
-        withoutAdbSwitch = addSetting(row, "Beta: reach the car without adb",
-                "Try it if the card says NO LINK TO CAR.",
-                new View.OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        toggleWithoutAdb();
-                    }
-                });
-        row = settingsRow(left);
-        otherUnitsSwitch = addSetting(row, "Beta: FYT and Microntek head units",
-                "PSA with a Raise CAN box only. Untested.",
-                new View.OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        toggleOtherUnits();
-                    }
-                });
-        row = settingsRow(left);
-        engineGuessSwitch = addSetting(row, "Beta: guess the engine start",
-                "Switch 15 s after ignition on when the head unit gives no engine speed.",
-                new View.OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        toggleEngineGuess();
-                    }
-                });
-        row = settingsRow(left);
-        betaSwitch = addSetting(row, "Beta program",
-                "Offers test builds before release. Leaving does not go back: you stay on the beta until the "
-                        + "next stable version.",
-                new View.OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        toggleBetaProgram();
-                    }
-                });
 
-        LinearLayout logCard = new LinearLayout(this);
+        final LinearLayout logCard = new LinearLayout(this);
         logCard.setOrientation(LinearLayout.VERTICAL);
-        logCard.setPadding(dp(20), dp(16), dp(20), dp(16));
+        logCard.setPadding(dp(20), dp(narrow ? 0 : 16), dp(20), dp(16));
         logCard.setBackgroundDrawable(shape(0xFF0F1319, 16, 1, CARD_EDGE));
-        TextView logTitle = text("LOG", 12, MUTED, true);
+        final TextView logTitle = text("LOG", 12, MUTED, true);
         logTitle.setLetterSpacing(0.16f);
         logCard.addView(logTitle);
         logScroll = new ScrollView(this);
+        if (narrow) {
+            // Collapsed behind its title row; a tap opens or closes it.
+            logTitle.setGravity(Gravity.CENTER_VERTICAL);
+            logTitle.setMinHeight(dp(48));
+            logTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+            logTitle.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    logOpen = !logOpen;
+                    showLogOpen(logCard, logTitle);
+                    if (logOpen) renderLog();
+                }
+            });
+        }
         logView = text("", 13, MUTED, false);
         logView.setTypeface(Typeface.MONOSPACE);
         logView.setLineSpacing(0, 1.2f);
@@ -1130,9 +854,10 @@ public class MainActivity extends Activity implements CanBox.Listener {
         root.setBackgroundColor(BG);
         if (narrow) {
             root.setPadding(dp(16), dp(8), dp(16), dp(8));
-            LinearLayout.LayoutParams logLp = new LinearLayout.LayoutParams(-1, dp(200));
+            LinearLayout.LayoutParams logLp = new LinearLayout.LayoutParams(-1, -2);
             logLp.topMargin = dp(8);
             left.addView(logCard, logLp);
+            showLogOpen(logCard, logTitle);
             root.addView(leftScroll, new LinearLayout.LayoutParams(-1, -1));
         } else {
             root.setOrientation(LinearLayout.HORIZONTAL);
@@ -1156,80 +881,89 @@ public class MainActivity extends Activity implements CanBox.Listener {
         return root;
     }
 
-    /** One row when wide; when narrow the update button and the link state get a row of their own. */
+    /** One row when wide; when narrow the title and the link state, then the version, Help and Settings. */
     private void addHeader(LinearLayout left) {
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setMinimumHeight(dp(44));
+        header.setMinimumHeight(dp(48));
         TextView title = text("NO START-STOP", 22, TEXT, true);
         title.setLetterSpacing(0.12f);
+        title.setSingleLine(true);
         header.addView(title);
         String v = versionName();
         // Release builds are named like "0.3.0"; local builds are "dev".
         LinearLayout about = new LinearLayout(this);
         about.setOrientation(LinearLayout.VERTICAL);
-        about.addView(text(Version.label(v), 14, MUTED, false));
+        TextView version = text(Version.label(v), 14, MUTED, false);
+        version.setSingleLine(true);
+        about.addView(version);
         TextView by = text("by Lleïr Borràs", 12, MUTED, false);
         by.setSingleLine(true);
         by.setEllipsize(TextUtils.TruncateAt.END);
         about.addView(by);
-        LinearLayout.LayoutParams versionLp = new LinearLayout.LayoutParams(0, -2, 1f);
-        versionLp.leftMargin = dp(12);
-        header.addView(about, versionLp);
-        left.addView(header, new LinearLayout.LayoutParams(-1, -2));
 
-        updateView = text("", 14, MUTED, true);
-        updateView.setGravity(Gravity.CENTER);
-        updateView.setPadding(dp(20), 0, dp(20), 0);
-        updateView.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                onUpdateClick();
-            }
-        });
-        startView = text("", 14, MUTED, true);
-        startView.setGravity(Gravity.CENTER);
-        startView.setPadding(dp(20), 0, dp(20), 0);
-        startView.setBackgroundDrawable(pressable(0, NEUTRAL_PRESSED, 0));
-        startView.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                onStartTap();
-            }
-        });
-        TextView helpView = text("Help", 14, TEXT, true);
-        helpView.setGravity(Gravity.CENTER);
-        helpView.setPadding(dp(20), 0, dp(20), 0);
-        helpView.setBackgroundDrawable(pressable(0, NEUTRAL_PRESSED, 0));
+        TextView helpView = headerLink("Help");
         helpView.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                startActivity(new Intent(MainActivity.this, HelpActivity.class));
+                openOwn(HelpActivity.class);
             }
         });
-        linkView = text("", 14, MUTED, true);
-        LinearLayout.LayoutParams updateLp = new LinearLayout.LayoutParams(-2, dp(36));
+        TextView settingsView = headerLink("Settings");
+        settingsView.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                openOwn(SettingsActivity.class);
+            }
+        });
+        linkView = text("", 16, MUTED, true);
+        linkView.setSingleLine(true);
+        linkView.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
+        linkView.setPadding(dp(12), 0, dp(12), 0);
+        linkView.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                if (CanBox.setupDecision(MainActivity.this) == CarSetup.ASK) openOwn(SetupActivity.class);
+            }
+        });
+        LinearLayout.LayoutParams aboutLp = new LinearLayout.LayoutParams(0, -2, 1f);
+        aboutLp.leftMargin = dp(12);
         if (narrow) {
+            header.addView(linkView, new LinearLayout.LayoutParams(0, dp(48), 1f));
+            left.addView(header, new LinearLayout.LayoutParams(-1, -2));
             LinearLayout second = new LinearLayout(this);
             second.setGravity(Gravity.CENTER_VERTICAL);
-            second.setMinimumHeight(dp(44));
-            second.addView(linkView, new LinearLayout.LayoutParams(0, -2, 1f));
-            second.addView(updateView, updateLp);
+            aboutLp.leftMargin = 0;
+            second.addView(about, aboutLp);
+            second.addView(helpView, new LinearLayout.LayoutParams(-2, dp(48)));
+            second.addView(settingsView, new LinearLayout.LayoutParams(-2, dp(48)));
             left.addView(second, new LinearLayout.LayoutParams(-1, -2));
-            LinearLayout third = new LinearLayout(this);
-            third.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
-            third.addView(helpView, new LinearLayout.LayoutParams(-2, dp(36)));
-            third.addView(startView, new LinearLayout.LayoutParams(-2, dp(36)));
-            left.addView(third, new LinearLayout.LayoutParams(-1, -2));
         } else {
-            header.addView(helpView, new LinearLayout.LayoutParams(-2, dp(36)));
-            header.addView(startView, new LinearLayout.LayoutParams(-2, dp(36)));
-            updateLp.rightMargin = dp(24);
-            header.addView(updateView, updateLp);
-            header.addView(linkView);
+            header.addView(about, aboutLp);
+            header.addView(helpView, new LinearLayout.LayoutParams(-2, dp(48)));
+            header.addView(settingsView, new LinearLayout.LayoutParams(-2, dp(48)));
+            LinearLayout.LayoutParams linkLp = new LinearLayout.LayoutParams(-2, dp(48));
+            linkLp.leftMargin = dp(12);
+            header.addView(linkView, linkLp);
+            left.addView(header, new LinearLayout.LayoutParams(-1, -2));
         }
-        if (updateLabel == null) showIdleUpdate();
-        else drawUpdate();
+    }
+
+    private TextView headerLink(String label) {
+        TextView v = text(label, 16, TEXT, true);
+        v.setGravity(Gravity.CENTER);
+        v.setPadding(dp(20), 0, dp(20), 0);
+        v.setMinHeight(dp(48));
+        v.setBackgroundDrawable(pressable(0, NEUTRAL_PRESSED, 0));
+        return v;
+    }
+
+    private void showLogOpen(LinearLayout logCard, TextView logTitle) {
+        logTitle.setText(logOpen ? "LOG  ▾" : "LOG  ▸");
+        logScroll.setVisibility(logOpen ? View.VISIBLE : View.GONE);
+        LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) logCard.getLayoutParams();
+        lp.height = logOpen ? dp(200) : -2;
+        logCard.setLayoutParams(lp);
     }
 
     private LinearLayout settingsRow(LinearLayout left) {
@@ -1270,6 +1004,14 @@ public class MainActivity extends Activity implements CanBox.Listener {
             }
         });
         stack.addView(assumedWord);
+        stateTag = text("", 16, MUTED, true);
+        stateTag.setLetterSpacing(0.08f);
+        stateTag.setSingleLine(true);
+        stateTag.setPadding(dp(12), dp(2), dp(12), dp(2));
+        stateTag.setVisibility(View.GONE);
+        LinearLayout.LayoutParams tagLp = new LinearLayout.LayoutParams(-2, -2);
+        tagLp.topMargin = dp(6);
+        stack.addView(stateTag, tagLp);
         LinearLayout.LayoutParams stackLp = new LinearLayout.LayoutParams(0, -2, 1f);
         stackLp.leftMargin = dp(16);
         head.addView(stack, stackLp);
@@ -1302,7 +1044,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         });
         actions.addView(switchButton, narrow ? new LinearLayout.LayoutParams(-1, dp(64))
                 : new LinearLayout.LayoutParams(-1, 0, 1f));
-        wrongButton = text("Car shows the opposite", 16, MUTED, true);
+        wrongButton = text("Car shows the other state", 16, MUTED, true);
         wrongButton.setGravity(Gravity.CENTER);
         wrongButton.setOnClickListener(new View.OnClickListener() {
             @Override
