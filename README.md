@@ -364,7 +364,7 @@ A release's version code comes from its tag (`scripts/version-code.sh`): `((majo
 
 [Renovate](https://docs.renovatebot.com/) (`renovate.json`) opens pull requests for new versions of the GitHub Actions (keeping them pinned to commit SHAs) and the pinned JDK patch level. It needs the Renovate GitHub App installed on the repository.
 
-Releases are signed with the key in the secrets `RELEASE_KEYSTORE_B64` (base64 of a PKCS12 keystore, alias `release`) and `RELEASE_KEYSTORE_PASSWORD`. They belong to the GitHub environment `release`, which only `master` and `v*` tags may use, so only the release job can read them. A release fails if they are missing. Keep a copy of that keystore: if it is lost, later releases cannot update earlier installs.
+Releases are signed with the key in the secrets `RELEASE_KEYSTORE_B64` (base64 of a PKCS12 keystore, alias `release`) and `RELEASE_KEYSTORE_PASSWORD`. They belong to the GitHub environment `release`, which only `master`, `v*` tags and `feat/*`, `fix/*` and `refactor/*` branches (for betas) may use, so only the release job can read them. Each release job waits for the maintainer's approval in GitHub before it gets them: a manual run takes its steps from the branch's own `ci.yml`, so a tampered branch could otherwise read the key. A release fails if they are missing. Keep a copy of that keystore: if it is lost, later releases cannot update earlier installs.
 
 ## License
 
