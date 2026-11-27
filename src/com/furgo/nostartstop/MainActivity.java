@@ -80,6 +80,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private boolean askingAboutDiagnostics;
     private boolean fromOwnScreen;   // back from a screen of this app: the car setup is not opened again
     private TextView logView;
+    private boolean logOpen;         // narrow only: the log is shown below its title row
     private TextView shareText;      // null when the build has no PostHog key
     private View shareDot;
     private View shareFill, shareRest;   // the rule above the line, filled as a send of several requests goes on
@@ -772,14 +773,28 @@ public class MainActivity extends Activity implements CanBox.Listener {
                     }
                 });
 
-        LinearLayout logCard = new LinearLayout(this);
+        final LinearLayout logCard = new LinearLayout(this);
         logCard.setOrientation(LinearLayout.VERTICAL);
-        logCard.setPadding(dp(20), dp(16), dp(20), dp(16));
+        logCard.setPadding(dp(20), dp(narrow ? 0 : 16), dp(20), dp(16));
         logCard.setBackgroundDrawable(shape(0xFF0F1319, 16, 1, CARD_EDGE));
-        TextView logTitle = text("LOG", 12, MUTED, true);
+        final TextView logTitle = text("LOG", 12, MUTED, true);
         logTitle.setLetterSpacing(0.16f);
         logCard.addView(logTitle);
         logScroll = new ScrollView(this);
+        if (narrow) {
+            // Collapsed behind its title row; a tap opens or closes it.
+            logTitle.setGravity(Gravity.CENTER_VERTICAL);
+            logTitle.setMinHeight(dp(48));
+            logTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+            logTitle.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    logOpen = !logOpen;
+                    showLogOpen(logCard, logTitle);
+                    if (logOpen) renderLog();
+                }
+            });
+        }
         logView = text("", 13, MUTED, false);
         logView.setTypeface(Typeface.MONOSPACE);
         logView.setLineSpacing(0, 1.2f);
@@ -827,9 +842,10 @@ public class MainActivity extends Activity implements CanBox.Listener {
         root.setBackgroundColor(BG);
         if (narrow) {
             root.setPadding(dp(16), dp(8), dp(16), dp(8));
-            LinearLayout.LayoutParams logLp = new LinearLayout.LayoutParams(-1, dp(200));
+            LinearLayout.LayoutParams logLp = new LinearLayout.LayoutParams(-1, -2);
             logLp.topMargin = dp(8);
             left.addView(logCard, logLp);
+            showLogOpen(logCard, logTitle);
             root.addView(leftScroll, new LinearLayout.LayoutParams(-1, -1));
         } else {
             root.setOrientation(LinearLayout.HORIZONTAL);
@@ -928,6 +944,14 @@ public class MainActivity extends Activity implements CanBox.Listener {
         v.setMinHeight(dp(48));
         v.setBackgroundDrawable(pressable(0, NEUTRAL_PRESSED, 0));
         return v;
+    }
+
+    private void showLogOpen(LinearLayout logCard, TextView logTitle) {
+        logTitle.setText(logOpen ? "LOG  ▾" : "LOG  ▸");
+        logScroll.setVisibility(logOpen ? View.VISIBLE : View.GONE);
+        LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) logCard.getLayoutParams();
+        lp.height = logOpen ? dp(200) : -2;
+        logCard.setLayoutParams(lp);
     }
 
     private LinearLayout settingsRow(LinearLayout left) {
