@@ -31,6 +31,6 @@ final class Detection {
 
     /** For the car setup, see {@link CarSetup#detection}. */
     String carSetup() {
-        return CarSetup.detection(vendorVersion);
+        return CarSetup.detection(vendorVersion, otherPlatform());
     }
 }

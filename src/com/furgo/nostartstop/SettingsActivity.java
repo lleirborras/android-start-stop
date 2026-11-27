@@ -51,8 +51,6 @@ public class SettingsActivity extends Activity {
     private Toggle betaSwitch;
     private Toggle telemetrySwitch;   // null when the build has no PostHog key
     private Toggle withoutAdbSwitch;
-    private Toggle otherUnitsSwitch;
-    private Toggle otherCarsSwitch;
     private Toggle engineGuessSwitch;
     private AlertDialog startDialog;
 
@@ -223,23 +221,7 @@ public class SettingsActivity extends Activity {
                         toggleWithoutAdb();
                     }
                 });
-        otherUnitsSwitch = addSetting(second, "Beta: FYT and Microntek head units",
-                "PSA with a Raise CAN box only. Untested.",
-                new View.OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        toggleOtherUnits();
-                    }
-                });
-        otherCarsSwitch = addSetting(second, "Beta: other cars",
-                "VW, Honda, Haval, PSA on other boxes. Untested.",
-                new View.OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        toggleOtherCars();
-                    }
-                });
-        engineGuessSwitch = addSetting(second, "Beta: guess the engine start",
+        if (CanBox.betaBuild(this)) engineGuessSwitch = addSetting(second, "Beta: guess the engine start",
                 "Switch 15 s after ignition on when the head unit gives no engine speed.",
                 new View.OnClickListener() {
                     @Override
@@ -295,40 +277,56 @@ public class SettingsActivity extends Activity {
         card.setPadding(dp(24), dp(16), dp(24), dp(20));
         card.setBackgroundDrawable(shape(CARD, 16, 1, CARD_EDGE));
 
-        String detection = DeviceWatch.carDetection(this);
+        final String detection = DeviceWatch.carDetection(this);
         String choice = Prefs.setupChoice(this);
-        String confirmedFor = Prefs.setupDetection(this);
-        int decision = CarSetup.decide(detection, choice, confirmedFor);
+        boolean beta = CanBox.betaBuild(this);
+        int decision = CarSetup.decide(detection, choice, Prefs.setupDetection(this), beta);
+        final String shown = decision == CarSetup.ASK ? CarSetup.suggestion(detection, choice, beta) : choice;
         TextView reports = text(CarSetup.detectionLabel(detection), 16, TEXT, false);
         reports.setLineSpacing(0, 1.15f);
         card.addView(reports, new LinearLayout.LayoutParams(-1, -2));
-        String confirmed = choice == null ? "Not confirmed"
-                : decision == CarSetup.ASK ? CarSetup.choiceLabel(choice) + ", confirmed for "
-                + CarSetup.detectionName(confirmedFor) + ". Confirm again."
-                : CarSetup.choiceLabel(choice);
         LinearLayout.LayoutParams nameLp = new LinearLayout.LayoutParams(-1, -2);
         nameLp.topMargin = dp(14);
-        card.addView(text("Confirmed car", 16, TEXT, true), nameLp);
-        TextView v = text(confirmed, 15, decision == CarSetup.ASK ? WARN : MUTED, false);
-        v.setLineSpacing(0, 1.15f);
-        LinearLayout.LayoutParams vLp = new LinearLayout.LayoutParams(-1, -2);
-        vLp.topMargin = dp(2);
-        card.addView(v, vLp);
+        card.addView(text("CAN box", 16, TEXT, true), nameLp);
 
-        TextView change = text("Change car", 18, TEXT, true);
-        change.setGravity(Gravity.CENTER);
-        change.setPadding(dp(28), 0, dp(28), 0);
-        change.setBackgroundDrawable(decision == CarSetup.ASK ? pressable(PRIMARY, PRIMARY_PRESSED, 0)
-                : pressable(NEUTRAL, NEUTRAL_PRESSED, 2));
-        change.setOnClickListener(new View.OnClickListener() {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(16), dp(10), dp(16), dp(10));
+        row.setMinimumHeight(dp(52));
+        row.setBackgroundDrawable(pressable(NEUTRAL, NEUTRAL_PRESSED, 2));
+        TextView label = text(shown == null ? "Choose your CAN box" : CarSetup.choiceLabel(shown), 16,
+                shown == null ? MUTED : TEXT, false);
+        row.addView(label, new LinearLayout.LayoutParams(0, -2, 1f));
+        row.addView(text("\u25BE", 22, TEXT, true));
+        row.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                startActivity(new Intent(SettingsActivity.this, SetupActivity.class));
+                CanBoxPicker.show(SettingsActivity.this, detection, shown, new CanBoxPicker.Done() {
+                    @Override
+                    public void picked(String picked) {
+                        Prefs.setSetup(SettingsActivity.this, picked, detection);
+                        log("car setup: confirmed " + CarSetup.choiceLabel(picked) + " for "
+                                + CarSetup.detectionName(detection)
+                                + (CarSetup.mismatch(detection, picked) != null ? ", which it does not match" : ""));
+                        setContentView(build());
+                    }
+                });
             }
         });
-        LinearLayout.LayoutParams changeLp = new LinearLayout.LayoutParams(-2, dp(48));
-        changeLp.topMargin = dp(16);
-        card.addView(change, changeLp);
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
+        rowLp.topMargin = dp(6);
+        card.addView(row, rowLp);
+
+        String state = decision == CarSetup.ASK ? "Not confirmed: nothing is sent. Pick it to confirm."
+                : CarSetup.mismatch(detection, choice) != null ? "Confirmed, although the head unit reports another."
+                : null;
+        if (state != null) {
+            TextView v = text(state, 15, WARN, false);
+            v.setLineSpacing(0, 1.15f);
+            LinearLayout.LayoutParams vLp = new LinearLayout.LayoutParams(-1, -2);
+            vLp.topMargin = dp(8);
+            card.addView(v, vLp);
+        }
 
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
         lp.topMargin = dp(8);
@@ -539,20 +537,6 @@ public class SettingsActivity extends Activity {
         renderSwitches();
     }
 
-    private void toggleOtherUnits() {
-        boolean on = !Prefs.otherUnits(this);
-        Prefs.setOtherUnits(this, on);
-        log(on ? "beta: FYT and Microntek head units on" : "beta: FYT and Microntek head units off");
-        renderSwitches();
-    }
-
-    private void toggleOtherCars() {
-        boolean on = !Prefs.otherCars(this);
-        Prefs.setOtherCars(this, on);
-        log(on ? "beta: other cars on" : "beta: other cars off");
-        renderSwitches();
-    }
-
     private void toggleEngineGuess() {
         boolean on = !Prefs.engineGuess(this);
         Prefs.setEngineGuess(this, on);
@@ -567,9 +551,7 @@ public class SettingsActivity extends Activity {
         renderSwitch(betaSwitch, Prefs.betaProgram(this));
         if (telemetrySwitch != null) renderSwitch(telemetrySwitch, Prefs.telemetry(this));
         renderSwitch(withoutAdbSwitch, Prefs.withoutAdb(this));
-        renderSwitch(otherUnitsSwitch, Prefs.otherUnits(this));
-        renderSwitch(otherCarsSwitch, Prefs.otherCars(this));
-        renderSwitch(engineGuessSwitch, Prefs.engineGuess(this));
+        if (engineGuessSwitch != null) renderSwitch(engineGuessSwitch, Prefs.engineGuess(this));
     }
 
     /** A tappable card with a title and a hint, without a switch. Returns the title, which the caller rewrites. */

@@ -140,7 +140,9 @@ final class CanBox {
     String unsupported() {
         if (other != null) return SendGate.unsupported(other.platform(), other.car());
         if (tw == null && refused != null) return refused;
-        return tw == null && Prefs.otherUnits(context) ? otherRefused : null;
+        Detection.Platform p = chosenPlatform();
+        boolean otherChosen = p == Detection.Platform.FYT || p == Detection.Platform.MICRONTEK;
+        return tw == null && otherChosen ? otherRefused : null;
     }
 
     /** Beta link only: whether it can report the engine running. */
@@ -210,7 +212,19 @@ final class CanBox {
 
     /** The car setup's decision for this head unit now, see {@link CarSetup#decide}. */
     static int setupDecision(Context c) {
-        return CarSetup.decide(DeviceWatch.carDetection(c), Prefs.setupChoice(c), Prefs.setupDetection(c));
+        return CarSetup.decide(DeviceWatch.carDetection(c), Prefs.setupChoice(c), Prefs.setupDetection(c),
+                betaBuild(c));
+    }
+
+    /** A beta or local build: see {@link CarSetup#betaBuild}. */
+    static boolean betaBuild(Context c) {
+        return CarSetup.betaBuild(MainActivity.versionName(c));
+    }
+
+    /** The link the chosen CAN box goes over, as long as this build still offers it. */
+    private Detection.Platform chosenPlatform() {
+        String choice = Prefs.setupChoice(context);
+        return CarSetup.available(choice, betaBuild(context)) ? CarSetup.platform(choice) : Detection.Platform.NONE;
     }
 
     // Per process: each reason is logged once, not on every reopen of the screen.
@@ -241,7 +255,12 @@ final class CanBox {
         // Early, for the screen: the gate as it would answer the first query. Each write asks it again. The watch
         // service only listens to power messages and never writes to the CAN box.
         if (power == null) {
-            SendGate.Verdict v = gate(SendGate.Kind.PSA_QUERY);
+            // The first query of the chosen box: its profile's, the beta link's or the PSA one.
+            String code = CarSetup.profileCode(Prefs.setupChoice(context));
+            Detection.Platform p = chosenPlatform();
+            boolean other = p == Detection.Platform.FYT || p == Detection.Platform.MICRONTEK;
+            SendGate.Verdict v = other ? gate(SendGate.Kind.OTHER_QUERY, null)
+                    : code != null ? gate(SendGate.Kind.PROFILE_QUERY, code) : gate(SendGate.Kind.PSA_QUERY, null);
             if (!v.send()) {
                 if (!v.why.equals(openLogged)) log(v.rule + ": " + v.why + ", nothing will be sent");
                 openLogged = v.why;
@@ -275,7 +294,9 @@ final class CanBox {
         log(extraIdsRefused == null ? "TWUtil open"
                 : "TWUtil open, CAN box only (engine and unit ids refused: " + extraIdsRefused + ")");
         if (power != null) return true;
-        profile = Prefs.otherCars(context) ? CarProfile.forBeta(DeviceWatch.vendorCarVersion(context)) : null;
+        String code = chosenPlatform() == Detection.Platform.TOPWAY ? CarSetup.profileCode(Prefs.setupChoice(context))
+                : null;
+        profile = code == null ? null : CarProfile.forBeta(code);
         profileOn = null;
         if (profile != null) {
             log("beta: car profile " + profile.code + " (" + profile.name + ")");
@@ -289,9 +310,10 @@ final class CanBox {
 
     /** Beta: without TWUtil, the FYT or Microntek link. For the watch service it only reads the ignition and engine. */
     private boolean openOther() {
-        if (!Prefs.otherUnits(context)) return false;
+        Detection.Platform p = chosenPlatform();
+        if (p != Detection.Platform.FYT && p != Detection.Platform.MICRONTEK) return false;
         LinkSink sink = new LinkSink();
-        OtherLink o = OtherLink.open(context, DeviceWatch.detect(context), sink, power != null);
+        OtherLink o = OtherLink.open(context, DeviceWatch.detect(context), p, sink, power != null);
         sink.link = o;
         if (o == null) return false;
         // Microntek reports its CAN box type at once; FYT only later, and its writes wait for it.
@@ -598,13 +620,17 @@ final class CanBox {
 
     /** The send gate's verdict now, from a fresh snapshot. */
     private SendGate.Verdict gate(SendGate.Kind kind) {
+        return gate(kind, profile == null ? null : profile.code);
+    }
+
+    /** With the profile the link drives, or will drive once open. */
+    private SendGate.Verdict gate(SendGate.Kind kind, String profileCode) {
         if (other != null) other.refreshCar();
         gateCar = other == null ? null : other.car();
         Detection.Platform link = other != null ? other.platform()
                 : tw != null ? Detection.Platform.TOPWAY : Detection.Platform.NONE;
         return SendGate.decide(kind, new SendGate.Snapshot(DeviceWatch.detect(context), Prefs.setupChoice(context),
-                Prefs.setupDetection(context), Prefs.otherCars(context), Prefs.otherUnits(context), power != null,
-                profile == null ? null : profile.code, link, gateCar));
+                Prefs.setupDetection(context), betaBuild(context), power != null, profileCode, link, gateCar));
     }
 
     private void log(String line) {

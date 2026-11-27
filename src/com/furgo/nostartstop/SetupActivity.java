@@ -45,17 +45,8 @@ public class SetupActivity extends Activity {
         density = getResources().getDisplayMetrics().density;
         narrow = getResources().getConfiguration().screenWidthDp < NARROW_DP;
         detection = DeviceWatch.carDetection(this);
-        String confirmed = Prefs.setupChoice(this);
-        selected = detection.equals(Prefs.setupDetection(this)) && offered(confirmed) ? confirmed
-                : offered(CarSetup.suggestion(detection)) ? CarSetup.suggestion(detection) : null;
+        selected = CarSetup.suggestion(detection, Prefs.setupChoice(this), CanBox.betaBuild(this));
         setContentView(build());
-    }
-
-    private boolean offered(String choice) {
-        for (String c : CarSetup.choices(detection)) {
-            if (c.equals(choice)) return true;
-        }
-        return false;
     }
 
     private View build() {
@@ -89,12 +80,21 @@ public class SetupActivity extends Activity {
         TextView reports = text(CarSetup.detectionLabel(detection), 18, TEXT, true);
         reports.setLineSpacing(0, 1.15f);
         card.addView(reports);
-        TextView hint = text("Pick your car. The app sends nothing to the car until you confirm.", 16, MUTED, false);
+        TextView hint = text("Pick your CAN box. The app sends nothing to the car until you confirm.", 16, MUTED,
+                false);
         hint.setLineSpacing(0, 1.15f);
         LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(-1, -2);
         hintLp.topMargin = dp(8);
         card.addView(hint, hintLp);
-        for (String c : CarSetup.choices(detection)) addChoice(card, c);
+        addDropdown(card);
+        String warning = CarSetup.mismatch(detection, selected);
+        if (warning != null) {
+            TextView w = text(warning, 16, WARN, false);
+            w.setLineSpacing(0, 1.15f);
+            LinearLayout.LayoutParams wLp = new LinearLayout.LayoutParams(-1, -2);
+            wLp.topMargin = dp(12);
+            card.addView(w, wLp);
+        }
 
         LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, -2);
         cardLp.topMargin = dp(8);
@@ -106,7 +106,7 @@ public class SetupActivity extends Activity {
         // Below the scrolling part, so the buttons stay on screen however many choices there are.
         LinearLayout buttons = new LinearLayout(this);
         buttons.setPadding(dp(narrow ? 16 : 32), dp(8), dp(narrow ? 16 : 32), dp(16));
-        TextView confirm = text(selected == null ? "Choose a car"
+        TextView confirm = text(selected == null ? "Choose a CAN box"
                         : CarSetup.NOT_LISTED.equals(selected) ? "Confirm: send nothing" : "Confirm",
                 20, selected != null ? TEXT : MUTED, true);
         confirm.setGravity(Gravity.CENTER);
@@ -161,16 +161,14 @@ public class SetupActivity extends Activity {
         });
     }
 
-    /** One selectable row with a round mark, filled when selected. */
-    private void addChoice(LinearLayout card, final String choice) {
-        boolean on = choice.equals(selected);
+    /** The chosen CAN box with a down arrow; a tap opens the list. An amber stripe marks an untested one. */
+    private void addDropdown(LinearLayout card) {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(16), dp(12), dp(16), dp(12));
+        row.setPadding(dp(20), dp(12), dp(20), dp(12));
         row.setMinimumHeight(dp(64));
-        boolean beta = CarSetup.profileCode(choice) != null;
-        Drawable bg = on ? pressable(NEUTRAL, NEUTRAL_PRESSED, 2, ACCENT) : pressable(CARD, NEUTRAL, 1, CARD_EDGE);
-        if (beta) {
+        Drawable bg = pressable(NEUTRAL, NEUTRAL_PRESSED, 2, selected == null ? OFF_EDGE : ACCENT);
+        if (selected != null && CarSetup.beta(selected)) {
             // An amber stripe along the left edge: the row's own shape drawn over an amber one, shifted right.
             LayerDrawable striped = new LayerDrawable(new Drawable[]{shape(WARN, 16, 0, 0), bg});
             striped.setLayerInset(1, dp(6), 0, 0, 0);
@@ -180,38 +178,35 @@ public class SetupActivity extends Activity {
         row.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                selected = choice;
-                setContentView(build());
+                CanBoxPicker.show(SetupActivity.this, detection, selected, new CanBoxPicker.Done() {
+                    @Override
+                    public void picked(String choice) {
+                        selected = choice;
+                        setContentView(build());
+                    }
+                });
             }
         });
-        View mark = new View(this);
-        GradientDrawable d = new GradientDrawable();
-        d.setShape(GradientDrawable.OVAL);
-        d.setStroke(dp(2), on ? ACCENT : OFF_EDGE);
-        if (on) d.setColor(ACCENT);
-        mark.setBackgroundDrawable(d);
-        row.addView(mark, new LinearLayout.LayoutParams(dp(20), dp(20)));
-        LinearLayout.LayoutParams labelLp = new LinearLayout.LayoutParams(0, -2, 1f);
-        labelLp.leftMargin = dp(16);
         LinearLayout label = new LinearLayout(this);
         label.setOrientation(LinearLayout.VERTICAL);
-        label.addView(text(CarSetup.choiceLabel(choice), 18, on ? TEXT : MUTED, on));
-        if (beta) label.addView(text("Untested. It may do nothing or the wrong thing.", 16, MUTED, false));
-        row.addView(label, labelLp);
+        label.addView(text(selected == null ? "Choose your CAN box" : CarSetup.choiceLabel(selected), 18,
+                selected == null ? MUTED : TEXT, selected != null));
+        if (selected != null && CarSetup.beta(selected)) {
+            label.addView(text("Untested. It may do nothing or the wrong thing.", 16, MUTED, false));
+        }
+        row.addView(label, new LinearLayout.LayoutParams(0, -2, 1f));
+        row.addView(text("▾", 24, TEXT, true));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        lp.topMargin = dp(12);
+        lp.topMargin = dp(16);
         card.addView(row, lp);
     }
 
     private void confirm() {
         if (selected == null) return;
         Prefs.setSetup(this, selected, detection);
-        if (CarSetup.profileCode(selected) != null && !Prefs.otherCars(this)) {
-            Prefs.setOtherCars(this, true);
-            LogFile.append(this, "beta: other cars on");
-        }
         LogFile.append(this, "car setup: confirmed " + CarSetup.choiceLabel(selected) + " for "
-                + CarSetup.detectionName(detection));
+                + CarSetup.detectionName(detection)
+                + (CarSetup.mismatch(detection, selected) != null ? ", which it does not match" : ""));
         finish();
     }
 
