@@ -37,6 +37,8 @@ public class SetupActivity extends Activity {
     private boolean narrow;
     private String detection;
     private String selected;
+    // The selected box came through the list, so its warning, if any, was accepted there.
+    private boolean warned;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -182,6 +184,7 @@ public class SetupActivity extends Activity {
                     @Override
                     public void picked(String choice) {
                         selected = choice;
+                        warned = true;
                         setContentView(build());
                     }
                 });
@@ -203,6 +206,17 @@ public class SetupActivity extends Activity {
 
     private void confirm() {
         if (selected == null) return;
+        if (!warned) {
+            // Preselected from the last pick, which may not be what the head unit reports now.
+            CanBoxPicker.confirmMismatch(this, detection, selected, new CanBoxPicker.Done() {
+                @Override
+                public void picked(String choice) {
+                    warned = true;
+                    confirm();
+                }
+            });
+            return;
+        }
         Prefs.setSetup(this, selected, detection);
         LogFile.append(this, "car setup: confirmed " + CarSetup.choiceLabel(selected) + " for "
                 + CarSetup.detectionName(detection)

@@ -37,7 +37,8 @@ final class CanBoxPicker {
                 .show();
     }
 
-    private static void confirmMismatch(Activity a, String detection, final String choice, final Done done) {
+    /** Calls done at once when the choice fits the head unit, else only after the user accepts the warning. */
+    static void confirmMismatch(Activity a, String detection, final String choice, final Done done) {
         String warning = CarSetup.mismatch(detection, choice);
         if (warning == null) {
             done.picked(choice);
