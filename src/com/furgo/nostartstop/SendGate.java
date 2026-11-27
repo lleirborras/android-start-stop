@@ -80,6 +80,16 @@ final class SendGate {
     private SendGate() {
     }
 
+    /**
+     * The kind a TWUtil command becomes on this link: the PSA bytes and profile commands go to a beta link as
+     * OTHER_SET or OTHER_QUERY. UNIT_QUERY stays, and has no beta link to go to.
+     */
+    static Kind onLink(Kind kind, Detection.Platform link) {
+        if (link != Detection.Platform.FYT && link != Detection.Platform.MICRONTEK) return kind;
+        if (kind == Kind.UNIT_QUERY || kind == Kind.OTHER_SET || kind == Kind.OTHER_QUERY) return kind;
+        return kind == Kind.PSA_SET || kind == Kind.PROFILE_SET ? Kind.OTHER_SET : Kind.OTHER_QUERY;
+    }
+
     static Verdict decide(Kind kind, Snapshot s) {
         String detection = s.detection.carSetup();
         int setup = CarSetup.decide(detection, s.setupChoice, s.setupConfirmed);

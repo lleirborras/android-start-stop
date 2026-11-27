@@ -566,14 +566,13 @@ final class CanBox {
      * is unused. Returns -2 when the link is not ready yet, -1 when nothing was sent.
      */
     private int write(SendGate.Kind kind, int cmd, byte[] data) {
-        if (other != null && kind != SendGate.Kind.UNIT_QUERY) {
-            kind = kind == SendGate.Kind.PSA_SET || kind == SendGate.Kind.PROFILE_SET
-                    ? SendGate.Kind.OTHER_SET : SendGate.Kind.OTHER_QUERY;
-        }
         if (!linked()) {
             log("not open");
             return -1;
         }
+        // The unit queries are TWUtil messages, with no data for a beta link.
+        if (other != null && kind == SendGate.Kind.UNIT_QUERY) return -1;
+        if (other != null) kind = SendGate.onLink(kind, other.platform());
         SendGate.Verdict v = gate(kind);
         if (!v.send()) {
             if (v.result == SendGate.NOT_READY) return -2;

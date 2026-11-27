@@ -203,6 +203,17 @@ public class SendGateTest {
         check("open refusal Microntek unknown", SendGate.carRefusal(Platform.MICRONTEK, null), "CAN box type unknown");
         check("open refusal FYT unknown", SendGate.carRefusal(Platform.FYT, null), OtherUnits.NOT_IDENTIFIED);
 
+        // The kind on each link.
+        check("PSA set on FYT", SendGate.onLink(Kind.PSA_SET, Platform.FYT), Kind.OTHER_SET);
+        check("PSA query on Microntek", SendGate.onLink(Kind.PSA_QUERY, Platform.MICRONTEK), Kind.OTHER_QUERY);
+        check("profile set on FYT", SendGate.onLink(Kind.PROFILE_SET, Platform.FYT), Kind.OTHER_SET);
+        check("profile query on FYT", SendGate.onLink(Kind.PROFILE_QUERY, Platform.FYT), Kind.OTHER_QUERY);
+        check("unit query on FYT", SendGate.onLink(Kind.UNIT_QUERY, Platform.FYT), Kind.UNIT_QUERY);
+        for (Kind k : Kind.values()) {
+            check("TWUtil keeps " + k, SendGate.onLink(k, Platform.TOPWAY), k);
+            check("no link keeps " + k, SendGate.onLink(k, Platform.NONE), k);
+        }
+
         // An undriven profile: the setup never confirms it, so nothing reaches the profile rules.
         check("undriven profile", van.vendor(JEEP).choice("profile:880").on(Kind.PROFILE_SET), REFUSE, "car setup");
         System.out.println("SendGateTest passed");
