@@ -2,7 +2,9 @@ package com.furgo.nostartstop;
 
 import android.app.Activity;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.LayerDrawable;
 import android.graphics.drawable.StateListDrawable;
 import android.os.Bundle;
 import android.util.TypedValue;
@@ -23,6 +25,7 @@ public class SetupActivity extends Activity {
     private static final int TEXT = 0xFFEAEFF5;
     private static final int MUTED = 0xFF8792A2;
     private static final int ACCENT = 0xFF35D6A0;
+    private static final int WARN = 0xFFFFB02E;
     private static final int PRIMARY = 0xFF187A5A;
     private static final int PRIMARY_PRESSED = 0xFF1F8F6C;
     private static final int NEUTRAL = 0xFF1D2430;
@@ -93,8 +96,21 @@ public class SetupActivity extends Activity {
         card.addView(hint, hintLp);
         for (String c : CarSetup.choices(detection)) addChoice(card, c);
 
-        TextView confirm = text("Confirm", 20, selected != null ? TEXT : MUTED, true);
+        LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, -2);
+        cardLp.topMargin = dp(8);
+        page.addView(card, cardLp);
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(page, new FrameLayout.LayoutParams(-1, -2));
+
+        // Below the scrolling part, so the buttons stay on screen however many choices there are.
+        LinearLayout buttons = new LinearLayout(this);
+        buttons.setPadding(dp(narrow ? 16 : 32), dp(8), dp(narrow ? 16 : 32), dp(16));
+        TextView confirm = text(selected == null ? "Choose a car"
+                        : CarSetup.NOT_LISTED.equals(selected) ? "Confirm: send nothing" : "Confirm",
+                20, selected != null ? TEXT : MUTED, true);
         confirm.setGravity(Gravity.CENTER);
+        confirm.setEnabled(selected != null);
         confirm.setBackgroundDrawable(selected != null ? pressable(PRIMARY, PRIMARY_PRESSED, 0)
                 : pressable(NEUTRAL, NEUTRAL_PRESSED, 2));
         confirm.setOnClickListener(new View.OnClickListener() {
@@ -103,19 +119,28 @@ public class SetupActivity extends Activity {
                 confirm();
             }
         });
-        LinearLayout.LayoutParams confirmLp = new LinearLayout.LayoutParams(-1, dp(64));
-        confirmLp.topMargin = dp(20);
-        card.addView(confirm, confirmLp);
+        buttons.addView(confirm, new LinearLayout.LayoutParams(0, dp(64), 1f));
+        TextView notNow = text("Not now", 20, MUTED, true);
+        notNow.setGravity(Gravity.CENTER);
+        notNow.setPadding(dp(32), 0, dp(32), 0);
+        notNow.setBackgroundDrawable(pressable(NEUTRAL, NEUTRAL_PRESSED, 2));
+        notNow.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                finish();
+            }
+        });
+        LinearLayout.LayoutParams notNowLp = new LinearLayout.LayoutParams(-2, dp(64));
+        notNowLp.leftMargin = dp(12);
+        buttons.addView(notNow, notNowLp);
 
-        LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, -2);
-        cardLp.topMargin = dp(8);
-        page.addView(card, cardLp);
-
-        final ScrollView scroll = new ScrollView(this);
-        scroll.setBackgroundColor(BG);
-        scroll.addView(page, new FrameLayout.LayoutParams(-1, -2));
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(BG);
+        root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1f));
+        root.addView(buttons, new LinearLayout.LayoutParams(-1, -2));
         // The window's real width decides: split screen does not always come with a new configuration.
-        scroll.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+        root.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
             @Override
             public void onLayoutChange(View v, int l, int t, int r, int b, int ol, int ot, int or, int ob) {
                 if (r > l && (r - l < dp(NARROW_DP)) != narrow) {
@@ -124,7 +149,7 @@ public class SetupActivity extends Activity {
                 }
             }
         });
-        return scroll;
+        return root;
     }
 
     private void redraw() {
@@ -143,8 +168,15 @@ public class SetupActivity extends Activity {
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(16), dp(12), dp(16), dp(12));
         row.setMinimumHeight(dp(64));
-        row.setBackgroundDrawable(on ? pressable(NEUTRAL, NEUTRAL_PRESSED, 2, ACCENT)
-                : pressable(CARD, NEUTRAL, 1, CARD_EDGE));
+        boolean beta = CarSetup.profileCode(choice) != null;
+        Drawable bg = on ? pressable(NEUTRAL, NEUTRAL_PRESSED, 2, ACCENT) : pressable(CARD, NEUTRAL, 1, CARD_EDGE);
+        if (beta) {
+            // An amber stripe along the left edge: the row's own shape drawn over an amber one, shifted right.
+            LayerDrawable striped = new LayerDrawable(new Drawable[]{shape(WARN, 16, 0, 0), bg});
+            striped.setLayerInset(1, dp(6), 0, 0, 0);
+            bg = striped;
+        }
+        row.setBackgroundDrawable(bg);
         row.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -161,7 +193,11 @@ public class SetupActivity extends Activity {
         row.addView(mark, new LinearLayout.LayoutParams(dp(20), dp(20)));
         LinearLayout.LayoutParams labelLp = new LinearLayout.LayoutParams(0, -2, 1f);
         labelLp.leftMargin = dp(16);
-        row.addView(text(CarSetup.choiceLabel(choice), 18, on ? TEXT : MUTED, on), labelLp);
+        LinearLayout label = new LinearLayout(this);
+        label.setOrientation(LinearLayout.VERTICAL);
+        label.addView(text(CarSetup.choiceLabel(choice), 18, on ? TEXT : MUTED, on));
+        if (beta) label.addView(text("Untested. It may do nothing or the wrong thing.", 16, MUTED, false));
+        row.addView(label, labelLp);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
         lp.topMargin = dp(12);
         card.addView(row, lp);
