@@ -215,6 +215,8 @@ final class CanBox {
 
     // Per process: each reason is logged once, not on every reopen of the screen.
     private static String openLogged;
+    // Per process and never reset, so the retries at boot log a beta car refusal once.
+    private static String otherOpenLogged;
     // Set while open() refuses for the car setup or the profile, for the CAR NOT SUPPORTED state.
     private String refused;
     // The car the last beta open refused, which leaves no link to ask.
@@ -297,8 +299,8 @@ final class CanBox {
         String why = SendGate.carRefusal(o.platform(), car);
         if (why != null && !why.equals(OtherUnits.NOT_IDENTIFIED)) {
             o.close();
-            if (!why.equals(openLogged)) log("beta: " + o.name() + " " + why + ", nothing will be sent");
-            openLogged = why;
+            if (!why.equals(otherOpenLogged)) log("beta: " + o.name() + " " + why + ", nothing will be sent");
+            otherOpenLogged = why;
             if (car != null) otherRefused = why;
             return false;
         }

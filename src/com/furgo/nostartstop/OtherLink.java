@@ -156,8 +156,9 @@ abstract class OtherLink {
         }
 
         static OtherLink open(Context c, Sink sink, boolean watch) {
-            // CanBox closes it again when the send gate refuses this CAN box type.
+            // A refused CAN box type is not started: CanBox asks the send gate and closes it again.
             Microntek m = new Microntek(c, sink, watch, carParameter("cfg_canbus="));
+            if (SendGate.carRefusal(Detection.Platform.MICRONTEK, m.type) != null) return m;
             if (watch) m.handler.post(m.poll);
             else m.context.registerReceiver(m.receiver, new IntentFilter(SYNC));
             return m;
