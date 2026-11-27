@@ -16,7 +16,10 @@ public class CarSetupTest {
         check("unreadable version", CarSetup.detection("abc_1"), NONE);
         check("FYT unit", CarSetup.detection(null, Detection.Platform.FYT), "fyt");
         check("Microntek unit", CarSetup.detection(null, Detection.Platform.MICRONTEK), "microntek");
-        check("both: neither", CarSetup.detection(null, Detection.Platform.AMBIGUOUS), NONE);
+        check("both", CarSetup.detection(null, Detection.Platform.AMBIGUOUS), "ambiguous");
+        check("nothing preselected on both", CarSetup.suggestion("ambiguous", null, BETA), null);
+        check("FYT on both warns", CarSetup.mismatch("ambiguous", "fyt:psa_raise") != null, true);
+        check("PSA on both warns", CarSetup.mismatch("ambiguous", "psa_raise") != null, true);
         check("car app wins over FYT", CarSetup.detection("961_0000_260130", Detection.Platform.FYT), VAN);
 
         // Which builds offer the untested choices.
@@ -24,7 +27,8 @@ public class CarSetupTest {
         check("beta", CarSetup.betaBuild("0.21.0-beta.3"), true);
         check("local build", CarSetup.betaBuild("dev"), true);
         check("CI build", CarSetup.betaBuild("dev-abc1234"), true);
-        check("no name", CarSetup.betaBuild(null), true);
+        check("no name counts as stable", CarSetup.betaBuild(null), false);
+        check("unreadable name counts as stable", CarSetup.betaBuild("unknown"), false);
 
         // Nothing confirmed: everyone is asked once, the van included.
         check("van not confirmed", CarSetup.decide(VAN, null, null, STABLE), ASK);

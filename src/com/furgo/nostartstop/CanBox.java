@@ -126,6 +126,13 @@ final class CanBox {
         this.listener = listener;
     }
 
+    /** Whether the open link is still the one the pick calls for; false after the pick moved to another link. */
+    boolean followsPick() {
+        Detection.Platform p = chosenPlatform();
+        if (other != null) return other.platform() == p;
+        return tw == null || p == Detection.Platform.TOPWAY || p == Detection.Platform.NONE;
+    }
+
     /** True while the beta FYT or Microntek link is the open one. */
     boolean usesOtherLink() {
         return other != null;
@@ -133,7 +140,7 @@ final class CanBox {
 
     /** Beta car profile: stop-start as the car last reported it, or null without a profile or a report. */
     Boolean reportedOn() {
-        return profile == null ? null : profileOn;
+        return profile == null || mismatched ? null : profileOn;
     }
 
     /** Beta: why this head unit's car or CAN box is not supported, or null. */
@@ -233,6 +240,9 @@ final class CanBox {
     private static String otherOpenLogged;
     // Set while open() refuses for the car setup or the profile, for the CAR NOT SUPPORTED state.
     private String refused;
+    // The pick is not what the head unit reports: frames read with its layout are not trusted as the car's state.
+    private boolean mismatched;
+
     // The car the last beta open refused, which leaves no link to ask.
     private String otherRefused;
 
@@ -269,6 +279,9 @@ final class CanBox {
             }
             openLogged = null;
         }
+        Detection.Platform chosen = chosenPlatform();
+        if (chosen == Detection.Platform.FYT || chosen == Detection.Platform.MICRONTEK) return openOther();
+        mismatched = CarSetup.mismatch(DeviceWatch.carDetection(context), Prefs.setupChoice(context)) != null;
         extraIdsRefused = null;
         TWUtil t = captureFrames && power == null ? connect(ALL_IDS, true) : null;
         extraIds = t != null;
@@ -312,6 +325,8 @@ final class CanBox {
     private boolean openOther() {
         Detection.Platform p = chosenPlatform();
         if (p != Detection.Platform.FYT && p != Detection.Platform.MICRONTEK) return false;
+        // The watch service skips the send gate: it opens a beta link only for a confirmed pick too.
+        if (setupDecision(context) != CarSetup.SEND) return false;
         LinkSink sink = new LinkSink();
         OtherLink o = OtherLink.open(context, DeviceWatch.detect(context), p, sink, power != null);
         sink.link = o;
@@ -431,8 +446,12 @@ final class CanBox {
 
     /** Beta profile: the setting as the car reports it. The echo the callers wait for is "it is what was sent". */
     private void onProfileState(boolean on) {
-        if (awaitingReport && on == wantOn) log("car reports stop-start " + (on ? "on" : "off") + ", as sent");
-        else if (profileOn == null || profileOn != on) log("car reports stop-start " + (on ? "on" : "off"));
+        String unverified = mismatched ? " (unverified: the head unit reports another box)" : "";
+        if (awaitingReport && on == wantOn) {
+            log("car reports stop-start " + (on ? "on" : "off") + ", as sent" + unverified);
+        } else if (profileOn == null || profileOn != on) {
+            log("car reports stop-start " + (on ? "on" : "off") + unverified);
+        }
         if (on == wantOn) awaitingReport = false;
         profileOn = on;
         listener.onEcho(on == wantOn);

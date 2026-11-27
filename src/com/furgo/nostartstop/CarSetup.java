@@ -9,7 +9,7 @@ import java.util.List;
  * differs from the detection is sent too, once the user confirmed it against a warning.
  * <p>
  * Detection: "topway:&lt;code&gt;" when the vendor car app names a profile, "fyt" or "microntek" for those head units
- * without it, else "none".
+ * without it, "ambiguous" for a unit with both, else "none".
  * Choice: "psa_raise", "profile:&lt;code&gt;" for a profile {@link CarProfile#forBeta} drives, "fyt:psa_raise" or
  * "microntek:psa_raise" for PSA Raise over those head units' links, or "not_listed". A stable release offers only
  * "psa_raise", the one tested on a car; a beta or local build offers them all.
@@ -21,16 +21,19 @@ final class CarSetup {
     static final String FYT_PSA = "fyt:psa_raise";
     static final String MICRONTEK_PSA = "microntek:psa_raise";
     static final String NOT_LISTED = "not_listed";
-    static final String FYT = "fyt", MICRONTEK = "microntek";
+    static final String FYT = "fyt", MICRONTEK = "microntek", BOTH = "ambiguous";
     private static final String TOPWAY = "topway:";
     private static final String PROFILE = "profile:";
 
     private CarSetup() {
     }
 
-    /** A stable release is named X.Y.Z; betas ("X.Y.Z-beta.N") and local builds ("dev…") offer the beta CAN boxes. */
+    /**
+     * Betas ("X.Y.Z-beta.N") and local builds ("dev…") offer the beta CAN boxes. Anything else counts as stable, an
+     * unreadable name included.
+     */
     static boolean betaBuild(String versionName) {
-        return versionName == null || !versionName.matches("[0-9]{1,6}\\.[0-9]{1,6}\\.[0-9]{1,6}");
+        return versionName != null && (versionName.startsWith("dev") || versionName.contains("-beta."));
     }
 
     /** From the vendor car app's version name, or null when it is absent. */
@@ -44,6 +47,7 @@ final class CarSetup {
         if (code != null) return TOPWAY + code;
         if (other == Detection.Platform.FYT) return FYT;
         if (other == Detection.Platform.MICRONTEK) return MICRONTEK;
+        if (other == Detection.Platform.AMBIGUOUS) return BOTH;
         return NONE;
     }
 
@@ -95,7 +99,8 @@ final class CarSetup {
         boolean fits;
         if (PSA_RAISE.equals(choice)) {
             CarProfile p = code == null ? null : CarProfile.of(code);
-            fits = !FYT.equals(detection) && !MICRONTEK.equals(detection) && (p == null || p == CarProfile.PSA_RAISE);
+            fits = !FYT.equals(detection) && !MICRONTEK.equals(detection) && !BOTH.equals(detection)
+                    && (p == null || p == CarProfile.PSA_RAISE);
         } else if (FYT_PSA.equals(choice)) {
             fits = FYT.equals(detection);
         } else if (MICRONTEK_PSA.equals(choice)) {
@@ -116,6 +121,7 @@ final class CarSetup {
         String detected;
         if (FYT.equals(detection)) detected = FYT_PSA;
         else if (MICRONTEK.equals(detection)) detected = MICRONTEK_PSA;
+        else if (BOTH.equals(detection)) detected = null;
         else if (code == null || CarProfile.of(code) == null || CarProfile.of(code) == CarProfile.PSA_RAISE) {
             detected = PSA_RAISE;
         } else detected = driven(code) != null ? profileChoice(code) : null;
@@ -159,6 +165,7 @@ final class CarSetup {
     static String detectionLabel(String detection) {
         if (FYT.equals(detection)) return "This looks like an FYT head unit (Teyes, Joying and others).";
         if (MICRONTEK.equals(detection)) return "This looks like a Microntek head unit (Dasaita, Xtrons and others).";
+        if (BOTH.equals(detection)) return "This head unit has both FYT and Microntek CAN services.";
         String code = detectedCode(detection);
         if (code == null) return "The head unit does not say which car it is set up for.";
         CarProfile p = CarProfile.of(code);
@@ -170,6 +177,7 @@ final class CarSetup {
     static String detectionName(String detection) {
         if (FYT.equals(detection)) return "an FYT head unit";
         if (MICRONTEK.equals(detection)) return "a Microntek head unit";
+        if (BOTH.equals(detection)) return "both FYT and Microntek";
         String code = detectedCode(detection);
         return code == null ? "no profile" : "profile " + code;
     }

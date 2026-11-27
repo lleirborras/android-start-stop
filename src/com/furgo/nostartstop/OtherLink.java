@@ -74,16 +74,16 @@ abstract class OtherLink {
     static OtherLink open(Context c, Detection d, Detection.Platform p, Sink sink, boolean watch) {
         boolean present = p == Detection.Platform.FYT ? d.fyt : p == Detection.Platform.MICRONTEK && d.microntek;
         if (!present) {
-            if (!missingLogged) sink.log("beta: no " + (p == Detection.Platform.FYT ? "FYT" : "Microntek")
+            if (p != missingLogged) sink.log("beta: no " + (p == Detection.Platform.FYT ? "FYT" : "Microntek")
                     + " CAN service on this head unit, nothing will be sent");
-            missingLogged = true;
+            missingLogged = p;
             return null;
         }
         return p == Detection.Platform.MICRONTEK ? Microntek.open(c, sink, watch) : Fyt.open(c, sink, watch);
     }
 
     // Open is retried every few seconds at boot; the reason is the same each time.
-    private static boolean missingLogged;
+    private static Detection.Platform missingLogged;
 
     private static String versionName(Context c, String pkg) {
         try {

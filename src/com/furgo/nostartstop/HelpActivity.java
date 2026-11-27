@@ -144,7 +144,8 @@ public class HelpActivity extends Activity {
     private void carSetup(LinearLayout column) {
         LinearLayout card = card(column, "Your car");
         para(card, "The app sends nothing to the car until you confirm which car it is. It asks once after it is "
-                + "installed or updated, and again when the head unit's CAN box setting changes.");
+                + "installed or updated, again when the head unit's CAN box setting changes, and when a stable "
+                + "release replaces a beta whose untested CAN box it does not offer.");
         item(card, "SET UP YOUR CAR", "Shown at the top until you confirm; tap it to open the car setup. The switch "
                 + "button is grey and nothing is sent, also not at engine start.");
         item(card, "My car is not listed", "Confirm: send nothing. The app sends nothing and shows CAR NOT SUPPORTED.");

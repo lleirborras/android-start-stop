@@ -181,7 +181,7 @@ public class SendGateTest {
         check("FYT reason", van.fyt("281").on(Kind.OTHER_SET).why, "canbus id 281 is not PSA with a Raise box (339)");
         check("Microntek reason", van.microntek("59").on(Kind.OTHER_SET).why,
                 "CAN box type 59 is not PSA with a Raise box (50)");
-        check("FYT picked on a unit with both", van.fyt("339").platforms(false, true, true).confirmed("none")
+        check("FYT picked on a unit with both", van.fyt("339").platforms(false, true, true).confirmed("ambiguous")
                 .on(Kind.OTHER_SET), SEND, null);
         check("FYT chosen, TWUtil command", van.fyt("339").on(Kind.PSA_SET), REFUSE, "car setup");
         check("FYT chosen, unit query", van.fyt("339").on(Kind.UNIT_QUERY), REFUSE, "car setup");
