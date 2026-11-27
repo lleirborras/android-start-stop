@@ -10,6 +10,7 @@ import java.util.List;
  */
 final class PowerWatch {
     static final int STATE_OFF = 1;
+    static final int STATE_SLEEP = 4;
     static final int STATE_WAKING = 5;
     static final int STATE_AWAKE = 6;
     static final int STATE_CRANK = 9;
@@ -36,7 +37,8 @@ final class PowerWatch {
     private long offAt;
 
     int onState(int state, long now) {
-        if (state == STATE_OFF) {
+        // 4 only ever followed a 1 on the van; seen alone, the 1 was missed, or a start after it armed a switch.
+        if (state == STATE_OFF || state == STATE_SLEEP) {
             cranking = false;
             offSeen = true;
             offAt = now;
