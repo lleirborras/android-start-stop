@@ -20,6 +20,16 @@ public class VersionTest {
         check("v0.4", "0.3.0", false);
         check("v0.4.0.1", "0.3.0", false);
         check("v0.4.0-beta", "0.3.0", false);
+        check("v0.4.0-rc.1", "0.3.0", false);
+
+        // A beta comes after the release before it and before its own stable release.
+        check("v0.4.0-beta.7", "0.3.0", true);
+        check("v0.4.0", "0.4.0-beta.7", true);
+        check("v0.4.0-beta.7", "0.4.0", false);
+        check("v0.4.0-beta.8", "0.4.0-beta.7", true);
+        check("v0.4.0-beta.10", "0.4.0-beta.9", true);
+        check("v0.4.0-beta.7", "0.4.0-beta.7", false);
+        check("v0.3.1", "0.4.0-beta.7", false);
         check("latest", "0.3.0", false);
         check("", "0.3.0", false);
         check(null, "0.3.0", false);

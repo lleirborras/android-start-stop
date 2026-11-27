@@ -144,9 +144,10 @@ public class UpdateJob extends JobService {
 
     private static boolean check(Context app) {
         String installed = MainActivity.versionName(app);
+        boolean beta = Prefs.betaProgram(app);
         Updater.Release latest;
         try {
-            latest = Updater.latest();
+            latest = Updater.latest(beta);
         } catch (Updater.NoApkException e) {
             // A release without an APK is an answer, not a failure: wait for the next check.
             completedWithout(app, "release has no APK");
@@ -155,17 +156,17 @@ public class UpdateJob extends JobService {
             logFailure(app, UpdateCheck.reason(e));
             return false;
         }
-        if (!UpdateCheck.validTag(latest.tag)) {
+        if (!UpdateCheck.forChannel(latest.tag, beta)) {
             completedWithout(app, "unexpected tag");
             return true;
         }
         remember(app, latest.tag);
-        if (UpdateCheck.offerable(latest.tag, installed) == null) {
+        if (UpdateCheck.offerable(latest.tag, installed, beta) == null) {
             LogFile.append(app, "update check: up to date (" + latest.tag + ")");
             return true;
         }
         LogFile.append(app, "update check: " + latest.tag + " available");
-        if (UpdateCheck.shouldNotify(latest.tag, installed, Prefs.notifiedTag(app))) {
+        if (UpdateCheck.shouldNotify(latest.tag, installed, Prefs.notifiedTag(app), beta)) {
             notifyUpdate(app, latest.tag);
             Prefs.setNotifiedTag(app, latest.tag);
         }

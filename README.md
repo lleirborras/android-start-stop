@@ -108,6 +108,10 @@ With **Check for updates automatically** on (the default), Android runs a backgr
 
 Turn the switch off to stop all background update checks. The **Check for updates** button keeps working.
 
+### Beta program
+
+With **Beta program** on, the update check and the button also offer test builds (GitHub pre-releases tagged `vX.Y.Z-beta.N`), so a change can be tried on a head unit before it is released to everyone. A beta always installs over the stable release it follows. Turning the switch off keeps the installed beta: Android does not let an app install an older version of itself, so the next stable release newer than the beta (`vX.Y.Z`, which comes after any `vX.Y.Z-beta.N`) is offered instead. To go back at once, uninstall the app and install the latest release; that clears its settings.
+
 Apart from that check and **Share diagnostics**, the app only uses the network when you tap the button: it asks `api.github.com` for the latest release and downloads the APK from `github.com`. Android refuses any APK that is not signed with the same key as the installed app, so a locally built (debug-signed) install cannot be updated this way.
 
 ## Switch off at engine start: how and limits
@@ -353,6 +357,8 @@ To release by hand instead, push a tag (the notes are then GitHub's generated li
 ```sh
 git tag v0.2.0 && git push origin v0.2.0
 ```
+
+A beta is published by hand: **Actions** → **ci** → **Run workflow** on the branch to try. It is tagged `v<next minor>.0-beta.<run number>`, for example `v0.21.0-beta.212` after `v0.20.3`, signed like a release and marked as a pre-release, so GitHub leaves it out of the latest release and only the beta program is offered it. Like every build its version code is the run number, so later builds always install over earlier ones.
 
 [Renovate](https://docs.renovatebot.com/) (`renovate.json`) opens pull requests for new versions of the GitHub Actions (keeping them pinned to commit SHAs) and the pinned JDK patch level. It needs the Renovate GitHub App installed on the repository.
 

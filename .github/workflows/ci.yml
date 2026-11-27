@@ -5,6 +5,8 @@ on:
     branches: [master]
     tags: ['v*']
   pull_request:
+  # Actions > ci > Run workflow publishes a beta of the chosen branch for the app's beta program.
+  workflow_dispatch:
 
 permissions: {}
 
@@ -85,7 +87,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag=""
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            # A beta of the next minor version; the run number orders betas and is also the version code.
+            tags=$(gh api "repos/$GITHUB_REPOSITORY/tags" --paginate --jq '.[].name')
+            latest=$(printf '%s\n' "$tags" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)
+            v="${latest#v}"
+            rest="${v#*.}"
+            major="${v%%.*}"
+            minor="${rest%%.*}"
+            tag="v${major:-0}.$(( ${minor:-0} + 1 )).0-beta.$GITHUB_RUN_NUMBER"
+            echo "beta of '$GITHUB_REF_NAME', latest tag '$latest', beta tag '$tag'"
+          elif [ "$GITHUB_REF_TYPE" = tag ]; then
             tag="$GITHUB_REF_NAME"
           elif [ "$GITHUB_EVENT_NAME" = push ]; then
             # Only a pull request merged into master counts, and it must be the only one for this commit.
@@ -119,8 +131,13 @@ jobs:
               fi
             fi
           fi
-          if [ -n "$tag" ] && ! echo "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "::error::release tag must look like vX.Y.Z"
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            pattern='^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$'
+          else
+            pattern='^v[0-9]+\.[0-9]+\.[0-9]+$'
+          fi
+          if [ -n "$tag" ] && ! echo "$tag" | grep -Eq "$pattern"; then
+            echo "::error::release tag $tag does not match $pattern"
             exit 1
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
@@ -163,7 +180,7 @@ jobs:
   # Runs no code from the repository: it only signs and publishes the APK the build job made.
   release:
     needs: build
-    if: github.event_name == 'push' && needs.build.outputs.tag != ''
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.build.outputs.tag != ''
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -212,7 +229,11 @@ jobs:
           # A hand-pushed tag has no pull request and gets GitHub's generated notes.
           pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
             --jq '.[] | select(.merged_at != null and .base.ref == "master") | .number' | head -n 1)
-          if [ "$GITHUB_REF_TYPE" != tag ] && [ -n "$pr" ]; then
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            # A pre-release: left out of releases/latest, so only the beta program is offered it.
+            gh release create "$RELEASE_TAG" "$apk" --target "$GITHUB_SHA" --title "$RELEASE_TAG" --prerelease \
+              --notes "Beta build of \`$GITHUB_REF_NAME\` at $GITHUB_SHA."
+          elif [ "$GITHUB_REF_TYPE" != tag ] && [ -n "$pr" ]; then
             gh api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq '"## " + .title + "\n\n" + (.body // "")' > "$RUNNER_TEMP/notes.md"
             gh release create "$RELEASE_TAG" "$apk" --target "$GITHUB_SHA" --title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/notes.md"
           else

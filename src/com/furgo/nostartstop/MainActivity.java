@@ -95,6 +95,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private Toggle telemetrySwitch;   // null when the build has no PostHog key
     private Toggle captureSwitch;
     private Toggle autoUpdateSwitch;
+    private Toggle betaSwitch;
     private TextView logView;
     private TextView shareText;      // null when the build has no PostHog key
     private View shareDot;
@@ -490,7 +491,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
             public void run() {
                 try {
                     if (found == null || found.apkUrl == null) {
-                        final Updater.Release latest = Updater.latest();
+                        final Updater.Release latest = Updater.latest(Prefs.betaProgram(getApplicationContext()));
                         handler.post(new Runnable() {
                             @Override
                             public void run() {
@@ -514,7 +515,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         if (isDestroyed()) return;
         updateBusy = false;
         UpdateJob.remember(this, latest.tag);
-        if (Version.isNewer(latest.tag, versionName())) {
+        if (UpdateCheck.offerable(latest.tag, versionName(), Prefs.betaProgram(this)) != null) {
             boolean installNow = available != null && available.tag.equals(latest.tag);
             available = latest;
             onLog("update available: " + latest.tag);
@@ -551,7 +552,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         if (updateBusy) return;
         String installed = versionName();
         if (available != null && !Version.isNewer(available.tag, installed)) available = null;
-        String tag = UpdateCheck.offerable(Prefs.latestTag(this), installed);
+        String tag = UpdateCheck.offerable(Prefs.latestTag(this), installed, Prefs.betaProgram(this));
         if (tag == null) UpdateJob.cancelNotification(this);
         // Its APK URL is not stored: tapping Install fetches the release again.
         if (tag != null && (available == null || Version.isNewer(tag, available.tag))) {
@@ -613,6 +614,16 @@ public class MainActivity extends Activity implements CanBox.Listener {
         Prefs.setAutoUpdate(this, on);
         onLog(on ? "automatic update check on" : "automatic update check off");
         UpdateJob.schedule(this, true);
+        renderBoot();
+    }
+
+    private void toggleBetaProgram() {
+        boolean on = !Prefs.betaProgram(this);
+        Prefs.setBetaProgram(this, on);
+        onLog(on ? "beta program joined" : "beta program left");
+        if (!updateBusy) available = null;
+        UpdateJob.schedule(this, true);
+        showStoredUpdate();
         renderBoot();
     }
 
@@ -885,6 +896,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         renderSwitch(captureSwitch, Prefs.captureFrames(this));
         if (telemetrySwitch != null) renderSwitch(telemetrySwitch, Prefs.telemetry(this));
         renderSwitch(autoUpdateSwitch, Prefs.autoUpdate(this));
+        renderSwitch(betaSwitch, Prefs.betaProgram(this));
     }
 
     private void renderSwitch(Toggle t, boolean on) {
@@ -951,6 +963,16 @@ public class MainActivity extends Activity implements CanBox.Listener {
                     @Override
                     public void onClick(View v) {
                         toggleAutoUpdate();
+                    }
+                });
+        row = settingsRow(left);
+        betaSwitch = addSetting(row, "Beta program",
+                "Offers test builds before they are released. Leaving keeps the installed build until a newer "
+                        + "stable one is out.",
+                new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        toggleBetaProgram();
                     }
                 });
 

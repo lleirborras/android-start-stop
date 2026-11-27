@@ -16,14 +16,18 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
- * Finds the latest GitHub release and hands its APK to Android's installer.
+ * Finds the latest GitHub release for the update channel and hands its APK to Android's installer.
  * Both methods block on the network; call them off the main thread.
  */
 final class Updater {
     private static final String REPO = "lleirborras/android-start-stop";
     private static final String LATEST_URL = "https://api.github.com/repos/" + REPO + "/releases/latest";
+    // Pre-releases are left out of releases/latest; this lists them too, newest first.
+    private static final String RECENT_URL = "https://api.github.com/repos/" + REPO + "/releases?per_page=20";
     private static final String DOWNLOAD_PREFIX = "https://github.com/" + REPO + "/releases/download/";
     private static final int MAX_APK_BYTES = 20 * 1024 * 1024;
 
@@ -45,19 +49,37 @@ final class Updater {
         }
     }
 
-    static Release latest() throws IOException, JSONException {
-        HttpURLConnection c = open(LATEST_URL);
+    /** The newest release for the channel: GitHub's latest release, or with beta the newest of the recent ones. */
+    static Release latest(boolean beta) throws IOException, JSONException {
+        if (!beta) return withApk(new JSONObject(get(LATEST_URL)));
+        JSONArray releases = new JSONArray(get(RECENT_URL));
+        List<String> tags = new ArrayList<>();
+        for (int i = 0; i < releases.length(); i++) {
+            JSONObject r = releases.getJSONObject(i);
+            // One entry per release, so an index here is one in releases; a draft gets a tag that never counts.
+            tags.add(r.optBoolean("draft") ? "" : r.optString("tag_name"));
+        }
+        String tag = UpdateCheck.newest(tags, true);
+        if (tag == null) throw new IOException("no release found");
+        return withApk(releases.getJSONObject(tags.indexOf(tag)));
+    }
+
+    private static Release withApk(JSONObject release) throws JSONException, NoApkException {
+        String tag = release.getString("tag_name");
+        JSONArray assets = release.getJSONArray("assets");
+        for (int i = 0; i < assets.length(); i++) {
+            String url = assets.getJSONObject(i).getString("browser_download_url");
+            if (url.startsWith(DOWNLOAD_PREFIX) && url.endsWith(".apk")) return new Release(tag, url);
+        }
+        throw new NoApkException("release " + tag + " has no APK");
+    }
+
+    private static String get(String url) throws IOException {
+        HttpURLConnection c = open(url);
         try {
             c.setRequestProperty("Accept", "application/vnd.github+json");
             if (c.getResponseCode() != 200) throw new IOException("GitHub answered " + c.getResponseCode());
-            JSONObject release = new JSONObject(new String(read(c.getInputStream(), 1024 * 1024), "UTF-8"));
-            String tag = release.getString("tag_name");
-            JSONArray assets = release.getJSONArray("assets");
-            for (int i = 0; i < assets.length(); i++) {
-                String url = assets.getJSONObject(i).getString("browser_download_url");
-                if (url.startsWith(DOWNLOAD_PREFIX) && url.endsWith(".apk")) return new Release(tag, url);
-            }
-            throw new NoApkException("release " + tag + " has no APK");
+            return new String(read(c.getInputStream(), 1024 * 1024), "UTF-8");
         } finally {
             c.disconnect();
         }
