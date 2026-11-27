@@ -636,6 +636,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         UpdateJob.schedule(this, true);
         if (updateBusy) return;
         // Checks at once, so the button shows what the chosen channel offers.
+        UpdateJob.cancelNotification(this);
         available = null;
         onUpdateClick();
     }

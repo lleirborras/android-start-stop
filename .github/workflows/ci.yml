@@ -11,7 +11,8 @@ on:
 permissions: {}
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # Betas share one group, so two at once cannot pick the same number.
+  group: ci-${{ github.event_name == 'workflow_dispatch' && 'beta' || github.ref }}
   cancel-in-progress: false
   queue: max    # keep every pending run; the default keeps one, so quick merges lost their release
 
@@ -218,6 +219,22 @@ jobs:
             --ks-pass env:KS_PASS --key-pass env:KS_PASS build/nostartstop.apk
           rm "$RUNNER_TEMP/release.p12"
           "$bt/apksigner" verify build/nostartstop.apk
+
+      # The approval can wait for hours: a stable release of the same version may have come out meanwhile, and
+      # then no one would be offered this beta.
+      - name: Check the beta is still ahead
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          base="${RELEASE_TAG%-beta.*}"
+          latest=$(gh api "repos/$GITHUB_REPOSITORY/tags" --paginate --jq '.[].name' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)
+          if [ -n "$latest" ] && [ "$(printf '%s\n%s\n' "$base" "$latest" | sort -V | tail -n 1)" = "$latest" ]; then
+            echo "::error::$latest is already out, so $RELEASE_TAG would never be offered; run the workflow again"
+            exit 1
+          fi
 
       - name: Publish release
         env:
