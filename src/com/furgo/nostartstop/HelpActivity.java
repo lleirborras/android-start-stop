@@ -143,7 +143,7 @@ public class HelpActivity extends Activity {
         LinearLayout card = card(column, "Your car");
         para(card, "The app sends nothing to the car until you confirm which car it is. It asks once after it is "
                 + "installed or updated, and again when the head unit's CAN box setting changes.");
-        item(card, "SET UP YOUR CAR", "Shown at the top until you confirm. The switch button is grey and nothing "
+        item(card, "SET UP YOUR CAR", "Shown at the top until you confirm; tap it to open the car setup. The switch button is grey and nothing "
                 + "is sent, also not at engine start.");
         item(card, "My car is not listed", "The app sends nothing and shows CAR NOT SUPPORTED.");
         item(card, "Settings", "Opens from the top of the main screen. It shows the car the head unit reports and "
@@ -207,7 +207,7 @@ public class HelpActivity extends Activity {
                 + "speed, battery voltage and the head unit's identity. This may include vehicle details such as "
                 + "the VIN. Leave it off unless you are asked for it.");
         item(card, "Beta: reach the car without adb", "Off by default. Some head units block the link to the car "
-                + "for apps that are not part of the system, and the card says NO LINK TO CAR. This asks Android "
+                + "for apps that are not part of the system, and the card says NOT CONNECTED. This asks Android "
                 + "to lift that block for this app only. The log says if it failed.");
         item(card, "Beta: FYT and Microntek head units", "Off by default. For head units that are not Topway, such "
                 + "as Teyes, Joying or Dasaita, with a PSA car and a Raise CAN box. The app sends nothing if the head "
@@ -277,7 +277,7 @@ public class HelpActivity extends Activity {
         item(card, "\"This app may be harmful\" when installing or updating", "Google Play Protect shows this for "
                 + "apps it does not know; this one is not on Google Play. Tap Install anyway. If an update stopped "
                 + "there, tap Install again. To stop the prompt, turn off Scan apps with Play Protect in the Play Store.");
-        item(card, "NO LINK TO CAR", "The app cannot reach the head unit's car interface. The switch button is grey "
+        item(card, "NOT CONNECTED", "The app cannot reach the head unit's car interface. The switch button is grey "
                 + "and nothing is sent. It only works on Topway head units.");
         item(card, "\"No answer from the car.\"", "The switch was sent but not confirmed within 3 seconds. Check the "
                 + "instrument cluster before you tap again: it may have worked. With \"Nothing sent.\" after it, "

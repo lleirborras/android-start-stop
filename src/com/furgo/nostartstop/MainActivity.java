@@ -619,9 +619,11 @@ public class MainActivity extends Activity implements CanBox.Listener {
         boolean unsupported = !setup && box.unsupported() != null;
         int shown = setup ? LINK_DOWN : shownLink();
         linkView.setText(setup ? "○  SET UP YOUR CAR" : unsupported ? "○  CAR NOT SUPPORTED" : shown == LINK_LIVE ? "●  CONNECTED TO CAR"
-                : shown == LINK_DOWN ? "○  NO LINK TO CAR" : "○  CONNECTING…");
-        linkView.setTextColor(shown == LINK_LIVE ? ACCENT : shown == LINK_DOWN ? LINK_BAD : MUTED);
-        linkView.setClickable(false);
+                : shown == LINK_DOWN ? "○  NOT CONNECTED" : "○  CONNECTING…");
+        linkView.setTextColor(setup || unsupported ? WARN : shown == LINK_LIVE ? ACCENT
+                : shown == LINK_DOWN ? LINK_BAD : MUTED);
+        linkView.setClickable(setup);
+        linkView.setBackgroundDrawable(setup ? pressable(0, NEUTRAL_PRESSED, 0) : null);
 
         boolean bootBusy = BootService.running;
         long last = Prefs.lastSwitchAt(this);
