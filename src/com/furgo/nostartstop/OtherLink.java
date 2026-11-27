@@ -62,6 +62,14 @@ abstract class OtherLink {
     // Open is retried every few seconds at boot; the reason is the same each time.
     private static boolean noServiceLogged;
 
+    private static String versionName(Context c, String pkg) {
+        try {
+            return c.getPackageManager().getPackageInfo(pkg, 0).versionName;
+        } catch (Throwable e) {
+            return null;
+        }
+    }
+
     private static boolean installed(Context c, String pkg) {
         try {
             c.getPackageManager().getPackageInfo(pkg, 0);
@@ -217,13 +225,17 @@ abstract class OtherLink {
         /** Canbus module: engine speed, from box frame 0x7D sub 0x0A on PSA Raise. */
         private static final int RPM = 1032;
         private static final int SET_STOP_START = 18;
-        private static final int STATUS = 168;
         private static final int CANBUS_ID = 1000;
+        // The version line is the same for every link this process opens.
+        private static boolean versionLogged;
         private final Context context;
+        private final String version;
+        /** Update code of the stop-start bit for this com.syu.ms build, or -1 when unknown. */
+        private final int statusCode;
         private final Sink sink;
         private volatile IBinder module;
         private volatile int canbusId = -1;
-        // Last status bit published by update code 168, -1 before the first.
+        // Last status bit published under statusCode, -1 before the first.
         private volatile int status = -1;
         private volatile boolean closed;
         private volatile boolean refusalLogged;
@@ -286,7 +298,7 @@ abstract class OtherLink {
                             onRpm(rpm);
                         }
                     });
-                } else if (update == STATUS) {
+                } else if (update == statusCode && statusCode >= 0) {
                     status = ints[0] & 1;
                     // On another car the status is not ours: it must not show the link as working.
                     if (unsupported() != null) return true;
@@ -314,10 +326,15 @@ abstract class OtherLink {
                         main = remoteModule(toolkit, MAIN);
                         if (main != null) register(main, mainCallback, ACC, true);
                         else sink.log("beta: FYT toolkit has no main module, ignition not followed");
-                    } else {
-                        register(module, callback, STATUS, true);
+                    } else if (statusCode >= 0) {
+                        register(module, callback, statusCode, true);
                     }
                     sink.log("beta: FYT canbus module connected");
+                    if (!versionLogged) {
+                        sink.log("beta: FYT com.syu.ms " + version + (statusCode < 0
+                                ? ": status code unknown, the switch cannot be confirmed" : ", status code " + statusCode));
+                    }
+                    versionLogged = true;
                 } catch (Throwable e) {
                     sink.log("beta: FYT toolkit failed: " + e);
                 }
@@ -372,6 +389,8 @@ abstract class OtherLink {
             context = c.getApplicationContext();
             this.sink = sink;
             this.watch = watch;
+            version = versionName(c, PACKAGE);
+            statusCode = OtherUnits.fytStatusCode(version);
         }
 
         static OtherLink open(Context c, Sink sink, boolean watch) {
@@ -450,7 +469,8 @@ abstract class OtherLink {
             try {
                 IBinder m = module;
                 register(m, callback, CANBUS_ID, false);
-                register(m, callback, watch ? RPM : STATUS, false);
+                if (watch) register(m, callback, RPM, false);
+                else if (statusCode >= 0) register(m, callback, statusCode, false);
                 register(main, mainCallback, ACC, false);
             } catch (Throwable ignored) {
             }
