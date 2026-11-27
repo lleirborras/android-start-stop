@@ -22,6 +22,7 @@ public class BootFlowTest {
         String mark;
         String switchCycle;
         boolean opens = true;
+        boolean ready = true;
         int bit = 1;
 
         @Override
@@ -85,6 +86,11 @@ public class BootFlowTest {
         @Override
         public void query() {
             did.add("query");
+        }
+
+        @Override
+        public boolean linkReady() {
+            return ready;
         }
 
         @Override
@@ -392,6 +398,48 @@ public class BootFlowTest {
                 a("post stop 3000"));
         f.pass(3_000);
         f.did("newer cycle after the stop: stopped", STOPPED);
+
+        // The beta FYT link is open but does not know the car yet: the send waits, unmarked, until it is ready.
+        f = started();
+        f.ready = false;
+        f.pass(5_000);
+        f.did("not ready at the send", a("cancel send", "log: link not ready yet, waiting", "post send 2000"));
+        check("not ready: not marked", f.mark == null);
+        f.pass(2_000);
+        f.did("still not ready: no second line", a("cancel send", "post send 2000"));
+        f.flow.onEcho(false);
+        f.did("a status frame meanwhile tries again", a("log: status received, echo bit 0", "cancel send",
+                "post send 2000"));
+        f.ready = true;
+        f.pass(2_000);
+        f.did("ready: sent", a("cancel send", "mark b#1", "toggle", "record b#1", "post no-echo 3000"));
+
+        // Never ready: given up 30 s after the start, unmarked, like a link that does not open.
+        f = started();
+        f.ready = false;
+        f.pass(5_000);
+        f.did.clear();
+        f.pass(23_999);
+        same("retries before the timeout", f.count("post send 2000"), 11);
+        f.did.clear();
+        f.pass(1);
+        f.did("29 s after the start: once more", a("cancel send", "post send 2000"));
+        f.pass(2_000);
+        f.did("not ready after 30 s", a("cancel send", "log: link not ready after 30 s, nothing sent", "failed b#1"),
+                FINISHED, STOPPED);
+        check("never ready: not marked", f.mark == null);
+        f.pass(60_000);
+        f.did("never ready: nothing left");
+
+        // A tap from the screen while waiting for the link still counts.
+        f = started();
+        f.ready = false;
+        f.pass(5_000);
+        f.did.clear();
+        f.switchCycle = "b#1";
+        f.pass(2_000);
+        f.did("tapped while not ready", a("cancel send", "mark b#1",
+                "log: already switched from the screen during this ignition cycle, nothing sent"), FINISHED, STOPPED);
 
         // The same after a flow that sent nothing and stopped at once.
         f = started();

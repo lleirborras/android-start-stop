@@ -122,6 +122,11 @@ final class CanBox {
         return tw == null && Prefs.otherUnits(context) ? OtherLink.refusedAtOpen : null;
     }
 
+    /** False while the beta link cannot send yet; the TWUtil link is always ready once open. */
+    boolean ready() {
+        return other == null || other.ready();
+    }
+
     private boolean linked() {
         return tw != null || other != null;
     }
@@ -333,8 +338,8 @@ final class CanBox {
 
     /**
      * Sends one stop-start switch command, which flips stop-start on the car. Its bit is the opposite of the
-     * echo in the last status frame, so call it right after a fresh frame. Returns the bit sent, or -1 when
-     * nothing was sent.
+     * echo in the last status frame, so call it right after a fresh frame. Returns the bit sent, -2 when the
+     * beta link is not ready yet, or -1 when nothing was sent.
      */
     int toggle() {
         if (!linked()) {
@@ -345,7 +350,7 @@ final class CanBox {
         int rc = write(Protocol.CMD_SET, Protocol.set(bit));
         if (rc < 0) {
             log("stop-start switch not sent, bit=" + bit + ", rc=" + rc);
-            return -1;
+            return rc == -2 ? -2 : -1;
         }
         log("sent stop-start switch, bit=" + bit + ", rc=" + rc
                 + (captureFrames && lastRpm >= 0 ? ", rpm=" + lastRpm : ""));

@@ -125,6 +125,11 @@ public class BootService extends Service implements CanBox.Listener, BootFlow.Sh
     }
 
     @Override
+    public boolean linkReady() {
+        return canBox.ready();
+    }
+
+    @Override
     public int toggle() {
         return canBox.toggle();
     }

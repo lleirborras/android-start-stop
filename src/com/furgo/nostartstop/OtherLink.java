@@ -35,8 +35,13 @@ abstract class OtherLink {
     static final long GUESS_MS = 15_000;
     static final String GUESS = "assumed, " + GUESS_MS / 1000 + " s after ignition on";
 
-    /** Returns a negative value when nothing was sent. */
+    /** Returns -2 when the link is not ready yet, -1 when refused or failed: nothing was sent then. */
     abstract int write(int cmd, byte[] data);
+
+    /** Whether a write can be attempted now; until then it returns -2. */
+    boolean ready() {
+        return true;
+    }
 
     abstract void close();
 
@@ -449,8 +454,10 @@ abstract class OtherLink {
 
         @Override
         int write(int cmd, byte[] data) {
+            if (watch) return -1;
             IBinder m = module;
-            if (m == null || watch) return -1;
+            // Until the service reports the car, its handler does not exist and drops every command silently.
+            if (m == null || canbusId < 0) return -2;
             try {
                 if (cmd == Protocol.CMD_QUERY && data.length > 0 && data[0] == Protocol.STATUS_SETTINGS) {
                     // No command asks for frame 0x38 again; answer with the last value the service published.
@@ -501,6 +508,11 @@ abstract class OtherLink {
                 context.unbindService(connection);
             } catch (Throwable ignored) {
             }
+        }
+
+        @Override
+        boolean ready() {
+            return module != null && canbusId >= 0;
         }
 
         @Override
