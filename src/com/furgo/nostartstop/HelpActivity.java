@@ -237,6 +237,8 @@ public class HelpActivity extends Activity {
                 + "allow it for No Start-Stop, go back and tap Install again.");
         item(card, "Check for updates automatically", "About once a day and after a boot, only with a network. It "
                 + "shows a notification and never downloads or installs by itself.");
+        item(card, "Beta program", "In Settings. Also offers test builds, shown as vX.Y.Z beta N. Leaving does not "
+                + "go back: the beta stays until the next stable version.");
         item(card, "After an update", "The app closes. Open it again. Settings and the log are kept.");
     }
 
