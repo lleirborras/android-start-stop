@@ -121,7 +121,8 @@ abstract class OtherLink {
             }
         };
         // The vendor broadcast has no permission, so any app could fake a status frame. It can only fool the
-        // confirmation: what is sent still depends on cfg_canbus, which the send gate checks.
+        // confirmation of a switch (stop-start may then stay on); it never makes the app send. What is sent depends
+        // only on the CAN box the user confirmed.
         private final BroadcastReceiver receiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context c, Intent intent) {
