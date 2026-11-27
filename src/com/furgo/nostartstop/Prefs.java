@@ -15,6 +15,7 @@ final class Prefs {
     private static final String CAPTURE_FRAMES = "capture_frames";
     private static final String WITHOUT_ADB = "without_adb";
     private static final String OTHER_UNITS = "other_units";
+    private static final String OTHER_CARS = "other_cars";
     private static final String BOOT_SWITCH_BOOT = "boot_switch_boot";
     private static final String LAST_SWITCH_AT = "last_switch_at";
     private static final String LAST_SWITCH_AT_BOOT = "last_switch_at_boot";
@@ -340,6 +341,15 @@ final class Prefs {
 
     static void setOtherUnits(Context c, boolean on) {
         prefs(c).edit().putBoolean(OTHER_UNITS, on).apply();
+    }
+
+    /** Beta, off by default: Topway car profiles other than PSA Raise, see {@link CarProfile#forBeta}. */
+    static boolean otherCars(Context c) {
+        return prefs(c).getBoolean(OTHER_CARS, false);
+    }
+
+    static void setOtherCars(Context c, boolean on) {
+        prefs(c).edit().putBoolean(OTHER_CARS, on).apply();
     }
 
     /** False until the user has answered the first-launch question with yes. */

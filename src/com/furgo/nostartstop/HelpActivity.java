@@ -200,6 +200,11 @@ public class HelpActivity extends Activity {
                 + "as Teyes, Joying or Dasaita, with a PSA car and a Raise CAN box. The app sends nothing if the head "
                 + "unit is set up for another car or box. At engine start it waits for the engine speed, or guesses "
                 + "15 s after ignition on where the head unit gives none.");
+        item(card, "Beta: other cars", "Off by default. On Topway head units set up for VW MQB on a Hiworld or "
+                + "Raise box, Honda on Hiworld, Haval on Raise, or PSA on a Simple Soft, Binary or LuZheng box, the app uses that car's own command and reads the "
+                + "setting back. At engine start it always sends off; a tap sends the opposite of what the car "
+                + "reports, and the card shows the state the car reports. Read from the head unit maker's app, not "
+                + "tested on these cars.");
         item(card, "The file", "Android/data/com.furgo.nostartstop/files/nostartstop.log on the head unit's "
                 + "internal storage. Copy it to a pendrive with the head unit's file manager.");
     }

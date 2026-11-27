@@ -16,7 +16,11 @@ import java.util.Map;
 /** One connection to the CAN box through TWUtil. Main-thread only. */
 final class CanBox {
     interface Listener {
-        /** Called on the main thread for every settings status frame (id 56) with its echo bit, see {@link Protocol#echo}. */
+        /**
+         * Called on the main thread for every settings status frame (id 56) with its echo bit, see
+         * {@link Protocol#echo}. With a beta car profile: for every readback, true when the car reports the state last
+         * sent (off before any send).
+         */
         void onEcho(boolean echo);
         /** Called on the main thread with a short human-readable line (errors and sent commands). */
         void onLog(String line);
@@ -54,6 +58,11 @@ final class CanBox {
     private final Listener listener;
     // Beta: set instead of tw on FYT and Microntek head units.
     private OtherLink other;
+    // Beta: a Topway profile other than PSA Raise, driven by its own command and readback. No PSA bytes are sent then.
+    private CarProfile profile;
+    private Boolean profileOn;
+    private boolean wantOn;
+    private boolean awaitingReport;
     // Set only for the watch service, which opens only the power messages and never sends.
     private PowerListener power;
     private String openFailure;
@@ -101,6 +110,12 @@ final class CanBox {
     };
 
     private void onCanboxFrame(int id, byte[] b) {
+        if (profile != null) {
+            Boolean on = profile.stopStartOn(id, b);
+            if (on != null) onProfileState(on);
+            else onOtherFrame(id, b);
+            return;
+        }
         if (id == Protocol.STATUS_SETTINGS) onFrame(b);
         else if (id == Protocol.STATUS_FUNCTION) onFunction(b);
         else onOtherFrame(id, b);
@@ -114,6 +129,11 @@ final class CanBox {
     /** True while the beta FYT or Microntek link is the open one. */
     boolean usesOtherLink() {
         return other != null;
+    }
+
+    /** Beta car profile: stop-start as the car last reported it, or null without a profile or a report. */
+    Boolean reportedOn() {
+        return profile == null ? null : profileOn;
     }
 
     /** Beta: why this head unit's car or CAN box is not supported, or null. */
@@ -208,6 +228,19 @@ final class CanBox {
         log(extraIdsRefused == null ? "TWUtil open"
                 : "TWUtil open, CAN box only (engine and unit ids refused: " + extraIdsRefused + ")");
         if (power != null) return true;
+        profile = Prefs.otherCars(context) ? CarProfile.forBeta(DeviceWatch.vendorCarVersion(context)) : null;
+        profileOn = null;
+        if (profile != null) {
+            log("beta: car profile " + profile.code + " (" + profile.name + ")");
+            return true;
+        }
+        if (Prefs.otherCars(context)) {
+            String code = CarProfile.code(DeviceWatch.vendorCarVersion(context));
+            CarProfile known = CarProfile.of(DeviceWatch.vendorCarVersion(context));
+            if (known != null && known != CarProfile.PSA_RAISE) {
+                log("beta: car profile " + code + " not driven, PSA defaults kept");
+            }
+        }
         // The caller asks for the settings frame first; frame 57 and the car data follow its answer.
         firstFunctionPending = true;
         handler.postDelayed(firstFunction, 500);
@@ -274,6 +307,10 @@ final class CanBox {
 
     void close() {
         handler.removeCallbacksAndMessages(null);
+        profile = null;
+        profileOn = null;
+        wantOn = false;
+        awaitingReport = false;
         if (other != null) {
             other.close();
             other = null;
@@ -317,7 +354,49 @@ final class CanBox {
     }
 
     void query() {
-        write(Protocol.CMD_QUERY, Protocol.query());
+        if (profile == null) write(Protocol.CMD_QUERY, Protocol.query());
+        else if (profile.queryCmd() >= 0) write(profile.queryCmd(), profile.query());
+    }
+
+    /** Beta profile: the setting as the car reports it. The echo the callers wait for is "it is what was sent". */
+    private void onProfileState(boolean on) {
+        if (awaitingReport && on == wantOn) log("car reports stop-start " + (on ? "on" : "off") + ", as sent");
+        else if (profileOn == null || profileOn != on) log("car reports stop-start " + (on ? "on" : "off"));
+        if (on == wantOn) awaitingReport = false;
+        profileOn = on;
+        listener.onEcho(on == wantOn);
+    }
+
+    /**
+     * The automatic switch: a beta profile always sends "off", which a second time changes nothing. The PSA default
+     * toggles, see {@link #toggle}.
+     */
+    int switchOff() {
+        if (profile == null) return toggle();
+        return sendProfile(false);
+    }
+
+    private int sendProfile(boolean on) {
+        if (!linked()) {
+            log("not open, nothing sent");
+            return -1;
+        }
+        wantOn = on;
+        awaitingReport = true;
+        int rc = write(profile.cmd, profile.set(on));
+        if (rc < 0) {
+            log("stop-start " + (on ? "on" : "off") + " not sent, rc=" + rc);
+            return -1;
+        }
+        log("sent stop-start " + (on ? "on" : "off") + ", profile " + profile.code + ", rc=" + rc);
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                query();
+            }
+        }, 1000);
+        // The callers wait for a confirming answer only after a 1.
+        return 1;
     }
 
     /**
@@ -326,6 +405,8 @@ final class CanBox {
      * nothing was sent.
      */
     int toggle() {
+        // A tap on a beta profile asks for the opposite of what the car last reported, off when nothing came yet.
+        if (profile != null) return sendProfile(profileOn != null && !profileOn);
         if (!linked()) {
             log("not open, nothing sent");
             return -1;

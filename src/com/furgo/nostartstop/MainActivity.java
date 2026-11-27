@@ -97,6 +97,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private Toggle autoUpdateSwitch;
     private Toggle withoutAdbSwitch;
     private Toggle otherUnitsSwitch;
+    private Toggle otherCarsSwitch;
     private TextView logView;
     private TextView shareText;      // null when the build has no PostHog key
     private View shareDot;
@@ -656,6 +657,20 @@ public class MainActivity extends Activity implements CanBox.Listener {
         render();
     }
 
+    private void toggleOtherCars() {
+        boolean on = !Prefs.otherCars(this);
+        Prefs.setOtherCars(this, on);
+        onLog(on ? "beta: other cars on" : "beta: other cars off");
+        // A tap still waiting for its answer belongs to the old protocol: drop it. The profile is chosen at open.
+        manual.pause();
+        handler.removeCallbacks(phaseTimeout);
+        box.close();
+        opened = box.open();
+        link = opened ? LINK_WAITING : LINK_DOWN;
+        if (opened) box.query();
+        render();
+    }
+
     private void toggleTelemetry() {
         setTelemetry(!Prefs.telemetry(this));
     }
@@ -837,7 +852,9 @@ public class MainActivity extends Activity implements CanBox.Listener {
         switchButton.setBackgroundDrawable(usable ? pressable(PRIMARY, PRIMARY_PRESSED, 0)
                 : pressable(NEUTRAL, NEUTRAL_PRESSED, 2));
 
-        int assumed = Prefs.assumedState(this);
+        // A beta car profile reads the setting back: show that, not the model.
+        Boolean reported = box.reportedOn();
+        int assumed = reported != null ? (reported ? AssumedState.ON : AssumedState.OFF) : Prefs.assumedState(this);
         int stateColor = assumed == AssumedState.OFF ? TEXT : assumed == AssumedState.ON ? ACCENT : MUTED;
         badge.setState(assumed);
         stateCard.setBackgroundDrawable(shape(CARD, 20, 2, assumed == AssumedState.UNKNOWN ? CARD_EDGE : assumed == AssumedState.OFF ? OFF_EDGE : ACCENT));
@@ -845,22 +862,24 @@ public class MainActivity extends Activity implements CanBox.Listener {
         SpannableStringBuilder sb = new SpannableStringBuilder(word);
         if (assumed != AssumedState.UNKNOWN) {
             int from = sb.length();
-            sb.append("  assumed");
+            sb.append(reported != null ? "  from the car" : "  assumed");
             sb.setSpan(new RelativeSizeSpan(20f / WORD_SP), from, sb.length(), 0);
             sb.setSpan(new ForegroundColorSpan(MUTED), from, sb.length(), 0);
         }
         assumedWord.setText(sb);
         fitWord();
         assumedWord.setTextColor(stateColor);
-        assumedHint.setText(assumed == AssumedState.ON && usable ? "Not read from the car. Tap Switch to turn it off."
+        assumedHint.setText(reported != null ? (assumed == AssumedState.ON && usable
+                        ? "Read from the car. Tap Switch to turn it off." : "Read from the car.")
+                : assumed == AssumedState.ON && usable ? "Not read from the car. Tap Switch to turn it off."
                 : assumed != AssumedState.UNKNOWN ? "Not read from the car. Check the instrument cluster."
                 : !Prefs.applyAtBoot(this) ? "Only followed while Switch off at engine start is on. Check the instrument cluster."
                 : !Prefs.canSetAssumed(this) ? "The app cannot follow the ignition right now. Check the instrument cluster."
                 : "Not followed since the last ignition off. Check the instrument cluster, then tap Started (on) or Stopped (off).");
         boolean unknown = assumed == AssumedState.UNKNOWN;
         boolean free = !pending && !bootBusy && SystemClock.elapsedRealtime() >= reportedAt + HOLD_MS;
-        wrongButton.setVisibility(unknown ? View.GONE : View.VISIBLE);
-        setRow.setVisibility(unknown ? View.VISIBLE : View.GONE);
+        wrongButton.setVisibility(unknown || reported != null ? View.GONE : View.VISIBLE);
+        setRow.setVisibility(unknown && reported == null ? View.VISIBLE : View.GONE);
         renderOutlined(wrongButton, !unknown && free, TEXT, 0xFF4A5568);
         boolean canSet = unknown && free && Prefs.canSetAssumed(this);
         // The colours of the state each one sets: green for on, white for off.
@@ -929,6 +948,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         renderSwitch(autoUpdateSwitch, Prefs.autoUpdate(this));
         renderSwitch(withoutAdbSwitch, Prefs.withoutAdb(this));
         renderSwitch(otherUnitsSwitch, Prefs.otherUnits(this));
+        renderSwitch(otherCarsSwitch, Prefs.otherCars(this));
     }
 
     private void renderSwitch(Toggle t, boolean on) {
@@ -1013,6 +1033,15 @@ public class MainActivity extends Activity implements CanBox.Listener {
                     @Override
                     public void onClick(View v) {
                         toggleOtherUnits();
+                    }
+                });
+        row = settingsRow(left);
+        otherCarsSwitch = addSetting(row, "Beta: other cars",
+                "VW, Honda, Haval, PSA on other boxes. Untested.",
+                new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        toggleOtherCars();
                     }
                 });
 
