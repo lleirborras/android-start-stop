@@ -41,7 +41,7 @@ final class CarProfile {
             new CarProfile("964", "Hiworld, PSA and Opel", PRESS, 140, new int[]{1, 255}, false),
             new CarProfile("114", "Hiworld, VW MQB", VALUE, 74, new int[]{13, 0}, false),
             new CarProfile("111", "Raise, VW MQB", VALUE, 198, new int[]{17, 0}, false),
-            new CarProfile("11", "Simple Soft or Binary, VW MQB", VALUE, 198, new int[]{17, 0}, false),
+            new CarProfile("11", "Simple Soft or Binary, VW MQB", VALUE, 198, new int[]{58, 0}, false),
             new CarProfile("274", "Hiworld, Honda", VALUE, 111, new int[]{8, 0}, false),
             new CarProfile("880", "Simple Soft, Jeep", VALUE, 198, new int[]{114, 0}, false),
             new CarProfile("F91", "Raise, GWM Haval", VALUE, 131, new int[]{11, 0}, false),
