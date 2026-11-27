@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.ApplicationInfo;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkInfo;
@@ -63,9 +64,35 @@ final class DeviceWatch {
         }
     }
 
+    /** The head unit's platform and car app, read now. */
+    static Detection detect(Context c) {
+        return new Detection(topway(), installed(c, OtherLink.Fyt.PACKAGE), installed(c, OtherLink.Microntek.PACKAGE),
+                vendorCarVersion(c));
+    }
+
+    /** TWUtil is a framework class on Topway units; loaded, not initialised. */
+    private static boolean topway() {
+        try {
+            Class.forName("android.tw.john.TWUtil", false, DeviceWatch.class.getClassLoader());
+            return true;
+        } catch (Throwable e) {
+            return false;
+        }
+    }
+
+    /** Only as part of the system: a sideloaded copy of a vendor app does not make this that head unit. */
+    private static boolean installed(Context c, String pkg) {
+        try {
+            int flags = c.getPackageManager().getApplicationInfo(pkg, 0).flags;
+            return (flags & (ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0;
+        } catch (Throwable e) {
+            return false;
+        }
+    }
+
     /** What the head unit reports for the car setup, see {@link CarSetup#detection}. */
     static String carDetection(Context c) {
-        return CarSetup.detection(vendorCarVersion(c));
+        return detect(c).carSetup();
     }
 
     private static String networkNow(Context c) {
