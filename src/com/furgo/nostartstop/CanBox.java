@@ -145,11 +145,8 @@ final class CanBox {
 
     /** Beta: why this head unit's car or CAN box is not supported, or null. */
     String unsupported() {
-        if (other != null) return SendGate.unsupported(other.platform(), other.car());
-        if (tw == null && refused != null) return refused;
-        Detection.Platform p = chosenPlatform();
-        boolean otherChosen = p == Detection.Platform.FYT || p == Detection.Platform.MICRONTEK;
-        return tw == null && otherChosen ? otherRefused : null;
+        if (other != null) return null;
+        return tw == null ? refused : null;
     }
 
     /** Beta link only: whether it can report the engine running. */
@@ -243,8 +240,6 @@ final class CanBox {
     // The pick is not what the head unit reports: frames read with its layout are not trusted as the car's state.
     private boolean mismatched;
 
-    // The car the last beta open refused, which leaves no link to ask.
-    private String otherRefused;
 
     /**
      * Call before {@link #open}. Then open() asks for the power messages only, without the CAN box, and does not log
@@ -332,17 +327,8 @@ final class CanBox {
         sink.link = o;
         if (o == null) return false;
         // Microntek reports its CAN box type at once; FYT only later, and its writes wait for it.
-        String car = o.car();
-        String why = SendGate.carRefusal(o.platform(), car);
-        if (why != null && !why.equals(OtherUnits.NOT_IDENTIFIED)) {
-            o.close();
-            if (!why.equals(otherOpenLogged)) log("beta: " + o.name() + " " + why + ", nothing will be sent");
-            otherOpenLogged = why;
-            if (car != null) otherRefused = why;
-            return false;
-        }
-        otherRefused = null;
         other = o;
+        warnCar();
         lastFrame = null;
         otherFrames.clear();
         otherFrameLines.clear();
@@ -637,6 +623,15 @@ final class CanBox {
     // The beta link's car in the last snapshot.
     private String gateCar;
 
+    /** Beta link: once per car it reports that is not PSA with a Raise box, a warning; the confirmed pick still sends. */
+    private void warnCar() {
+        if (other == null) return;
+        String why = SendGate.carMismatch(other.platform(), other.car());
+        if (why == null || why.equals(OtherUnits.NOT_IDENTIFIED) || why.equals(otherOpenLogged)) return;
+        otherOpenLogged = why;
+        log("beta: " + other.name() + " " + why + ", sending anyway: the CAN box was confirmed");
+    }
+
     /** The send gate's verdict now, from a fresh snapshot. */
     private SendGate.Verdict gate(SendGate.Kind kind) {
         return gate(kind, profile == null ? null : profile.code);
@@ -646,6 +641,7 @@ final class CanBox {
     private SendGate.Verdict gate(SendGate.Kind kind, String profileCode) {
         if (other != null) other.refreshCar();
         gateCar = other == null ? null : other.car();
+        warnCar();
         Detection.Platform link = other != null ? other.platform()
                 : tw != null ? Detection.Platform.TOPWAY : Detection.Platform.NONE;
         return SendGate.decide(kind, new SendGate.Snapshot(DeviceWatch.detect(context), Prefs.setupChoice(context),

@@ -121,12 +121,13 @@ final class SendGate {
         }
         Verdict platform = other ? otherPlatform(s, wanted) : topwayPlatform(s);
         if (platform != null) return platform;
-        if (other && s.link != Detection.Platform.NONE) {
-            String car = carRefusal(s.link, s.car);
+        // The car the beta link reports only warns: the user confirmed this CAN box. An FYT unit that has not said
+        // yet is not ready to send either.
+        if (other && s.link != Detection.Platform.NONE
+                && OtherUnits.NOT_IDENTIFIED.equals(carMismatch(s.link, s.car))) {
             // "beta: " first: the main screen redraws on those log lines.
-            String rule = "beta: " + (s.link == Detection.Platform.FYT ? "FYT" : "Microntek");
-            if (OtherUnits.NOT_IDENTIFIED.equals(car)) return new Verdict(NOT_READY, rule, car);
-            if (car != null) return new Verdict(REFUSE, rule, car);
+            return new Verdict(NOT_READY, "beta: " + (s.link == Detection.Platform.FYT ? "FYT" : "Microntek"),
+                    OtherUnits.NOT_IDENTIFIED);
         }
         return SENT;
     }
@@ -144,10 +145,10 @@ final class SendGate {
     }
 
     /**
-     * Why the PSA Raise command must not go to the car this beta link reports, or null when it may.
+     * Why the car this beta link reports may not be PSA with a Raise box, for a warning, or null when it is.
      * {@link OtherUnits#NOT_IDENTIFIED} while an FYT unit has not said yet.
      */
-    static String carRefusal(Detection.Platform link, String car) {
+    static String carMismatch(Detection.Platform link, String car) {
         if (link == Detection.Platform.FYT) {
             if (car == null) return OtherUnits.NOT_IDENTIFIED;
             try {
@@ -160,8 +161,4 @@ final class SendGate {
         return null;
     }
 
-    /** For the CAR NOT SUPPORTED state: only once the link has reported the car. */
-    static String unsupported(Detection.Platform link, String car) {
-        return car == null ? null : carRefusal(link, car);
-    }
 }
