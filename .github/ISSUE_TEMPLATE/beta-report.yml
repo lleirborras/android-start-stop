@@ -1,0 +1,76 @@
+name: Beta report
+description: Tried a beta setting on your head unit? Tell us what happened, good or bad.
+title: "Beta report: <head unit> / <car>"
+labels: ["beta"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing. Every report helps, including "it did nothing".
+        Do not paste your VIN or anything else that identifies you or the car. With **Record car data** on, the log can hold the VIN: leave that setting off, or remove such lines first.
+  - type: dropdown
+    id: setting
+    attributes:
+      label: Which beta setting?
+      multiple: true
+      options:
+        - "Beta: reach the car without adb"
+        - "Beta: FYT and Microntek head units"
+        - Other or none
+    validations:
+      required: true
+  - type: input
+    id: unit
+    attributes:
+      label: Head unit
+      description: Brand and model, and the platform if you know it (Topway TS10/TS18, FYT/Teyes/Joying, Microntek/Dasaita…).
+      placeholder: Teyes CC3, FYT UIS7862
+    validations:
+      required: true
+  - type: input
+    id: android
+    attributes:
+      label: Android version
+      placeholder: "10"
+  - type: input
+    id: car
+    attributes:
+      label: Car
+      description: Make, model and year.
+      placeholder: Citroën Jumpy 2019
+    validations:
+      required: true
+  - type: input
+    id: canbox
+    attributes:
+      label: CAN box setting on the head unit
+      description: As shown in the head unit's car or CAN settings.
+      placeholder: "02: Raise / 96: PSA Peugeot Citroen"
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: What happened?
+      options:
+        - Stop-start switched as expected (checked on the instrument cluster)
+        - The app said it sent, but the car did not change
+        - The app said NO LINK TO CAR
+        - The app said CAR NOT SUPPORTED
+        - Something else changed on the car
+        - The app crashed or froze
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: What you did, what you expected, and what you saw.
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: |
+        The last lines from Android/data/com.furgo.nostartstop/files/nostartstop.log (copy it with the head unit's file manager). The lines starting with "app opened", "beta:", "status" and "sent" matter most.
+      render: text
