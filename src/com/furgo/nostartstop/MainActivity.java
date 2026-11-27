@@ -20,11 +20,8 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.SystemClock;
 import android.text.Layout;
-import android.text.SpannableStringBuilder;
 import android.text.TextPaint;
 import android.text.TextUtils;
-import android.text.style.ForegroundColorSpan;
-import android.text.style.RelativeSizeSpan;
 import android.util.DisplayMetrics;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -104,6 +101,10 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private TextView switchButton;
     private TextView assumedWord;
     private TextView assumedHint;
+    private TextView stateTag;       // ASSUMED, FROM THE CAR or SENT under the state word
+    /** The state a tap's switch implies while the model is unknown, or UNKNOWN; sentShownFor is that switch's time. */
+    private int sentShown = AssumedState.UNKNOWN;
+    private long sentShownFor;
     private static final float WORD_SP = 44;
     private StateBadge badge;
     private LinearLayout stateCard;
@@ -406,12 +407,18 @@ public class MainActivity extends Activity implements CanBox.Listener {
             render();
             return;
         }
+        boolean unknownBefore = Prefs.assumedState(this) == AssumedState.UNKNOWN;
         int bit = box.toggle();
         if (bit < 0) {
             showResult("Could not send to the car. Nothing sent.", WARN);
             return;
         }
         Prefs.recordSwitch(this, false);
+        if (unknownBefore) {
+            // The model does not count this switch; the car turned stop-start on at its start, so it is off now.
+            sentShown = sentShown == AssumedState.OFF ? AssumedState.ON : AssumedState.OFF;
+            sentShownFor = Prefs.lastSwitchAt(this);
+        }
         if (manual.sent(bit, SystemClock.elapsedRealtime()) == ManualSwitch.HOLD) {
             hold();
             return;
@@ -427,7 +434,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     }
 
     private void showSent() {
-        showResult("Sent at " + clock() + ". Check the instrument cluster.", ACCENT);
+        showResult(Feedback.sent(System.currentTimeMillis()), ACCENT);
     }
 
     @Override
@@ -449,10 +456,6 @@ public class MainActivity extends Activity implements CanBox.Listener {
                 logScroll.fullScroll(View.FOCUS_DOWN);
             }
         });
-    }
-
-    private static String clock() {
-        return Feedback.clock(System.currentTimeMillis());
     }
 
     private void showResult(String text, int color) {
@@ -646,7 +649,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         if (!Telemetry.configured() || Prefs.telemetryAnswered(this) || askingAboutDiagnostics) return;
         askingAboutDiagnostics = true;
         new AlertDialog.Builder(this)
-                .setTitle("Help fix problems?")
+                .setTitle("Share this log with the developer?")
                 .setMessage("Send this app's log to the developer? Each line includes the app version, "
                         + "Android version, head unit model and a random ID. The log holds the commands "
                         + "sent to the car and the car's replies. With Record car data on, it also holds raw "
@@ -795,29 +798,31 @@ public class MainActivity extends Activity implements CanBox.Listener {
 
         // A beta car profile reads the setting back: show that, not the model.
         Boolean reported = box.reportedOn();
-        int assumed = reported != null ? (reported ? AssumedState.ON : AssumedState.OFF) : Prefs.assumedState(this);
+        int model = Prefs.assumedState(this);
+        if (model != AssumedState.UNKNOWN || reported != null || Prefs.ignitionOff(this)
+                || Prefs.lastSwitchAt(this) != sentShownFor) {
+            sentShown = AssumedState.UNKNOWN;
+        }
+        boolean sent = sentShown != AssumedState.UNKNOWN;
+        int assumed = reported != null ? (reported ? AssumedState.ON : AssumedState.OFF) : sent ? sentShown : model;
         int stateColor = assumed == AssumedState.OFF ? TEXT : assumed == AssumedState.ON ? ACCENT : MUTED;
         badge.setState(assumed);
         stateCard.setBackgroundDrawable(shape(CARD, 20, 2, assumed == AssumedState.UNKNOWN ? CARD_EDGE : assumed == AssumedState.OFF ? OFF_EDGE : ACCENT));
-        String word = assumed == AssumedState.UNKNOWN ? "UNKNOWN" : AssumedState.name(assumed).toUpperCase(Locale.ROOT);
-        SpannableStringBuilder sb = new SpannableStringBuilder(word);
-        if (assumed != AssumedState.UNKNOWN) {
-            int from = sb.length();
-            sb.append(reported != null ? "  from the car" : "  assumed");
-            sb.setSpan(new RelativeSizeSpan(20f / WORD_SP), from, sb.length(), 0);
-            sb.setSpan(new ForegroundColorSpan(MUTED), from, sb.length(), 0);
-        }
-        assumedWord.setText(sb);
+        assumedWord.setText(AssumedState.name(assumed).toUpperCase(Locale.ROOT));
         fitWord();
         assumedWord.setTextColor(stateColor);
-        assumedHint.setText(reported != null ? (assumed == AssumedState.ON && usable
-                        ? "Read from the car. Tap Switch to turn it off." : "Read from the car.")
-                : assumed == AssumedState.ON && usable ? "Not read from the car. Tap Switch to turn it off."
-                : assumed != AssumedState.UNKNOWN ? "Not read from the car. Check the instrument cluster."
-                : !Prefs.applyAtBoot(this) ? "Only followed while Switch off at engine start is on. Check the instrument cluster."
-                : !Prefs.canSetAssumed(this) ? "The app cannot follow the ignition right now. Check the instrument cluster."
-                : "Not followed since the last ignition off. Check the instrument cluster, then tap Started (on) or Stopped (off).");
-        boolean unknown = assumed == AssumedState.UNKNOWN;
+        if (assumed == AssumedState.UNKNOWN) {
+            stateTag.setVisibility(View.GONE);
+        } else {
+            int tagColor = reported != null ? ACCENT : sent ? MUTED : WARN;
+            stateTag.setText(reported != null ? "FROM THE CAR" : sent ? "SENT" : "ASSUMED");
+            stateTag.setTextColor(tagColor);
+            stateTag.setBackgroundDrawable(shape(0, 14, 2, tagColor));
+            stateTag.setVisibility(View.VISIBLE);
+        }
+        assumedHint.setText(Feedback.hint(assumed, reported != null, sent, usable, Prefs.applyAtBoot(this),
+                Prefs.canSetAssumed(this)));
+        boolean unknown = reported == null && model == AssumedState.UNKNOWN;
         boolean free = !pending && !bootBusy && SystemClock.elapsedRealtime() >= reportedAt + HOLD_MS;
         wrongButton.setVisibility(unknown || reported != null ? View.GONE : View.VISIBLE);
         setRow.setVisibility(unknown && reported == null ? View.VISIBLE : View.GONE);
@@ -840,7 +845,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         long now = SystemClock.elapsedRealtime();
         if (now < reportedAt + HOLD_MS || manual.pending() || BootService.running) return;
         if (!Prefs.setAssumedByHand(this, state)) return;
-        // The row turns into "Car shows the opposite": a second tap in the same place must not flip it.
+        // The row turns into "Car shows the other state": a second tap in the same place must not flip it.
         reportedAt = now;
         handler.postDelayed(rerender, HOLD_MS);
         flash("Set by hand. Nothing sent to the car.");
@@ -916,7 +921,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
 
         LinearLayout row = settingsRow(left);
         bootSwitch = addSetting(row, "Switch off at engine start",
-                "One switch each time the car starts.",
+                "Sends one switch each time the engine starts.",
                 new View.OnClickListener() {
                     @Override
                     public void onClick(View v) {
@@ -1131,6 +1136,14 @@ public class MainActivity extends Activity implements CanBox.Listener {
             }
         });
         stack.addView(assumedWord);
+        stateTag = text("", 16, MUTED, true);
+        stateTag.setLetterSpacing(0.08f);
+        stateTag.setSingleLine(true);
+        stateTag.setPadding(dp(12), dp(2), dp(12), dp(2));
+        stateTag.setVisibility(View.GONE);
+        LinearLayout.LayoutParams tagLp = new LinearLayout.LayoutParams(-2, -2);
+        tagLp.topMargin = dp(6);
+        stack.addView(stateTag, tagLp);
         LinearLayout.LayoutParams stackLp = new LinearLayout.LayoutParams(0, -2, 1f);
         stackLp.leftMargin = dp(16);
         head.addView(stack, stackLp);
@@ -1163,7 +1176,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         });
         actions.addView(switchButton, narrow ? new LinearLayout.LayoutParams(-1, dp(64))
                 : new LinearLayout.LayoutParams(-1, 0, 1f));
-        wrongButton = text("Car shows the opposite", 16, MUTED, true);
+        wrongButton = text("Car shows the other state", 16, MUTED, true);
         wrongButton.setGravity(Gravity.CENTER);
         wrongButton.setOnClickListener(new View.OnClickListener() {
             @Override
