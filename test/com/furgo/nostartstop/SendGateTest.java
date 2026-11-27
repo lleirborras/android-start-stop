@@ -140,19 +140,19 @@ public class SendGateTest {
                 "car setup");
 
         // A known non-PSA profile gets PSA bytes only while the beta drives it, and never the switch.
-        check("VW not driven, open", vw.link(Platform.NONE, null).on(Kind.PSA_QUERY), REFUSE, "car app");
-        check("VW not driven, query", vw.on(Kind.PSA_QUERY), REFUSE, "car app");
-        check("VW not driven, switch", vw.on(Kind.PSA_SET), REFUSE, "car app");
-        check("VW not driven, unit id", vw.on(Kind.UNIT_QUERY), REFUSE, "car app");
+        check("VW not driven, open", vw.link(Platform.NONE, null).on(Kind.PSA_QUERY), REFUSE, "PSA");
+        check("VW not driven, query", vw.on(Kind.PSA_QUERY), REFUSE, "PSA");
+        check("VW not driven, switch", vw.on(Kind.PSA_SET), REFUSE, "PSA");
+        check("VW not driven, unit id", vw.on(Kind.UNIT_QUERY), REFUSE, "PSA");
         check("VW driven, open", vwDriven.link(Platform.NONE, null).on(Kind.PSA_QUERY), SEND, null);
-        check("VW driven, PSA switch", vwDriven.on(Kind.PSA_SET), REFUSE, "car app");
+        check("VW driven, PSA switch", vwDriven.on(Kind.PSA_SET), REFUSE, "PSA");
         check("VW driven, unit id", vwDriven.on(Kind.UNIT_QUERY), SEND, null);
         check("VW driven, profile switch", vwDriven.profile("111").on(Kind.PROFILE_SET), SEND, null);
         check("VW driven, profile query", vwDriven.profile("111").on(Kind.PROFILE_QUERY), SEND, null);
         S vwFyt = vwDriven.fyt("339").vendor(VW).choice("profile:111").otherCars();
         check("VW driven on FYT, query", vwFyt.on(Kind.OTHER_QUERY), SEND, null);
-        check("VW driven on FYT, switch", vwFyt.on(Kind.OTHER_SET), REFUSE, "car app");
-        check("car app beats not ready", vwFyt.link(Platform.FYT, null).on(Kind.OTHER_SET), REFUSE, "car app");
+        check("VW driven on FYT, switch", vwFyt.on(Kind.OTHER_SET), REFUSE, "PSA");
+        check("car app beats not ready", vwFyt.link(Platform.FYT, null).on(Kind.OTHER_SET), REFUSE, "PSA");
 
         // FYT: only canbus id 339, and nothing before the service reports it.
         for (Kind k : new Kind[]{Kind.OTHER_SET, Kind.OTHER_QUERY}) {
@@ -168,6 +168,19 @@ public class SendGateTest {
         check("FYT reason", van.fyt("281").on(Kind.OTHER_SET).why, "canbus id 281 is not PSA with a Raise box (339)");
         check("Microntek reason", van.microntek("59").on(Kind.OTHER_SET).why,
                 "CAN box type 59 is not PSA with a Raise box (50)");
+
+        // A profile send checks the beta again: it may have been turned off since the open.
+        check("profile, beta off", vw.profile("111").on(Kind.PROFILE_SET), REFUSE, "profile");
+        check("profile query, beta off", vw.profile("111").on(Kind.PROFILE_QUERY), REFUSE, "profile");
+        check("profile other than the car app's", vwDriven.profile("114").on(Kind.PROFILE_SET), REFUSE, "profile");
+        check("profile on the van", van.otherCars().profile("111").on(Kind.PROFILE_SET), REFUSE, "profile");
+        check("profile without one", vwDriven.on(Kind.PROFILE_SET), REFUSE, "profile");
+
+        // The beta link checks its switch again.
+        S fytOff = van.fyt("339");
+        fytOff.otherUnits = false;
+        check("FYT, beta off", fytOff.on(Kind.OTHER_SET), REFUSE, "beta");
+        check("FYT unknown, beta off", fytOff.link(Platform.FYT, null).on(Kind.OTHER_QUERY), REFUSE, "beta");
 
         // The platform.
         S both = van.fyt("339").platforms(false, true, true);

@@ -92,10 +92,15 @@ final class SendGate {
             return new Verdict(REFUSE, "car setup", CarSetup.why(detection, s.setupChoice, s.setupConfirmed));
         }
         boolean other = kind == Kind.OTHER_SET || kind == Kind.OTHER_QUERY;
+        if (other && !s.otherUnits) return new Verdict(REFUSE, "beta", "FYT and Microntek units are off");
+        if (kind == Kind.PROFILE_SET || kind == Kind.PROFILE_QUERY) {
+            Verdict profile = profile(s);
+            if (profile != null) return profile;
+        }
         Verdict platform = other ? otherPlatform(s) : topwayPlatform(s);
         if (platform != null) return platform;
         String psa = CarProfile.psaRefusal(s.detection.vendorVersion);
-        if (psa != null && psaBytes(kind, s)) return new Verdict(REFUSE, "car app", psa);
+        if (psa != null && psaBytes(kind, s)) return new Verdict(REFUSE, "PSA", psa);
         if (other && s.link != Detection.Platform.NONE) {
             String car = carRefusal(s.link, s.car);
             if (OtherUnits.NOT_IDENTIFIED.equals(car)) return new Verdict(NOT_READY, s.link.name(), car);
@@ -112,6 +117,15 @@ final class SendGate {
         if (kind == Kind.PROFILE_SET || kind == Kind.PROFILE_QUERY) return false;
         if (kind == Kind.PSA_SET || kind == Kind.OTHER_SET) return true;
         return !(s.otherCars && CarProfile.forBeta(s.detection.vendorVersion) != null);
+    }
+
+    /** The profile the link drives must still be the one the beta drives for the car app now. */
+    private static Verdict profile(Snapshot s) {
+        if (!s.otherCars) return new Verdict(REFUSE, "profile", "beta car profiles are off");
+        CarProfile p = CarProfile.forBeta(s.detection.vendorVersion);
+        if (p != null && p.code.equals(s.profile)) return null;
+        return new Verdict(REFUSE, "profile", "profile " + s.profile + " is not driven for "
+                + CarProfile.describe(s.detection.vendorVersion));
     }
 
     private static Verdict topwayPlatform(Snapshot s) {
