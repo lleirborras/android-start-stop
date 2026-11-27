@@ -38,10 +38,10 @@ abstract class OtherLink {
     static final String GUESS = "assumed, " + GUESS_MS / 1000 + " s after ignition on";
 
     /**
-     * Only after {@link SendGate} let it through, see CanBox.write. Returns -2 when the link is not ready yet, -1 when
-     * it failed: nothing was sent then.
+     * Only after {@link SendGate} let it through, see CanBox.write; car is the {@link #car} it saw. Returns -2 when
+     * the link is not ready yet, -1 when it failed: nothing was sent then.
      */
-    abstract int write(int cmd, byte[] data);
+    abstract int write(int cmd, byte[] data, String car);
 
     /** Watch mode: whether the engine running can be reported at all, by rpm or by the opt-in guess. */
     boolean engineSignal() {
@@ -194,7 +194,7 @@ abstract class OtherLink {
         }
 
         @Override
-        int write(int cmd, byte[] data) {
+        int write(int cmd, byte[] data, String car) {
             if (watch) return -1;
             byte[] frame = OtherUnits.fdFrame(cmd, OtherUnits.microntekData(cmd, data));
             context.sendBroadcast(new Intent(SEND).putExtra(SEND_KEY, frame));
@@ -483,12 +483,16 @@ abstract class OtherLink {
         }
 
         @Override
-        int write(int cmd, byte[] data) {
+        int write(int cmd, byte[] data, String car) {
             if (watch) return -1;
             IBinder m = module;
             // Until the service reports the car, its handler does not exist and drops every command silently: the
             // send gate waits for the canbus id.
             if (m == null) return -2;
+            // A reconnect since the gate asked may have brought another car, or none yet.
+            String now = car();
+            if (now == null) return -2;
+            if (!now.equals(car)) return -1;
             try {
                 if (cmd == Protocol.CMD_QUERY && data.length > 0 && data[0] == Protocol.STATUS_SETTINGS) {
                     // No command asks for frame 0x38 again; answer with the last value the service published.

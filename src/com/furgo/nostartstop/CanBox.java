@@ -581,7 +581,7 @@ final class CanBox {
             return -1;
         }
         gateLogged = null;
-        if (other != null) return other.write(cmd, data);
+        if (other != null) return other.write(cmd, data, gateCar);
         try {
             if (kind == SendGate.Kind.UNIT_QUERY) return tw.write(cmd, 255, 0);
             return tw.write(Protocol.MSG_CANBOX, cmd, data.length, data);
@@ -591,14 +591,18 @@ final class CanBox {
         }
     }
 
+    // The beta link's car in the last snapshot.
+    private String gateCar;
+
     /** The send gate's verdict now, from a fresh snapshot. */
     private SendGate.Verdict gate(SendGate.Kind kind) {
         if (other != null) other.refreshCar();
+        gateCar = other == null ? null : other.car();
         Detection.Platform link = other != null ? other.platform()
                 : tw != null ? Detection.Platform.TOPWAY : Detection.Platform.NONE;
         return SendGate.decide(kind, new SendGate.Snapshot(DeviceWatch.detect(context), Prefs.setupChoice(context),
                 Prefs.setupDetection(context), Prefs.otherCars(context), Prefs.otherUnits(context), power != null,
-                profile == null ? null : profile.code, link, other == null ? null : other.car()));
+                profile == null ? null : profile.code, link, gateCar));
     }
 
     private void log(String line) {
