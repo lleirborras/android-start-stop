@@ -176,7 +176,9 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
         @Override
         public void run() {
             long now = SystemClock.elapsedRealtime();
-            if (linkOpen && now - lastMessageAt >= SILENT_MS && now - lastReopenAt >= reopenEvery) {
+            // The beta link reports only changes, so its silence means nothing.
+            boolean quietLink = canBox.usesOtherLink();
+            if (linkOpen && !quietLink && now - lastMessageAt >= SILENT_MS && now - lastReopenAt >= reopenEvery) {
                 lastReopenAt = now;
                 reopenEvery = Math.min(reopenEvery * 2, MAX_REOPEN_MS);
                 canBox.close();
@@ -265,6 +267,20 @@ public class WatchService extends Service implements CanBox.Listener, CanBox.Pow
                     + " s after arming");
         }
         decisions.onBattery(centivolts, lastMessageAt);
+    }
+
+    @Override
+    public void onIgnition(boolean on) {
+        heard();
+        watchLog(on ? "ignition on (head unit)" : "ignition off (head unit)");
+        if (on) decisions.onIgnitionOn("ignition on reported by the head unit");
+        else decisions.onPowerState(PowerWatch.STATE_OFF, lastMessageAt);
+    }
+
+    @Override
+    public void onEngineRunning(String why) {
+        heard();
+        decisions.onRunning(why, lastMessageAt);
     }
 
     @Override

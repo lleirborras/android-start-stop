@@ -122,6 +122,7 @@ public class WatchDecisionsTest {
         anotherSwitchStillBeingSent();
         ignitionOffWhileWaitingForAnotherSwitch();
         crankWhileWaitingForAnotherSwitch();
+        headUnitReportsIgnitionAndRpm();
         System.out.println("WatchDecisionsTest passed");
     }
 
@@ -373,6 +374,26 @@ public class WatchDecisionsTest {
                 "tick+" + WatchDecisions.BUSY_RETRY_MS);
         s.busy = false;
         tick("free again", 9_000 + AutoSwitch.BUSY_MS + 2_100, FIRE);
+    }
+
+    /** Beta FYT and Microntek units: ignition from the head unit, engine running from rpm or a guess. */
+    private static void headUnitReportsIgnitionAndRpm() {
+        fresh();
+        s.now = 1_000;
+        d.onIgnitionOn("ignition on reported by the head unit");
+        did("ignition on without an off before it", "offNow false");
+        check("nothing pending", !d.armed());
+        state("ignition off", 1, 2_000, "offNow true", "event OFF_SEEN", "assumed end ignition off", "cancel");
+        s.now = 3_000;
+        d.onIgnitionOn("ignition on reported by the head unit");
+        did("ignition on right after the off still counts", armed("ignition on reported by the head unit",
+                "offNow false", "wake ignition on reported by the head unit IGNITION_ON_CYCLE"));
+        s.now = 4_000;
+        d.onIgnitionOn("ignition on reported by the head unit");
+        did("a second ignition on while pending", "offNow false");
+        s.now = 3_000 + SETTLE;
+        d.onRunning("rpm 820", s.now);
+        did("rpm fires", "cancel", "log: engine running (rpm 820), switching", "event FIRED", "send");
     }
 
     private static void fresh() {

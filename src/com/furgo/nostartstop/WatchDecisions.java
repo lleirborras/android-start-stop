@@ -61,6 +61,18 @@ final class WatchDecisions {
         }
     }
 
+    /**
+     * Beta head units report the ignition themselves, so unlike {@link #onStart} no hold after ignition off applies.
+     * Starts a cycle only after an ignition off, and not while a switch is pending.
+     */
+    void onIgnitionOn(String source) {
+        shell.ignitionOffNow(false);
+        if (!shell.ignitionOff() || auto.armed()) return;
+        shell.newWake(source, WakeRules.IGNITION_ON_CYCLE);
+        auto.arm(shell.now(), false);
+        armed(source);
+    }
+
     void onPowerState(int state, long at) {
         int event = power.onState(state, at);
         if (state == PowerWatch.STATE_AWAKE || state == PowerWatch.STATE_CRANK) shell.ignitionOffNow(false);
@@ -89,6 +101,11 @@ final class WatchDecisions {
 
     void onBattery(int centivolts, long at) {
         act(auto.onBattery(centivolts, at));
+    }
+
+    /** The head unit reports the engine running without a battery reading; why is for the log. */
+    void onRunning(String why, long at) {
+        act(auto.onRunning(why, at));
     }
 
     void onTick(long at) {
@@ -134,7 +151,7 @@ final class WatchDecisions {
             }
             return;
         }
-        shell.autoLog("engine running (" + Protocol.volts(auto.newest()) + " V), switching");
+        shell.autoLog("engine running (" + auto.runningWhy() + "), switching");
         shell.ignitionEvent(WakeRules.FIRED);
         shell.sendSwitch();
     }

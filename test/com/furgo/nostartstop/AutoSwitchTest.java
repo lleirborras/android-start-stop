@@ -12,6 +12,23 @@ public class AutoSwitchTest {
         same("not armed: tick", a.onTick(100_000), W);
         check("not armed: disarm reports nothing pending", !a.disarm());
 
+        // Engine running reported another way (rpm, or a guess): counts like a charging reading.
+        AutoSwitch r = new AutoSwitch();
+        same("running while not armed", r.onRunning("rpm 800", 1_000), W);
+        r.arm(2_000, true);
+        same("signal before arming does not count", r.onTick(2_000 + SETTLE), W);
+        same("signal before 5 s waits", r.onRunning("rpm 800", 3_000), W);
+        same("tick at 5 s fires on the signal", r.onTick(2_000 + SETTLE), F);
+        check("why names the signal", "rpm 800".equals(r.runningWhy()));
+        r.arm(10_000, true);
+        same("signal after 5 s fires at once", r.onRunning("assumed", 10_000 + SETTLE), F);
+        r.arm(20_000, true);
+        same("battery fires", r.onBattery(1350, 20_000 + SETTLE), F);
+        check("why names the battery after it", "13.50 V".equals(r.runningWhy()));
+        r.arm(30_000, true);
+        r.onCrankStart(30_000);
+        same("signal during a crank waits", r.onRunning("rpm 900", 31_000), W);
+
         // One reading of 13.0 V or more after arming fires once 5 s have passed.
         a.arm(0, true);
         same("13.38 V before 5 s waits", a.onBattery(1338, 1_000), W);

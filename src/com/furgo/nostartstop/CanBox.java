@@ -28,6 +28,10 @@ final class CanBox {
         void onPowerState(int state);
         /** Every valid battery reading, before the log rate limit. */
         void onBattery(int centivolts);
+        /** Beta FYT and Microntek units: the ignition as the head unit reports it. */
+        void onIgnition(boolean on);
+        /** Beta FYT and Microntek units: the engine runs; why is for the log. */
+        void onEngineRunning(String why);
     }
 
     private static final String TAG = "NoStartStop";
@@ -142,6 +146,26 @@ final class CanBox {
                 }
             });
         }
+
+        @Override
+        public void ignition(final boolean on) {
+            handler.post(new Runnable() {
+                @Override
+                public void run() {
+                    if (other != null && power != null) power.onIgnition(on);
+                }
+            });
+        }
+
+        @Override
+        public void engineRunning(final String why) {
+            handler.post(new Runnable() {
+                @Override
+                public void run() {
+                    if (other != null && power != null) power.onEngineRunning(why);
+                }
+            });
+        }
     };
 
     /**
@@ -190,10 +214,10 @@ final class CanBox {
         return true;
     }
 
-    /** Beta: without TWUtil, the FYT or Microntek link. The watch service never uses it: it has no power messages. */
+    /** Beta: without TWUtil, the FYT or Microntek link. For the watch service it only reads the ignition and engine. */
     private boolean openOther() {
-        if (power != null || !Prefs.otherUnits(context)) return false;
-        OtherLink o = OtherLink.open(context, sink);
+        if (!Prefs.otherUnits(context)) return false;
+        OtherLink o = OtherLink.open(context, sink, power != null);
         if (o == null) return false;
         other = o;
         lastFrame = null;

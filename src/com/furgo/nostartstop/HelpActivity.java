@@ -198,7 +198,8 @@ public class HelpActivity extends Activity {
                 + "to lift that block for this app only. The log says if it failed.");
         item(card, "Beta: FYT and Microntek head units", "Off by default. For head units that are not Topway, such "
                 + "as Teyes, Joying or Dasaita, with a PSA car and a Raise CAN box. The app sends nothing if the head "
-                + "unit is set up for another car or box. The switch at engine start does not work on these units.");
+                + "unit is set up for another car or box. At engine start it waits for the engine speed, or guesses "
+                + "15 s after ignition on where the head unit gives none.");
         item(card, "The file", "Android/data/com.furgo.nostartstop/files/nostartstop.log on the head unit's "
                 + "internal storage. Copy it to a pendrive with the head unit's file manager.");
     }

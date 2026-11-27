@@ -4,7 +4,8 @@ package com.furgo.nostartstop;
  * Decides when the pending switch of an ignition cycle is sent: once a battery reading received after arming (after a
  * crank: after its first 9) shows the engine charging, 5 s have passed since arming, and no crank is in progress.
  * Readings may only come when the voltage changes, so one is enough. Without readings nothing is sent. Times are
- * elapsedRealtime milliseconds.
+ * elapsedRealtime milliseconds. Head units without battery readings report the engine running another way, see
+ * {@link #onRunning}.
  */
 final class AutoSwitch {
     static final int RUNNING_CENTIVOLTS = 1300;
@@ -21,6 +22,9 @@ final class AutoSwitch {
     private long countFrom;
     private int newest = -1;
     private long newestAt;
+    // Engine running reported without a battery reading (rpm, or a guess after ignition on), or -1.
+    private long runningAt = -1;
+    private String runningWhy;
     private boolean cranking;
     private long crankStartAt;
     private long deferredSince = -1;
@@ -35,6 +39,7 @@ final class AutoSwitch {
     }
 
     private void arm(long now, boolean timed, long countFrom) {
+        if (runningAt < countFrom) runningAt = -1;
         armed = true;
         this.timed = timed;
         armedAt = now;
@@ -123,6 +128,19 @@ final class AutoSwitch {
         return armed ? check(now) : WAIT;
     }
 
+    /** The engine runs, reported other than by a battery reading; why says how, for the log. */
+    int onRunning(String why, long now) {
+        runningAt = now;
+        runningWhy = why;
+        return armed ? check(now) : WAIT;
+    }
+
+    /** How the engine was last seen running: a voltage or the reason given to {@link #onRunning}. */
+    String runningWhy() {
+        boolean signal = runningAt >= 0 && runningAt >= newestAt;
+        return signal || newest < 0 ? runningWhy : Protocol.volts(newest) + " V";
+    }
+
     int onTick(long now) {
         return armed ? check(now) : WAIT;
     }
@@ -133,7 +151,9 @@ final class AutoSwitch {
             return GIVE_UP;
         }
         if (cranking && crankTimedOut(now)) cranking = false;
-        if (cranking || newest < RUNNING_CENTIVOLTS || newestAt < countFrom || now - armedAt < SETTLE_MS) {
+        boolean charging = newest >= RUNNING_CENTIVOLTS && newestAt >= countFrom;
+        boolean running = charging || runningAt >= countFrom;
+        if (cranking || !running || now - armedAt < SETTLE_MS) {
             // A busy fire that is no longer due starts its 30 s afresh the next time.
             deferredSince = -1;
             return WAIT;
