@@ -13,6 +13,7 @@ final class Prefs {
     private static final String APPLY_AT_BOOT = "apply_at_boot";
     private static final String TELEMETRY = "telemetry";
     private static final String CAPTURE_FRAMES = "capture_frames";
+    private static final String WITHOUT_ADB = "without_adb";
     private static final String BOOT_SWITCH_BOOT = "boot_switch_boot";
     private static final String LAST_SWITCH_AT = "last_switch_at";
     private static final String LAST_SWITCH_AT_BOOT = "last_switch_at_boot";
@@ -320,6 +321,15 @@ final class Prefs {
 
     static void setCaptureFrames(Context c, boolean on) {
         c.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean(CAPTURE_FRAMES, on).apply();
+    }
+
+    /** Beta, off by default: see {@link HiddenApi}. */
+    static boolean withoutAdb(Context c) {
+        return prefs(c).getBoolean(WITHOUT_ADB, false);
+    }
+
+    static void setWithoutAdb(Context c, boolean on) {
+        prefs(c).edit().putBoolean(WITHOUT_ADB, on).apply();
     }
 
     /** False until the user has answered the first-launch question with yes. */

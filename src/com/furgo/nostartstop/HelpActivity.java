@@ -193,6 +193,9 @@ public class HelpActivity extends Activity {
         item(card, "Record car data", "Off by default. Also logs the raw frames from the car, engine and vehicle "
                 + "speed, battery voltage and the head unit's identity. This may include vehicle details such as "
                 + "the VIN. Leave it off unless you are asked for it.");
+        item(card, "Beta: reach the car without adb", "Off by default. Some head units block the link to the car "
+                + "for apps that are not part of the system, and the card says NO LINK TO CAR. This asks Android "
+                + "to lift that block for this app only. The log says if it failed.");
         item(card, "The file", "Android/data/com.furgo.nostartstop/files/nostartstop.log on the head unit's "
                 + "internal storage. Copy it to a pendrive with the head unit's file manager.");
     }

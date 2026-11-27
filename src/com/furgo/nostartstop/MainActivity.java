@@ -95,6 +95,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
     private Toggle telemetrySwitch;   // null when the build has no PostHog key
     private Toggle captureSwitch;
     private Toggle autoUpdateSwitch;
+    private Toggle withoutAdbSwitch;
     private TextView logView;
     private TextView shareText;      // null when the build has no PostHog key
     private View shareDot;
@@ -616,6 +617,25 @@ public class MainActivity extends Activity implements CanBox.Listener {
         renderBoot();
     }
 
+    private void toggleWithoutAdb() {
+        boolean on = !Prefs.withoutAdb(this);
+        Prefs.setWithoutAdb(this, on);
+        if (!on) {
+            onLog("beta: reach the car without adb off, from the next app start");
+            renderBoot();
+            return;
+        }
+        String failure = HiddenApi.exempt();
+        onLog(failure == null ? "beta: reach the car without adb on"
+                : "beta: reach the car without adb failed: " + failure);
+        if (failure == null && !opened) {
+            opened = box.open();
+            link = opened ? LINK_WAITING : LINK_DOWN;
+            if (opened) box.query();
+        }
+        render();
+    }
+
     private void toggleTelemetry() {
         setTelemetry(!Prefs.telemetry(this));
     }
@@ -885,6 +905,7 @@ public class MainActivity extends Activity implements CanBox.Listener {
         renderSwitch(captureSwitch, Prefs.captureFrames(this));
         if (telemetrySwitch != null) renderSwitch(telemetrySwitch, Prefs.telemetry(this));
         renderSwitch(autoUpdateSwitch, Prefs.autoUpdate(this));
+        renderSwitch(withoutAdbSwitch, Prefs.withoutAdb(this));
     }
 
     private void renderSwitch(Toggle t, boolean on) {
@@ -951,6 +972,15 @@ public class MainActivity extends Activity implements CanBox.Listener {
                     @Override
                     public void onClick(View v) {
                         toggleAutoUpdate();
+                    }
+                });
+        row = settingsRow(left);
+        withoutAdbSwitch = addSetting(row, "Beta: reach the car without adb",
+                "Try it if the card says NO LINK TO CAR.",
+                new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        toggleWithoutAdb();
                     }
                 });
 

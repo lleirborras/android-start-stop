@@ -77,6 +77,7 @@ With no network it shows how many lines, from how many days, are stored for the 
 - **Log**: the commands sent, the CAN box status frames, the CAN box function frame, what the automatic switch saw and did (ignition, engine starts, battery voltage), the assumed state, boot, screen, shutdown and network events, and any errors. See [Getting the log off the head unit](#getting-the-log-off-the-head-unit).
 - **Check for updates**: downloads and installs the latest release when you ask for it.
 - **Check for updates automatically**: on by default. About once a day, and after a boot once there is a connection, the app checks for a new release and shows a notification. It never installs by itself. See [Updating from the app](#updating-from-the-app).
+- **Beta: reach the car without adb**: off by default. For head units where the log shows `TWUtil unavailable`. Asks Android to stop hiding the vendor class `android.tw.john.TWUtil` from this app, so `adb shell settings put global hidden_api_policy 1` is not needed. Seen working on an Android 14 emulator; not tested on a head unit that needs it. Turning it on tries at once; turning it off takes effect the next time the app starts. A failure is logged as `beta: reach the car without adb failed: …`.
 - **Share diagnostics**: asked on first launch, with a switch to change it later. Sends the app's log lines to the developer. The line under the log shows what it is doing: off, lines waiting, sending or sent. Only in builds made with a PostHog key, such as releases. See [Diagnostics](#diagnostics).
 
 There is no "keep it off" or lock option: the vendor app's "permanently closed" setting has no effect on this van, and stop-start is on again after every engine start whatever it is set to.
@@ -158,7 +159,7 @@ It is not verified on the van yet. It is a model, not a reading from the car. It
 
 ## Troubleshooting
 
-- **Log shows `TWUtil unavailable`**: Android is blocking the vendor class for a non-system app. With adb: `adb shell settings put global hidden_api_policy 1`.
+- **Log shows `TWUtil unavailable`**: Android is blocking the vendor class for a non-system app. With adb: `adb shell settings put global hidden_api_policy 1`. Without adb: turn on **Beta: reach the car without adb**.
 - **"NO LINK TO CAR" and a grey button**: the app could not open the head unit's link to the car, usually the `TWUtil unavailable` case above. The card says "This head unit did not let the app reach the car." Nothing is sent in this state.
 - **"No answer from the car."**: the command was sent but the CAN box did not echo it within 3 seconds. Check the instrument cluster before tapping again, since the switch may have worked, and the log for the `sent stop-start switch` line and its `rc`.
 - **"No answer from the car. Nothing sent."**: the CAN box did not send a status frame within 3 seconds of the tap, so no command was sent. Wait for "CONNECTED TO CAR" and tap again.
