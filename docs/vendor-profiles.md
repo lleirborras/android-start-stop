@@ -15,9 +15,9 @@ Scanned 2026-11-27: 911 vendor APKs (440 `com.tw.car` builds plus themes, info a
 | `964` | Hiworld / PSA, Opel | 45 | `wc_Engine_start_and_stop_function` | `write(1281, 140, 2, {1, 255})` | none: acts like a button press |
 | `114` | Hiworld / VW MQB | 53 | `start_stop` | `write(1281, 74, 2, {13, v})` | 1 on, 0 off |
 | `111` | Raise / VW MQB | 50 | `automatic_start_and_stop` | `write(1281, 198, 2, {17, v})` | 1 on, 0 off |
-| `11` | Simple Soft, Binary / VW MQB | 25 | `automatic_start_and_stop` | `write(1281, 198, 2, {17, v})` | 1 on, 0 off. Only in the platform 01 build |
+| `11` | Simple Soft, Binary / VW MQB | 25 | `automatic_start_and_stop` | `write(1281, 198, 2, {58, v})` | 1 on, 0 off. Only in the platform 01 build |
 | `274` | Hiworld / Honda | 30 | `accord9_Energy_saving_automatic_start_stop` | `write(1281, 111, 2, {8, v})` | 1 on, 0 off |
-| `880` | Simple Soft / Jeep | 17 | `automatic_start_stop_function` | `write(1281, 198, 2, {114, v})` | 1 on, 0 off |
+| `880` | Simple Soft / Jeep | 17 | `automatic_start_stop_function` | `write(1281, 198, 2, {114, v})` | conflicting: the platform 00 build sends 0 for off, the 01 build sends 1 for off |
 | `880` | same | 17 | `jeep_the_auto_start_stop_function_is_powered_on_by_default` | `write(1281, 198, 2, {68, v})` | 0 on at power-on, 1 off at power-on |
 | `F91` | Raise / GWM Haval | 33 | `intelligent_start_and_stop` | `write(1281, 131, 2, {11, v})` | 1 on, 0 off |
 | `F94` | Hiworld / GWM Haval | 30 | `H6_Intelligent_start_and_stop` | `write(1281, 109, 4, {1, v, 255, 255})` | 1 on, 0 off |
@@ -45,18 +45,20 @@ Notes:
 
 Where the vendor app shows the current value, it reads it from a status frame on message 1281 (`arg1` is the frame id):
 
-| Build | Frame | Bit |
-|---|---|---|
-| `961` | 56 | none: `byte[5]` bit 6 only echoes the last command, see README |
-| `96` | 56 | `byte[4]` bit 6 |
-| `114` | 69 | `byte[6]` bit 4 |
-| `111` | 64, when `byte[0]` is 16 | `byte[2]` bit 7 |
-| `274` | 105 | `byte[0]` bit 3 |
-| `880` on/off | 33, when `byte[0]` is 112 | `byte[2]` bit 7 |
-| `880` power-on default | when `byte[0]` is 64; frame id unclear in the decompile | `byte[3]` bit 2 |
-| `41F` | 45 | `byte[0]` bit 4 (also the source of the other bits to send) |
+| Build | Query | Frame | Bit, meaning when set |
+|---|---|---|---|
+| `961` | `write(1281, 143, 2, {56, 0})` | 56 | none: `byte[5]` bit 6 only echoes the last command, see README |
+| `96` | `write(1281, 144, 2, {56, 0})` | 56 | `byte[4]` bit 6, on |
+| `114` | `write(1281, 10, 2, {1, 69})` | 69 | `byte[6]` bit 4, on |
+| `111` | `write(1281, 144, 2, {64, 16})` | 64, when `byte[0]` is 16 | `byte[2]` bit 7, on |
+| `274` | `write(1281, 106, 3, {5, 1, 105})` | 105 | `byte[0]` bit 3, on |
+| `880` on/off | `write(1281, 144, 2, {64, 112})` | 64, when `byte[0]` is 112 | `byte[2]` bit 7: shown as off in the 01 build, on in the 00 build |
+| `880` power-on default | `write(1281, 144, 2, {64, 64})` | 64, when `byte[0]` is 64 | `byte[3]` bit 2, off at power-on |
+| `F91` | `write(1281, 144, 2, {49, 0})` | 49 | `byte[3]` bit 5, on |
+| `F94` | none: the box sends it unasked | 104 | `byte[0]` bit 0, on |
+| `41F` | not traced | 45 | `byte[0]` bit 4 (also the source of the other bits to send) |
 
-Not found for `11`, `964`, `F91` and `F94`. A readback that follows the setting would let the app confirm a switch, which the PSA echo cannot.
+None for `11` (its screen never reads the setting back) or `964`. A readback that follows the setting lets the app confirm a switch, which the PSA echo cannot. Because the two `880` builds disagree on which value means off, Jeep needs a car to settle it.
 
 Left out, because they do not switch stop-start:
 - Honda `22A`, `211`, `218`, `238`, `27`, `270`, `271`: "Automatic start and stop indication" only turns a display on or off.
