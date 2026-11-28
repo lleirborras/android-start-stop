@@ -22,7 +22,9 @@ final class BootFlow {
         void newLink();
         boolean openLink();
         void query();
-        /** The bit sent, or -1 when nothing was sent. */
+        /** False while the link is open but cannot send yet (the beta FYT link before it knows the car). */
+        boolean linkReady();
+        /** The bit sent, or below 0 when nothing was sent. */
         int toggle();
         void closeLink();
 
@@ -52,6 +54,7 @@ final class BootFlow {
     private long startedAt;
     private boolean sent;
     private boolean done;
+    private boolean waitLogged;
     private long sentAt;
     private int sentBit = -1;
 
@@ -71,6 +74,7 @@ final class BootFlow {
             shell.closeLink();
             sent = false;
             done = false;
+            waitLogged = false;
             sentAt = 0;
             sentBit = -1;
         }
@@ -134,6 +138,20 @@ final class BootFlow {
         }
         if (alreadySwitched()) {
             finish();
+            return;
+        }
+        // Not marked yet: nothing has been tried, so the cycle is not used up.
+        if (!shell.linkReady()) {
+            if (shell.now() - startedAt >= OPEN_TIMEOUT_MS) {
+                shell.onLog("link not ready after " + OPEN_TIMEOUT_MS / 1000 + " s, nothing sent");
+                shell.setBootSwitchFailed(cycle);
+                finish();
+                return;
+            }
+            if (!waitLogged) shell.onLog("link not ready yet, waiting");
+            waitLogged = true;
+            sent = false;
+            shell.postDelayed(SEND_ONCE, OPEN_RETRY_MS);
             return;
         }
         shell.markBootSwitch(cycle);

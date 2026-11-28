@@ -16,7 +16,11 @@ import java.util.Map;
 /** One connection to the CAN box through TWUtil. Main-thread only. */
 final class CanBox {
     interface Listener {
-        /** Called on the main thread for every settings status frame (id 56) with its echo bit, see {@link Protocol#echo}. */
+        /**
+         * Called on the main thread for every settings status frame (id 56) with its echo bit, see
+         * {@link Protocol#echo}. With a beta car profile: for every readback, true when the car reports the state last
+         * sent (off before any send).
+         */
         void onEcho(boolean echo);
         /** Called on the main thread with a short human-readable line (errors and sent commands). */
         void onLog(String line);
@@ -28,6 +32,10 @@ final class CanBox {
         void onPowerState(int state);
         /** Every valid battery reading, before the log rate limit. */
         void onBattery(int centivolts);
+        /** Beta FYT and Microntek units: the ignition as the head unit reports it. */
+        void onIgnition(boolean on);
+        /** Beta FYT and Microntek units: the engine runs; why is for the log. afterStop: it was seen stopped before. */
+        void onEngineRunning(String why, boolean afterStop);
     }
 
     private static final String TAG = "NoStartStop";
@@ -48,6 +56,13 @@ final class CanBox {
 
     private final Context context;
     private final Listener listener;
+    // Beta: set instead of tw on FYT and Microntek head units.
+    private OtherLink other;
+    // Beta: a Topway profile other than PSA Raise, driven by its own command and readback. No PSA bytes are sent then.
+    private CarProfile profile;
+    private Boolean profileOn;
+    private boolean wantOn;
+    private boolean awaitingReport;
     // Set only for the watch service, which opens only the power messages and never sends.
     private PowerListener power;
     private String openFailure;
@@ -90,24 +105,141 @@ final class CanBox {
                 return;
             }
             if (!(msg.obj instanceof byte[])) return;
-            if (msg.arg1 == Protocol.STATUS_SETTINGS) onFrame((byte[]) msg.obj);
-            else if (msg.arg1 == Protocol.STATUS_FUNCTION) onFunction((byte[]) msg.obj);
-            else onOtherFrame(msg.arg1, (byte[]) msg.obj);
+            onCanboxFrame(msg.arg1, (byte[]) msg.obj);
         }
     };
+
+    private void onCanboxFrame(int id, byte[] b) {
+        if (profile != null) {
+            Boolean on = profile.stopStartOn(id, b);
+            if (on != null) onProfileState(on);
+            else onOtherFrame(id, b);
+            return;
+        }
+        if (id == Protocol.STATUS_SETTINGS) onFrame(b);
+        else if (id == Protocol.STATUS_FUNCTION) onFunction(b);
+        else onOtherFrame(id, b);
+    }
 
     CanBox(Context context, Listener listener) {
         this.context = context;
         this.listener = listener;
     }
 
-    /** Why this unit gets no PSA commands, or null. See {@link CarProfile#psaRefusal}. */
-    String psaRefusal() {
-        return CarProfile.psaRefusal(DeviceWatch.vendorCarVersion(context));
+    /** Whether the open link is still the one the pick calls for; false after the pick moved to another link. */
+    boolean followsPick() {
+        Detection.Platform p = chosenPlatform();
+        if (other != null) return other.platform() == p;
+        return tw == null || p == Detection.Platform.TOPWAY || p == Detection.Platform.NONE;
     }
 
-    // The refusal is the same on every open of this process.
-    private static boolean refusalLogged;
+    /** True while the beta FYT or Microntek link is the open one. */
+    boolean usesOtherLink() {
+        return other != null;
+    }
+
+    /** Beta car profile: stop-start as the car last reported it, or null without a profile or a report. */
+    Boolean reportedOn() {
+        return profile == null || mismatched ? null : profileOn;
+    }
+
+    /** Beta: why this head unit's car or CAN box is not supported, or null. */
+    String unsupported() {
+        if (other != null) return null;
+        return tw == null ? refused : null;
+    }
+
+    /** Beta link only: whether it can report the engine running. */
+    boolean engineSignal() {
+        return other == null || other.engineSignal();
+    }
+
+    /** False while the beta link cannot send yet; the TWUtil link is always ready once open. */
+    boolean ready() {
+        return other == null || other.ready();
+    }
+
+    private boolean linked() {
+        return tw != null || other != null;
+    }
+
+    /** One per link: posts from a link closed since, which may still be running, are dropped. */
+    private final class LinkSink implements OtherLink.Sink {
+        // Set right after the open; posts made during it run later. Null when the open failed.
+        OtherLink link;
+
+        private boolean current() {
+            return link != null && link == other;
+        }
+
+        @Override
+        public void frame(final int id, final byte[] data) {
+            handler.post(new Runnable() {
+                @Override
+                public void run() {
+                    if (current()) onCanboxFrame(id, data);
+                }
+            });
+        }
+
+        @Override
+        public void log(final String line) {
+            handler.post(new Runnable() {
+                @Override
+                public void run() {
+                    // Lines from a failed open still say why there is no link.
+                    if (link == null || current()) CanBox.this.log(line);
+                }
+            });
+        }
+
+        @Override
+        public void ignition(final boolean on) {
+            handler.post(new Runnable() {
+                @Override
+                public void run() {
+                    if (current() && power != null) power.onIgnition(on);
+                }
+            });
+        }
+
+        @Override
+        public void engineRunning(final String why, final boolean afterStop) {
+            handler.post(new Runnable() {
+                @Override
+                public void run() {
+                    if (current() && power != null) power.onEngineRunning(why, afterStop);
+                }
+            });
+        }
+    }
+
+    /** The car setup's decision for this head unit now, see {@link CarSetup#decide}. */
+    static int setupDecision(Context c) {
+        return CarSetup.decide(DeviceWatch.carDetection(c), Prefs.setupChoice(c), Prefs.setupDetection(c),
+                betaBuild(c));
+    }
+
+    /** A beta or local build: see {@link CarSetup#betaBuild}. */
+    static boolean betaBuild(Context c) {
+        return CarSetup.betaBuild(MainActivity.versionName(c));
+    }
+
+    /** The link the chosen CAN box goes over, as long as this build still offers it. */
+    private Detection.Platform chosenPlatform() {
+        String choice = Prefs.setupChoice(context);
+        return CarSetup.available(choice, betaBuild(context)) ? CarSetup.platform(choice) : Detection.Platform.NONE;
+    }
+
+    // Per process: each reason is logged once, not on every reopen of the screen.
+    private static String openLogged;
+    // Per process and never reset, so the retries at boot log a beta car refusal once.
+    private static String otherOpenLogged;
+    // Set while open() refuses for the car setup or the profile, for the CAR NOT SUPPORTED state.
+    private String refused;
+    // The pick is not what the head unit reports: frames read with its layout are not trusted as the car's state.
+    private boolean mismatched;
+
 
     /**
      * Call before {@link #open}. Then open() asks for the power messages only, without the CAN box, and does not log
@@ -123,19 +255,33 @@ final class CanBox {
 
     /** With captureFrames set, also opens the engine and unit ids, falling back to the CAN box alone if they are refused. */
     boolean open() {
-        if (tw != null) return true;
-        // The watch service only listens to power messages and never writes to the CAN box.
-        String refusal = power == null ? psaRefusal() : null;
-        if (refusal != null) {
-            if (!refusalLogged) log(refusal + ": its stop-start command differs, nothing will be sent");
-            refusalLogged = true;
-            return false;
+        if (linked()) return true;
+        refused = null;
+        // Early, for the screen: the gate as it would answer the first query. Each write asks it again. The watch
+        // service only listens to power messages and never writes to the CAN box.
+        if (power == null) {
+            // The first query of the chosen box: its profile's, the beta link's or the PSA one.
+            String code = CarSetup.profileCode(Prefs.setupChoice(context));
+            Detection.Platform p = chosenPlatform();
+            boolean other = p == Detection.Platform.FYT || p == Detection.Platform.MICRONTEK;
+            SendGate.Verdict v = other ? gate(SendGate.Kind.OTHER_QUERY, null)
+                    : code != null ? gate(SendGate.Kind.PROFILE_QUERY, code) : gate(SendGate.Kind.PSA_QUERY, null);
+            if (!v.send()) {
+                if (!v.why.equals(openLogged)) log(v.rule + ": " + v.why + ", nothing will be sent");
+                openLogged = v.why;
+                if (v.result == SendGate.REFUSE) refused = v.why;
+                return false;
+            }
+            openLogged = null;
         }
+        Detection.Platform chosen = chosenPlatform();
+        if (chosen == Detection.Platform.FYT || chosen == Detection.Platform.MICRONTEK) return openOther();
+        mismatched = CarSetup.mismatch(DeviceWatch.carDetection(context), Prefs.setupChoice(context)) != null;
         extraIdsRefused = null;
         TWUtil t = captureFrames && power == null ? connect(ALL_IDS, true) : null;
         extraIds = t != null;
         if (t == null) t = connect(power != null ? WATCH_IDS : CANBOX_IDS, false);
-        if (t == null) return false;
+        if (t == null) return openOther();
         lastFrame = null;
         otherFrames.clear();
         otherFrameLines.clear();
@@ -156,9 +302,39 @@ final class CanBox {
         log(extraIdsRefused == null ? "TWUtil open"
                 : "TWUtil open, CAN box only (engine and unit ids refused: " + extraIdsRefused + ")");
         if (power != null) return true;
+        String code = chosenPlatform() == Detection.Platform.TOPWAY ? CarSetup.profileCode(Prefs.setupChoice(context))
+                : null;
+        profile = code == null ? null : CarProfile.forBeta(code);
+        profileOn = null;
+        if (profile != null) {
+            log("beta: car profile " + profile.code + " (" + profile.name + ")");
+            return true;
+        }
         // The caller asks for the settings frame first; frame 57 and the car data follow its answer.
         firstFunctionPending = true;
         handler.postDelayed(firstFunction, 500);
+        return true;
+    }
+
+    /** Beta: without TWUtil, the FYT or Microntek link. For the watch service it only reads the ignition and engine. */
+    private boolean openOther() {
+        Detection.Platform p = chosenPlatform();
+        if (p != Detection.Platform.FYT && p != Detection.Platform.MICRONTEK) return false;
+        // The watch service skips the send gate: it opens a beta link only for a confirmed pick too.
+        if (setupDecision(context) != CarSetup.SEND) return false;
+        LinkSink sink = new LinkSink();
+        OtherLink o = OtherLink.open(context, DeviceWatch.detect(context), p, sink, power != null);
+        sink.link = o;
+        if (o == null) return false;
+        // Microntek reports its CAN box type at once; FYT only later, and its writes wait for it.
+        other = o;
+        warnCar();
+        lastFrame = null;
+        otherFrames.clear();
+        otherFrameLines.clear();
+        frameLines = 0;
+        functionLines = 0;
+        log("beta: " + o.name() + " link open");
         return true;
     }
 
@@ -168,7 +344,7 @@ final class CanBox {
             if (!firstFunctionPending) return;
             firstFunctionPending = false;
             handler.removeCallbacks(this);
-            write(Protocol.CMD_QUERY, Protocol.query(Protocol.STATUS_FUNCTION));
+            write(SendGate.Kind.PSA_QUERY, Protocol.CMD_QUERY, Protocol.query(Protocol.STATUS_FUNCTION));
             if (captureFrames) requestCarData();
         }
     };
@@ -207,6 +383,14 @@ final class CanBox {
 
     void close() {
         handler.removeCallbacksAndMessages(null);
+        profile = null;
+        profileOn = null;
+        wantOn = false;
+        awaitingReport = false;
+        if (other != null) {
+            other.close();
+            other = null;
+        }
         if (tw == null) return;
         TWUtil t = tw;
         tw = null;
@@ -229,12 +413,8 @@ final class CanBox {
     /** Head unit identity, only asked for while the user records car data. */
     private void requestCarData() {
         if (!extraIds || (unitIdLogged && unitConfigLogged)) return;
-        try {
-            tw.write(Protocol.MSG_UNIT_ID, 255, 0);
-            tw.write(Protocol.MSG_UNIT_CONFIG, 255, 0);
-        } catch (Throwable e) {
-            log("unit query failed: " + e);
-        }
+        write(SendGate.Kind.UNIT_QUERY, Protocol.MSG_UNIT_ID, null);
+        write(SendGate.Kind.UNIT_QUERY, Protocol.MSG_UNIT_CONFIG, null);
     }
 
     private void resetEngine() {
@@ -246,30 +426,72 @@ final class CanBox {
     }
 
     void query() {
-        write(Protocol.CMD_QUERY, Protocol.query());
+        if (profile == null) write(SendGate.Kind.PSA_QUERY, Protocol.CMD_QUERY, Protocol.query());
+        else if (profile.queryCmd() >= 0) write(SendGate.Kind.PROFILE_QUERY, profile.queryCmd(), profile.query());
+    }
+
+    /** Beta profile: the setting as the car reports it. The echo the callers wait for is "it is what was sent". */
+    private void onProfileState(boolean on) {
+        String unverified = mismatched ? " (unverified: the head unit reports another box)" : "";
+        if (awaitingReport && on == wantOn) {
+            log("car reports stop-start " + (on ? "on" : "off") + ", as sent" + unverified);
+        } else if (profileOn == null || profileOn != on) {
+            log("car reports stop-start " + (on ? "on" : "off") + unverified);
+        }
+        if (on == wantOn) awaitingReport = false;
+        profileOn = on;
+        listener.onEcho(on == wantOn);
+    }
+
+    /**
+     * The automatic switch: a beta profile always sends "off", which a second time changes nothing. The PSA default
+     * toggles, see {@link #toggle}.
+     */
+    int switchOff() {
+        if (profile == null) return toggle();
+        return sendProfile(false);
+    }
+
+    private int sendProfile(boolean on) {
+        if (!linked()) {
+            log("not open, nothing sent");
+            return -1;
+        }
+        wantOn = on;
+        awaitingReport = true;
+        int rc = write(SendGate.Kind.PROFILE_SET, profile.cmd, profile.set(on));
+        if (rc < 0) {
+            log("stop-start " + (on ? "on" : "off") + " not sent, rc=" + rc);
+            return -1;
+        }
+        log("sent stop-start " + (on ? "on" : "off") + ", profile " + profile.code + ", rc=" + rc);
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                query();
+            }
+        }, 1000);
+        // The callers wait for a confirming answer only after a 1.
+        return 1;
     }
 
     /**
      * Sends one stop-start switch command, which flips stop-start on the car. Its bit is the opposite of the
-     * echo in the last status frame, so call it right after a fresh frame. Returns the bit sent, or -1 when
-     * nothing was sent.
+     * echo in the last status frame, so call it right after a fresh frame. Returns the bit sent, -2 when the
+     * beta link is not ready yet, or -1 when nothing was sent.
      */
     int toggle() {
-        if (tw == null) {
+        // A tap on a beta profile asks for the opposite of what the car last reported, off when nothing came yet.
+        if (profile != null) return sendProfile(profileOn != null && !profileOn);
+        if (!linked()) {
             log("not open, nothing sent");
             return -1;
         }
-        // Checked here too, not only at open: no PSA command leaves for a box that would read it as something else.
-        String refusal = psaRefusal();
-        if (refusal != null) {
-            log(refusal + ", nothing sent");
-            return -1;
-        }
         int bit = Protocol.toggleValue(lastFrame);
-        int rc = write(Protocol.CMD_SET, Protocol.set(bit));
+        int rc = write(SendGate.Kind.PSA_SET, Protocol.CMD_SET, Protocol.set(bit));
         if (rc < 0) {
             log("stop-start switch not sent, bit=" + bit + ", rc=" + rc);
-            return -1;
+            return rc == -2 ? -2 : -1;
         }
         log("sent stop-start switch, bit=" + bit + ", rc=" + rc
                 + (captureFrames && lastRpm >= 0 ? ", rpm=" + lastRpm : ""));
@@ -283,7 +505,7 @@ final class CanBox {
         Runnable after = new Runnable() {
             @Override
             public void run() {
-                write(Protocol.CMD_QUERY, Protocol.query(Protocol.STATUS_FUNCTION));
+                write(SendGate.Kind.PSA_QUERY, Protocol.CMD_QUERY, Protocol.query(Protocol.STATUS_FUNCTION));
             }
         };
         handler.postDelayed(after, 1500);
@@ -364,17 +586,66 @@ final class CanBox {
         log("frame " + id + " " + hex(b));
     }
 
-    private int write(int cmd, byte[] data) {
-        if (tw == null) {
+    // Per process: a refusal is logged once, not on every query.
+    private static String gateLogged;
+
+    /**
+     * Every byte to the CAN box or the head unit leaves here, after the send gate. kind is as for the TWUtil link;
+     * on the beta link it becomes OTHER_SET or OTHER_QUERY. For UNIT_QUERY cmd is the message, 266 or 267, and data
+     * is unused. Returns -2 when the link is not ready yet, -1 when nothing was sent.
+     */
+    private int write(SendGate.Kind kind, int cmd, byte[] data) {
+        if (!linked()) {
             log("not open");
             return -1;
         }
-        try {
-            return tw.write(Protocol.MSG_CANBOX, cmd, data.length, data);
-        } catch (Throwable e) {
-            log("write failed: " + e);
+        // The unit queries are TWUtil messages, with no data for a beta link.
+        if (other != null && kind == SendGate.Kind.UNIT_QUERY) return -1;
+        if (other != null) kind = SendGate.onLink(kind, other.platform());
+        SendGate.Verdict v = gate(kind);
+        if (!v.send()) {
+            if (v.result == SendGate.NOT_READY) return -2;
+            if (!v.why.equals(gateLogged)) log(v.rule + ": " + v.why + ", nothing sent");
+            gateLogged = v.why;
             return -1;
         }
+        gateLogged = null;
+        if (other != null) return other.write(cmd, data, gateCar);
+        try {
+            if (kind == SendGate.Kind.UNIT_QUERY) return tw.write(cmd, 255, 0);
+            return tw.write(Protocol.MSG_CANBOX, cmd, data.length, data);
+        } catch (Throwable e) {
+            log((kind == SendGate.Kind.UNIT_QUERY ? "unit query failed: " : "write failed: ") + e);
+            return -1;
+        }
+    }
+
+    // The beta link's car in the last snapshot.
+    private String gateCar;
+
+    /** Beta link: once per car it reports that is not PSA with a Raise box, a warning; the confirmed pick still sends. */
+    private void warnCar() {
+        if (other == null) return;
+        String why = SendGate.carMismatch(other.platform(), other.car());
+        if (why == null || why.equals(OtherUnits.NOT_IDENTIFIED) || why.equals(otherOpenLogged)) return;
+        otherOpenLogged = why;
+        log("beta: " + other.name() + " " + why + ", sending anyway: the CAN box was confirmed");
+    }
+
+    /** The send gate's verdict now, from a fresh snapshot. */
+    private SendGate.Verdict gate(SendGate.Kind kind) {
+        return gate(kind, profile == null ? null : profile.code);
+    }
+
+    /** With the profile the link drives, or will drive once open. */
+    private SendGate.Verdict gate(SendGate.Kind kind, String profileCode) {
+        if (other != null) other.refreshCar();
+        gateCar = other == null ? null : other.car();
+        warnCar();
+        Detection.Platform link = other != null ? other.platform()
+                : tw != null ? Detection.Platform.TOPWAY : Detection.Platform.NONE;
+        return SendGate.decide(kind, new SendGate.Snapshot(DeviceWatch.detect(context), Prefs.setupChoice(context),
+                Prefs.setupDetection(context), betaBuild(context), power != null, profileCode, link, gateCar));
     }
 
     private void log(String line) {

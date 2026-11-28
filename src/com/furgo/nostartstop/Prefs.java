@@ -13,6 +13,11 @@ final class Prefs {
     private static final String APPLY_AT_BOOT = "apply_at_boot";
     private static final String TELEMETRY = "telemetry";
     private static final String CAPTURE_FRAMES = "capture_frames";
+    private static final String WITHOUT_ADB = "without_adb";
+    private static final String SETUP_CHOICE = "setup_choice";
+    private static final String SETUP_DETECTION = "setup_detection";
+    private static final String ENGINE_GUESS = "engine_guess";
+    private static final String FYT_RPM_WORKS = "fyt_rpm_works";
     private static final String BOOT_SWITCH_BOOT = "boot_switch_boot";
     private static final String LAST_SWITCH_AT = "last_switch_at";
     private static final String LAST_SWITCH_AT_BOOT = "last_switch_at_boot";
@@ -320,6 +325,50 @@ final class Prefs {
 
     static void setCaptureFrames(Context c, boolean on) {
         c.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean(CAPTURE_FRAMES, on).apply();
+    }
+
+    /** Beta, off by default: see {@link HiddenApi}. */
+    static boolean withoutAdb(Context c) {
+        return prefs(c).getBoolean(WITHOUT_ADB, false);
+    }
+
+    static void setWithoutAdb(Context c, boolean on) {
+        prefs(c).edit().putBoolean(WITHOUT_ADB, on).apply();
+    }
+
+    /** The confirmed car, see {@link CarSetup}; null until the user confirms one, on every install and update. */
+    static String setupChoice(Context c) {
+        return prefs(c).getString(SETUP_CHOICE, null);
+    }
+
+    /** The detection the choice was confirmed against, see {@link CarSetup#detection}. */
+    static String setupDetection(Context c) {
+        return prefs(c).getString(SETUP_DETECTION, null);
+    }
+
+    static void setSetup(Context c, String choice, String detection) {
+        prefs(c).edit().putString(SETUP_CHOICE, choice).putString(SETUP_DETECTION, detection).apply();
+    }
+
+    /**
+     * Beta, off by default: on FYT and Microntek units without an engine speed, take the engine as running a while
+     * after ignition on. A guess: a switch sent before the engine runs may be undone by the start.
+     */
+    static boolean engineGuess(Context c) {
+        return prefs(c).getBoolean(ENGINE_GUESS, false);
+    }
+
+    static void setEngineGuess(Context c, boolean on) {
+        prefs(c).edit().putBoolean(ENGINE_GUESS, on).apply();
+    }
+
+    /** The FYT head unit has reported an engine speed above 0 once, so it needs no guess. */
+    static boolean fytRpmWorks(Context c) {
+        return prefs(c).getBoolean(FYT_RPM_WORKS, false);
+    }
+
+    static void setFytRpmWorks(Context c) {
+        prefs(c).edit().putBoolean(FYT_RPM_WORKS, true).apply();
     }
 
     /** False until the user has answered the first-launch question with yes. */

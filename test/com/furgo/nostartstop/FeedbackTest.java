@@ -41,19 +41,55 @@ public class FeedbackTest {
         is("no link over the rest", Feedback.of(null, false, "", false, true, true, AT_0841, true),
                 "This head unit did not let the app reach the car.", MUTED);
 
+        is("car not supported", Feedback.of(null, false, "", false, true, true, true, AT_0841, true),
+                "This car or CAN box is not supported. Nothing sent.", MUTED);
+        is("result over car not supported", Feedback.of(null, false, RESULT_TEXT, false, true, true, false, 0, false),
+                RESULT_TEXT, RESULT);
+
+        is("car setup needed", Feedback.of(null, false, "", false, true, true, false, true, AT_0841, true),
+                "Confirm your car before the app sends anything.", MUTED);
+        is("note over car setup", Feedback.of(NOTE, false, "", false, true, true, false, false, 0, false), NOTE, WARN);
+        is("result over car setup", Feedback.of(null, false, RESULT_TEXT, false, true, true, false, false, 0, false),
+                RESULT_TEXT, RESULT);
+
         is("automatic switch failed", Feedback.of(null, false, "", false, false, true, 0, false),
                 "Automatic switch failed. Tap to switch.", WARN);
         is("failure over the last switch", Feedback.of(null, false, "", false, false, true, AT_0841, true),
                 "Automatic switch failed. Tap to switch.", WARN);
 
         is("last switch, by tap", Feedback.of(null, false, "", false, false, false, AT_0841, false),
-                "Last switch: 08:41", MUTED);
+                "Sent at 08:41", MUTED);
         is("last switch, automatic", Feedback.of(null, false, "", false, false, false, AT_0841, true),
-                "Last switch: 08:41, automatic", MUTED);
+                "Sent at 08:41 (automatic)", MUTED);
 
         // Nothing to say: the empty result. "automatic" alone is not a switch.
         is("nothing", Feedback.of(null, false, "", false, false, false, 0, false), "", RESULT);
         is("no switch in this cycle", Feedback.of(null, false, "", false, false, false, 0, true), "", RESULT);
+
+        same("sent", Feedback.sent(AT_0841), "Sent at 08:41");
+
+        final int ON = AssumedState.ON, OFF = AssumedState.OFF, UNKNOWN = AssumedState.UNKNOWN;
+        // Read from the car comes first.
+        same("from the car, on", Feedback.hint(ON, true, false, true, false, false),
+                "Read from the car. Tap Switch to turn it off.");
+        same("from the car, on, busy", Feedback.hint(ON, true, false, false, true, true), "Read from the car.");
+        same("from the car, off", Feedback.hint(OFF, true, false, true, true, true), "Read from the car.");
+        // Then a state implied by a switch sent while the model was unknown.
+        same("sent, not followed", Feedback.hint(OFF, false, true, true, false, false),
+                "Not followed while Switch off at engine start is off.");
+        same("sent, followed", Feedback.hint(OFF, false, true, true, true, false),
+                "From the switch sent. Check the cluster.");
+        same("assumed on", Feedback.hint(ON, false, false, true, true, true), "Assumed. Tap Switch to turn it off.");
+        same("assumed on, busy", Feedback.hint(ON, false, false, false, true, true),
+                "Assumed. Check the instrument cluster.");
+        same("assumed off", Feedback.hint(OFF, false, false, true, true, true),
+                "Assumed. Check the instrument cluster.");
+        same("unknown, not followed", Feedback.hint(UNKNOWN, false, false, true, false, false),
+                "Not followed while Switch off at engine start is off.");
+        same("unknown, cannot follow", Feedback.hint(UNKNOWN, false, false, true, true, false),
+                "Cannot follow the ignition. Check the cluster.");
+        same("unknown", Feedback.hint(UNKNOWN, false, false, true, true, true),
+                "Unknown since ignition off. Check the cluster, then tap Started or Stopped.");
 
         System.out.println("FeedbackTest passed");
     }
